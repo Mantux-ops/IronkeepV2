@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% from "_discord_macros.html" import discord_name %}
+{% block title %}Discord Settings — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'settings' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Discord Settings — ' ~ workspace.name %}
+    {% set subtitle = 'Link a Discord server and channels for operation announcements.' %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    <form method="post" action="/workspaces/{{ workspace.slug }}/settings/discord" class="form">
+
+      <div class="form-group">
+        <label for="discord_guild_id">Discord Server ID</label>
+        <input type="text" id="discord_guild_id" name="discord_guild_id"
+               value="{{ workspace.discord_guild_id or '' }}"
+               placeholder="e.g. 123456789012345678"
+               autocomplete="off">
+        <small class="form-hint">The numeric ID of your Discord server (right-click server → Copy Server ID). Leave blank to unlink.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="announcement_channel_id">Announcement Channel ID</label>
+        <input type="text" id="announcement_channel_id" name="announcement_channel_id"
+               value="{{ workspace.discord_announcement_channel_id or '' }}"
+               placeholder="e.g. 123456789012345678"
+               autocomplete="off">
+        <small class="form-hint">Channel where operation announcements will be posted. Leave blank to disable.</small>
+      </div>
+
+      <div class="form-group">
+        <label for="officer_channel_id">Officer Channel ID</label>
+        <input type="text" id="officer_channel_id" name="officer_channel_id"
+               value="{{ workspace.discord_officer_channel_id or '' }}"
+               placeholder="e.g. 123456789012345678"
+               autocomplete="off">
+        <small class="form-hint">Channel for officer-only notifications. Leave blank to disable.</small>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-weight:normal">
+          <input type="checkbox" name="discord_auto_dispatch" value="1"
+                 {% if workspace.discord_auto_dispatch %}checked{% endif %}>
+          Automatically post readiness updates to Discord
+        </label>
+        <small class="form-hint">
+          When enabled and <code>DISCORD_DISPATCH_ENABLED=1</code> is set on the server,
+          recalculating readiness will automatically post or update a readiness summary
+          in the announcement channel.
+          <strong>Announcements and rosters are never auto-posted — those remain explicit officer actions.</strong>
+        </small>
+      </div>
+
+      <div class="form-group">
+        <label style="display:flex;align-items:center;gap:0.5rem;cursor:pointer;font-weight:normal">
+          <input type="checkbox" name="discord_reminders_enabled" value="1"
+                 {% if workspace.discord_reminders_enabled %}checked{% endif %}>
+          Send pre-operation reminders to Discord
+        </label>
+        <small class="form-hint">
+          When enabled, the scheduler posts informational reminders to the announcement channel
+          (or officer channel if no announcement channel is set) at
+          <strong>T&#8209;2h</strong> and <strong>T&#8209;30m</strong> before each planning or locked operation.
+          Reminders are informational only — they never change operation status or assignments.
+          Requires <code>DISCORD_BOT_TOKEN</code> on the server and an announcement or officer channel to be configured above.
+        </small>
+      </div>
+
+      <div class="action-bar">
+        <input type="submit" value="Save Discord Settings" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}" class="btn">Cancel</a>
+      </div>
+    </form>
+
+    {% if workspace.discord_guild_id %}
+    <div class="card-section" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+      <div style="display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem">
+        <h3 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin:0">Current Configuration</h3>
+        {% set any_stale = discord_meta.values() | selectattr('is_stale') | list | length > 0 %}
+        {% set any_meta  = discord_meta | length > 0 %}
+        {% if any_meta %}
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/settings/discord/refresh-metadata"
+              class="inline-form">
+          <button type="submit" class="btn btn-sm"
+                  title="Re-fetch Discord names from the API">
+            {% if any_stale %}⚠ {% endif %}Refresh Discord Names
+          </button>
+        </form>
+        {% endif %}
+      </div>
+
+      <dl class="detail-list">
+        <dt>Discord Server</dt>
+        <dd>{{ discord_name(workspace.discord_guild_id, discord_meta) }}</dd>
+
+        {% if workspace.discord_announcement_channel_id %}
+        <dt>Announcement Channel</dt>
+        <dd>#{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}</dd>
+        {% endif %}
+
+        {% if workspace.discord_officer_channel_id %}
+        <dt>Officer Channel</dt>
+        <dd>#{{ discord_name(workspace.discord_officer_channel_id, discord_meta) }}</dd>
+        {% endif %}
+      </dl>
+
+      {% if not any_meta and workspace.discord_guild_id %}
+      <p class="page-meta" style="margin-top:0.5rem;font-size:0.8rem">
+        Discord names not yet fetched.
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/settings/discord/refresh-metadata"
+              class="inline-form" style="display:inline">
+          <button type="submit" class="btn btn-sm">Fetch Discord Names</button>
+        </form>
+      </p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

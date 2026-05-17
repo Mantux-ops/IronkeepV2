@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}New Workspace — IronkeepV2{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'New Workspace' %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    <form method="post" action="/workspaces" class="form">
+      <div class="form-group">
+        <label for="name">Workspace name</label>
+        <input type="text" id="name" name="name" required
+               value="{{ prev_name }}" placeholder="Orbie Gaming">
+      </div>
+
+      <div class="form-group">
+        <label for="slug">URL slug</label>
+        <input type="text" id="slug" name="slug" required
+               value="{{ prev_slug }}" placeholder="orbie"
+               pattern="[a-z0-9][a-z0-9\-]{1,62}[a-z0-9]">
+        <span class="form-hint">Lowercase letters, digits, hyphens. 3–64 characters. Cannot be changed.</span>
+      </div>
+
+      <div class="action-bar">
+        <input type="submit" value="Create Workspace" class="btn btn-primary">
+        <a href="/" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

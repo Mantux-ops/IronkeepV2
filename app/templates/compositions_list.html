@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Compositions — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'compositions' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <span class="crumb-current">Compositions</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'Compositions — ' ~ workspace.name %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+    <h2 style="margin:0">Compositions</h2>
+    {% if show_deleted %}
+      <a href="?" class="text-muted" style="font-size:0.85rem">Hide retired</a>
+    {% elif (deleted_count | default(0)) > 0 %}
+      <a href="?show_deleted=1" class="text-muted" style="font-size:0.85rem">
+        Show {{ deleted_count }} retired
+      </a>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if compositions %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Slots</th>
+            <th>Description</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for comp in compositions %}
+          <tr class="{% if comp.deleted_at %}row-muted{% endif %}">
+            <td>
+              <strong>{{ comp.name }}</strong>
+              {% if comp.deleted_at %}
+                <span class="badge badge-archived" style="margin-left:0.4em">retired</span>
+              {% endif %}
+            </td>
+            <td>{{ slot_counts[comp.id] }}</td>
+            <td>{{ comp.description or "—" }}</td>
+            <td>
+              {% if can_mutate and not comp.deleted_at %}
+              <form method="post"
+                    action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/retire"
+                    class="inline-form"
+                    onsubmit="return confirm('Retire {{ comp.name }}? Existing operations will not be affected.')">
+                <button type="submit" class="btn btn-sm btn-danger">Retire</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif show_deleted %}
+    <p class="empty-state">No compositions in this workspace.</p>
+    {% else %}
+    <p class="empty-state">No compositions yet.</p>
+    {% endif %}
+
+    <div class="action-bar">
+      {% if can_mutate %}
+      <a href="/workspaces/{{ workspace.slug }}/compositions/new" class="btn btn-primary">+ New Composition</a>
+      {% endif %}
+      <a href="/workspaces/{{ workspace.slug }}" class="btn">← Dashboard</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

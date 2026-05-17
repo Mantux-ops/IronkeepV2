@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Attendance — {{ operation.title }}{% endblock %}
+{% block main_attrs %} data-op-status="{{ operation.status }}"{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">{{ operation.title }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Attendance</span>
+{% endblock %}
+
+{% block content %}
+{% include "operation_tabs.html" %}
+{% include "flash_messages.html" %}
+
+{% set title = operation.title ~ ' — Attendance' %}
+{% include "page_header.html" %}
+
+<div class="card">
+  <div class="card-header"><h2>Assigned roster attendance</h2></div>
+  <div class="card-body">
+    {% if assignments %}
+
+    {# ── Progress summary + bulk action ───────────────────────────────────── #}
+    {% set total_count   = assignments | length %}
+    {% set marked_count  = assignments | selectattr('attendance_status') | list | length %}
+    {% set pending_count = total_count - marked_count %}
+
+    <div class="summary-strip" style="margin-bottom:var(--space-3)">
+      <span>
+        <strong>{{ marked_count }}</strong> / {{ total_count }} marked
+      </span>
+      {% if pending_count > 0 %}
+      <span class="text-warning"><strong>{{ pending_count }}</strong> pending</span>
+      {% else %}
+      <span class="text-muted" style="font-size:0.88rem">✓ All marked</span>
+      {% endif %}
+
+      {% if can_mutate and can_record_attendance and pending_count > 0 %}
+      <form method="post"
+            action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/attendance/bulk-present"
+            class="inline-form"
+            style="margin-left:auto">
+        <button type="submit" class="btn btn-sm btn-primary">
+          Mark all unmarked as present
+        </button>
+      </form>
+      {% endif %}
+    </div>
+
+    {# ── Attendance table ─────────────────────────────────────────────────── #}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Party</th>
+            <th>Slot</th>
+            <th>Participant</th>
+            <th>Role</th>
+            <th>Build</th>
+            {% if can_mutate %}<th title="Attendance rate over the last 90 days (excused excluded)">Reliability</th>{% endif %}
+            <th>Status</th>
+            <th>Notes</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in assignments %}
+          {% set rel = reliability_scores.get(row.participant_id) if can_mutate else none %}
+          <tr class="{% if row.attendance_status %}row-assigned{% else %}row-unmarked-attendance{% endif %}">
+            <td>{{ row.party_number }}</td>
+            <td>{{ row.slot_index }}</td>
+            <td><strong>{{ row.display_name }}</strong></td>
+            <td>{{ row.assigned_role }}</td>
+            <td>{{ row.assigned_build_name }}</td>
+            {% if can_mutate %}
+            <td>
+              {% if rel and rel.display %}
+                <span class="rel-score {{ rel.rate_class }}">{{ rel.display }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            {% endif %}
+            <td>
+              {% if row.attendance_status %}
+                <span class="badge badge-{{ row.attendance_status }}">
+                  {{ row.attendance_status | replace("_", " ") | upper }}
+                </span>
+              {% else %}
+                <em class="text-muted">— not marked</em>
+              {% endif %}
+            </td>
+            <td>{{ row.attendance_notes or "—" }}</td>
+            <td>
+              {% if can_mutate and can_record_attendance %}
+              <form method="post"
+                    action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/attendance"
+                    class="inline-form cluster">
+                <input type="hidden" name="assignment_id" value="{{ row.assignment_id }}">
+                <select name="status">
+                  {% for s in statuses %}
+                  <option value="{{ s }}"
+                    {% if s == row.attendance_status %}selected{% endif %}>
+                    {{ s | replace("_", " ") }}
+                  </option>
+                  {% endfor %}
+                </select>
+                <input type="text" name="notes"
+                       value="{{ row.attendance_notes or '' }}"
+                       placeholder="notes (optional)"
+                       style="width:13em;">
+                <button type="submit" class="btn btn-sm">Save</button>
+              </form>
+              {% else %}
+              <em class="text-muted">— attendance closed</em>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% else %}
+    <p class="empty-state">No assigned participants yet. Assign participants on the <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner">Planner</a> tab first.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Scout / support check-ins</h2></div>
+  <div class="card-body">
+    <p class="text-muted" style="font-size:.85rem;">
+      These participants were operationally present but not assigned to a composition slot.
+      Check-ins are independent of signups and assignments.
+    </p>
+
+    {% if scout_records %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Participant</th>
+            <th>Role</th>
+            <th>Notes</th>
+            <th>Checked In</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in scout_records %}
+          <tr>
+            <td><strong>{{ row.display_name }}</strong></td>
+            <td><span class="badge badge-{{ row.role_type }}">{{ row.role_type | upper }}</span></td>
+            <td>{{ row.notes or "—" }}</td>
+            <td class="text-muted" style="font-size:.8rem;">{{ row.recorded_at[:16] | replace("T", " ") }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No scout or support check-ins yet.</p>
+    {% endif %}
+
+    {% if can_mutate and can_record_scout_attendance %}
+    <h4 style="margin-top:1.25rem;">Add / update check-in</h4>
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/attendance/scout"
+          class="inline-form cluster">
+      <input type="text" name="display_name" placeholder="Player name" required
+             style="width:14em;">
+      <select name="role_type">
+        {% for rt in role_types %}
+        <option value="{{ rt }}">{{ rt }}</option>
+        {% endfor %}
+      </select>
+      <input type="text" name="notes" placeholder="notes (optional)" style="width:13em;">
+      <button type="submit" class="btn btn-primary">Check-in</button>
+    </form>
+    {% endif %}
+  </div>
+</div>
+
+{% endblock %}

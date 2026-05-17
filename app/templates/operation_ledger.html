@@ -1,0 +1,256 @@
+{% extends "base.html" %}
+{% block title %}Ledger — {{ operation.title }}{% endblock %}
+{% block main_attrs %} data-op-status="{{ operation.status }}"{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">{{ operation.title }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Ledger</span>
+{% endblock %}
+
+{% block content %}
+{% include "operation_tabs.html" %}
+{% include "flash_messages.html" %}
+
+{% set title = operation.title ~ ' — Ledger' %}
+{% include "page_header.html" %}
+
+{# ------------------------------------------------------------------ #}
+{# Section 1: Totals summary strip                                     #}
+{# ------------------------------------------------------------------ #}
+{% if ledger_totals.active_count > 0 or ledger_totals.voided_count > 0 %}
+<div class="summary-strip" style="margin-bottom: var(--space-4); flex-wrap: wrap; gap: var(--space-3)">
+  <span>
+    Active: <strong>{{ ledger_totals.active_count }}</strong>
+    &nbsp;·&nbsp;
+    <span style="font-variant-numeric: tabular-nums">{{ '{:,}'.format(ledger_totals.active_total) }} silver</span>
+  </span>
+  {% if ledger_totals.draft_count %}
+  <span style="color: var(--text-muted)">
+    Draft: <strong>{{ ledger_totals.draft_count }}</strong>
+    ({{ '{:,}'.format(ledger_totals.draft_total) }})
+  </span>
+  {% endif %}
+  {% if ledger_totals.approved_count %}
+  <span style="color: var(--text-muted)">
+    Approved: <strong>{{ ledger_totals.approved_count }}</strong>
+    ({{ '{:,}'.format(ledger_totals.approved_total) }})
+  </span>
+  {% endif %}
+  {% if ledger_totals.paid_count %}
+  <span style="color: var(--text-muted)">
+    Paid: <strong>{{ ledger_totals.paid_count }}</strong>
+    ({{ '{:,}'.format(ledger_totals.paid_total) }})
+  </span>
+  {% endif %}
+  {% if ledger_totals.voided_count %}
+  <span style="color: var(--text-muted)">
+    Voided: <strong>{{ ledger_totals.voided_count }}</strong>
+    <span style="font-size: 0.8rem">(excluded from total)</span>
+  </span>
+  {% endif %}
+</div>
+{% endif %}
+
+{# ------------------------------------------------------------------ #}
+{# Section 2: Create new entry form                                    #}
+{# ------------------------------------------------------------------ #}
+<div class="card" style="margin-bottom: var(--space-4)">
+  <div class="card-header"><h2>New entry</h2></div>
+  <div class="card-body">
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger/create"
+          class="form">
+      <div class="form-row" style="display: flex; gap: var(--space-3); flex-wrap: wrap; align-items: flex-end">
+
+        <div class="form-field" style="flex: 2; min-width: 160px">
+          <label for="participant_id">Participant</label>
+          <select id="participant_id" name="participant_id" required>
+            <option value="">— select —</option>
+            {% for p in participants %}
+            <option value="{{ p.id }}">{{ p.display_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="form-field" style="flex: 1; min-width: 120px">
+          <label for="entry_type">Type</label>
+          <select id="entry_type" name="entry_type" required>
+            <option value="regear">Regear</option>
+            <option value="payout">Payout</option>
+            <option value="adjustment">Adjustment</option>
+          </select>
+        </div>
+
+        <div class="form-field" style="flex: 1; min-width: 100px">
+          <label for="amount_silver">Amount (silver)</label>
+          <input id="amount_silver" name="amount_silver" type="number"
+                 value="0" required style="width: 100%">
+        </div>
+
+        <div class="form-field" style="flex: 3; min-width: 200px">
+          <label for="note">Note</label>
+          <input id="note" name="note" type="text" maxlength="500"
+                 placeholder="Optional reason or reference" style="width: 100%">
+        </div>
+
+        <div class="form-field" style="flex: 0">
+          <button type="submit" class="btn btn-primary" style="margin-top: 1.4rem">Add</button>
+        </div>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ------------------------------------------------------------------ #}
+{# Section 3: Entry table                                              #}
+{# ------------------------------------------------------------------ #}
+<div class="card">
+  <div class="card-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--space-2)">
+    <h2 style="margin: 0">Entries
+      {% if entries %}
+      <span class="badge badge-running" style="font-size: 0.78rem; margin-left: 0.5rem">{{ entries | length }}</span>
+      {% endif %}
+    </h2>
+    <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger/export.csv"
+       class="btn btn-sm"
+       title="Download ledger as CSV">Export CSV</a>
+  </div>
+  <div class="card-body">
+    {% if entries %}
+    <div style="overflow-x: auto">
+      <table class="sched-table">
+        <thead>
+          <tr>
+            <th>Participant</th>
+            <th>Type</th>
+            <th>Amount (silver)</th>
+            <th>Status</th>
+            <th>Note</th>
+            <th>Audit</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for e in entries %}
+          {% set p         = participant_map.get(e.participant_id) %}
+          {% set creator   = user_map.get(e.created_by_user_id) %}
+          {% set voider    = user_map.get(e.voided_by_user_id) if e.voided_by_user_id else None %}
+          {% set payer     = user_map.get(e.paid_by_user_id) if e.paid_by_user_id else None %}
+          {% set finalized = e.status in ('paid', 'voided') %}
+          <tr {% if e.status == 'voided' %}class="row-muted"{% endif %}>
+
+            {# Participant #}
+            <td>{{ p.display_name if p else '—' }}</td>
+
+            {# Type badge #}
+            <td>
+              <span class="badge
+                {%- if e.entry_type == 'regear' %} badge-locked
+                {%- elif e.entry_type == 'payout' %} badge-planning
+                {%- else %} badge-draft
+                {%- endif %}">{{ e.entry_type }}</span>
+            </td>
+
+            {# Amount — negative adjustments shown in red #}
+            <td style="text-align: right; font-variant-numeric: tabular-nums
+              {%- if e.amount_silver < 0 %}; color: var(--error){% endif %}">
+              {{ '{:,}'.format(e.amount_silver) }}
+            </td>
+
+            {# Status badge with finalized hint #}
+            <td>
+              <span class="badge
+                {%- if e.status == 'draft' %} badge-draft
+                {%- elif e.status == 'approved' %} badge-planning
+                {%- elif e.status == 'paid' %} badge-completed
+                {%- else %} badge-archived
+                {%- endif %}">{{ e.status }}</span>
+              {% if e.status == 'paid' %}
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px">
+                Finalized — no further changes
+              </div>
+              {% elif e.status == 'voided' %}
+              <div style="font-size: 0.75rem; color: var(--text-muted); margin-top: 2px">
+                Voided — excluded from totals
+              </div>
+              {% endif %}
+            </td>
+
+            {# Note #}
+            <td style="font-size: 0.85rem; color: var(--text-muted)">
+              {{ e.note or '—' }}
+            </td>
+
+            {# Audit column: created / voided timestamps + actors #}
+            <td style="font-size: 0.78rem; color: var(--text-muted); white-space: nowrap">
+              <div title="Created">
+                ↳ {{ e.created_at[:16] | replace('T', ' ') }} UTC
+                {% if creator %}by {{ creator.display_name }}{% endif %}
+              </div>
+              {% if e.updated_at and e.updated_at != e.created_at %}
+              <div title="Last updated" style="margin-top: 1px">
+                ✎ {{ e.updated_at[:16] | replace('T', ' ') }} UTC
+              </div>
+              {% endif %}
+              {% if e.paid_at %}
+              <div title="Paid" style="margin-top: 1px; color: var(--success, #27ae60)">
+                ✓ {{ e.paid_at[:16] | replace('T', ' ') }} UTC
+                {% if payer %}by {{ payer.display_name }}{% endif %}
+              </div>
+              {% endif %}
+              {% if e.voided_at %}
+              <div title="Voided" style="margin-top: 1px; color: var(--error)">
+                ✕ {{ e.voided_at[:16] | replace('T', ' ') }} UTC
+                {% if voider %}by {{ voider.display_name }}{% endif %}
+              </div>
+              {% endif %}
+            </td>
+
+            {# Actions — clearly explain why finalized entries have no actions #}
+            <td>
+              {% if not finalized %}
+              <div style="display: flex; gap: var(--space-2); flex-wrap: wrap">
+                {% if e.status == 'draft' %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger/{{ e.id }}/approve"
+                      style="display:inline">
+                  <button type="submit" class="btn btn-sm">Approve</button>
+                </form>
+                {% endif %}
+                {% if e.status == 'approved' %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger/{{ e.id }}/mark-paid"
+                      style="display:inline">
+                  <button type="submit" class="btn btn-sm btn-primary"
+                          onclick="return confirm('Mark this entry as paid? This cannot be undone.')">Mark paid</button>
+                </form>
+                {% endif %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger/{{ e.id }}/void"
+                      style="display:inline">
+                  <button type="submit" class="btn btn-sm btn-danger"
+                          onclick="return confirm('Void this entry?')">Void</button>
+                </form>
+              </div>
+              {% elif e.status == 'paid' %}
+              <span class="badge badge-completed" style="font-size: 0.75rem"
+                    title="Paid entries are permanent and cannot be changed">Paid — locked</span>
+              {% else %}
+              <span class="badge badge-archived" style="font-size: 0.75rem"
+                    title="Voided entries are excluded from all totals">Voided</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% else %}
+    <p style="color: var(--text-muted)">No ledger entries for this operation.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

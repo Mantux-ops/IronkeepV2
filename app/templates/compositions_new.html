@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}New Composition — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'compositions' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/compositions">Compositions</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">New</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'New Composition — ' ~ workspace.name %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card">
+  <div class="card-body">
+    <form method="post" action="/workspaces/{{ workspace.slug }}/compositions" class="wide-form">
+
+      <div class="form-group" style="max-width:560px">
+        <label for="name">Composition name</label>
+        <input type="text" id="name" name="name" required
+               value="{{ prev_name }}" placeholder="5-Man ZvZ">
+      </div>
+
+      <div class="form-group" style="max-width:560px">
+        <label for="description">Description <em>(optional)</em></label>
+        <textarea id="description" name="description" rows="2"
+                  placeholder="Standard 5-man ZvZ comp">{{ prev_description }}</textarea>
+      </div>
+
+      <h2>Slot templates</h2>
+      <p class="form-hint">
+        Each row is a slot template. Party number groups slots into parties.
+        Role and Build name are required. Empty rows are skipped.
+      </p>
+
+      <div class="table-wrap">
+        <table class="slot-table data-table">
+          <thead>
+            <tr>
+              <th>Party #</th>
+              <th>Slot #</th>
+              <th>Role <em>*</em></th>
+              <th>Build name <em>*</em></th>
+              <th>Weapon <em>(opt)</em></th>
+              <th>Priority</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="slots-body">
+            {% for i in range(1, 6) %}
+            <tr class="slot-row">
+              <td><input type="number" name="party_number" value="1" min="1"></td>
+              <td><input type="number" name="slot_index" value="{{ i }}" min="1"></td>
+              <td><input type="text" name="role" placeholder="e.g. Healer"></td>
+              <td><input type="text" name="build_name" placeholder="e.g. Hallowfall"></td>
+              <td><input type="text" name="weapon_name" placeholder="e.g. Hallowfall"></td>
+              <td>
+                <select name="priority">
+                  <option value="normal">normal</option>
+                  <option value="core">core</option>
+                </select>
+              </td>
+              <td>
+                <button type="button" class="btn btn-sm btn-danger"
+                        onclick="this.closest('tr').remove()">✕</button>
+              </td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="action-bar">
+        <button type="button" class="btn" onclick="addSlotRow()">+ Add Slot</button>
+      </div>
+
+      <div class="action-bar" style="margin-top:1rem">
+        <input type="submit" value="Create Composition" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+<script>
+function addSlotRow() {
+  const tbody = document.getElementById('slots-body');
+  const nextIndex = tbody.rows.length + 1;
+  const tr = document.createElement('tr');
+  tr.className = 'slot-row';
+  tr.innerHTML = `
+    <td><input type="number" name="party_number" value="1" min="1"></td>
+    <td><input type="number" name="slot_index" value="${nextIndex}" min="1"></td>
+    <td><input type="text" name="role" placeholder="e.g. DPS"></td>
+    <td><input type="text" name="build_name" placeholder="e.g. Bow"></td>
+    <td><input type="text" name="weapon_name" placeholder="e.g. Warbow"></td>
+    <td>
+      <select name="priority">
+        <option value="normal">normal</option>
+        <option value="core">core</option>
+      </select>
+    </td>
+    <td>
+      <button type="button" class="btn btn-sm btn-danger"
+              onclick="this.closest('tr').remove()">✕</button>
+    </td>
+  `;
+  tbody.appendChild(tr);
+  tr.querySelector('input[name="role"]').focus();
+}
+</script>
+{% endblock %}

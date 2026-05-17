@@ -1,0 +1,333 @@
+{% extends "base.html" %}
+{% block title %}{{ operation.title }} — {{ workspace.name }}{% endblock %}
+{% block main_attrs %} data-op-status="{{ operation.status }}"{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <span class="crumb-current">{{ operation.title }}</span>
+{% endblock %}
+
+{% block content %}
+{% include "operation_tabs.html" %}
+{% include "flash_messages.html" %}
+
+{# ── Page header: title left, primary lifecycle action right ─────────────── #}
+<header class="page-header">
+  <div class="page-header__main">
+    <h1>{{ operation.title }}</h1>
+    <p class="page-meta">
+      {{ operation.operation_type | upper }}
+      &nbsp;·&nbsp;
+      {{ operation.scheduled_start_at[:16] | replace("T", " ") }}
+    </p>
+  </div>
+  {% if can_mutate %}
+  <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap">
+    {% if operation.status == "draft" %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/publish"
+          class="inline-form">
+      <button type="submit" class="btn btn-publish">Publish → Planning</button>
+    </form>
+    {% elif operation.status == "planning" %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/lock"
+          class="inline-form">
+      <button type="submit" class="btn btn-lock">Lock Roster</button>
+    </form>
+    {% elif operation.status == "locked" %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/complete"
+          class="inline-form">
+      <button type="submit" class="btn btn-complete">Mark Completed</button>
+    </form>
+    {% elif operation.status == "completed" %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/archive"
+          class="inline-form">
+      <button type="submit" class="btn btn-archive">Archive</button>
+    </form>
+    {% endif %}
+    {# archived: no primary action — read-only terminal state #}
+  </div>
+  {% endif %}
+</header>
+
+{# Summary strip: type + status badge. Scheduled time is already in page-meta. #}
+<div class="summary-strip">
+  <span><strong>{{ operation.operation_type | upper }}</strong></span>
+  <span class="badge badge-{{ operation.status }}">{{ operation.status }}</span>
+  {% if operation.status == "archived" %}
+  <span class="text-muted" style="font-size:0.85rem">· read-only</span>
+  {% endif %}
+</div>
+
+<div class="layout-two-col">
+  <div class="stack">
+
+    {# Secondary lifecycle action — planning only: skip-lock fast-path ─────── #}
+    {% if can_mutate and operation.status == "planning" %}
+    <div class="card">
+      <div class="card-header"><h2>Alternative actions</h2></div>
+      <div class="card-body">
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/complete"
+              class="inline-form">
+          <button type="submit" class="btn btn-sm btn-complete">Mark Completed</button>
+        </form>
+        <p class="text-muted" style="font-size:0.82rem;margin-top:0.5rem">
+          Marks complete without locking the roster — suitable for smaller operations.
+        </p>
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-header"><h2>Plan</h2></div>
+      <div class="card-body">
+        {% if plan %}
+        <p>
+          Composition:
+          <strong>{{ composition.name if composition else plan.albion_composition_id }}</strong>
+          {% if composition and composition.deleted_at %}
+            <span class="badge badge-archived" style="margin-left:0.3em">retired</span>
+          {% endif %}
+          &nbsp;·&nbsp;
+          Signup: <span class="badge badge-{{ plan.signup_status }}">{{ plan.signup_status }}</span>
+        </p>
+        {% if plan.notes %}<p><em>{{ plan.notes }}</em></p>{% endif %}
+
+        {% elif can_mutate and compositions and can_attach_plan %}
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/plan"
+              class="form">
+          <div class="form-group">
+            <label for="comp_select">Composition</label>
+            <select id="comp_select" name="albion_composition_id" required>
+              <option value="" disabled selected>— select —</option>
+              {% for comp in compositions %}
+              <option value="{{ comp.id }}">{{ comp.name }}</option>
+              {% endfor %}
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="signup_status">Signup status</label>
+            <select id="signup_status" name="signup_status">
+              <option value="open">open</option>
+              <option value="closed">closed</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="notes">Notes <em>(optional)</em></label>
+            <textarea id="notes" name="notes" rows="2"
+                      placeholder="Any notes for participants..."></textarea>
+          </div>
+          <input type="submit" value="Attach Plan" class="btn btn-primary">
+        </form>
+
+        {% elif compositions %}
+        <p class="empty-state">Plan attachment is only available while the operation is in draft.</p>
+        {% else %}
+        <p class="empty-state">
+          No plan attached and no compositions exist.
+          <a href="/workspaces/{{ workspace.slug }}/compositions/new">Create a composition first →</a>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Operation Slots</h2></div>
+      <div class="card-body">
+        {% if slot_count > 0 %}
+        <p>
+          <strong>{{ slot_count }}</strong> slot{% if slot_count != 1 %}s{% endif %} generated.
+          &nbsp;·&nbsp;
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner">
+            Open Planner Board →
+          </a>
+        </p>
+
+        {% elif can_mutate and plan and can_generate_slots %}
+        <p class="empty-state">No slots generated yet.</p>
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/generate-slots"
+              class="inline-form">
+          <button type="submit" class="btn btn-primary">
+            Generate Slots from {{ composition.name if composition else "composition" }}
+          </button>
+        </form>
+
+        {% elif plan %}
+        <p class="empty-state">Slot generation is not available while the operation status is {{ operation.status }}.</p>
+
+        {% else %}
+        <p class="empty-state">Attach a plan first, then generate slots.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-header"><h2>Signups</h2></div>
+      <div class="card-body">
+        <p>
+          <strong>{{ signup_count }}</strong>
+          signup{% if signup_count != 1 %}s{% endif %} submitted.
+          &nbsp;·&nbsp;
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup">
+            Signup page →
+          </a>
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="stack">
+    <div class="card">
+      <div class="card-header"><h2>Readiness</h2></div>
+      <div class="card-body">
+        {% if readiness %}
+        <p>
+          <span class="badge badge-{{ readiness.readiness_state }}">
+            {{ readiness.readiness_state | upper }}
+          </span>
+          <span class="text-muted" style="font-size:.8rem">{{ readiness.created_at[:19] | replace("T", " ") }}</span>
+        </p>
+        <div class="stat-grid">
+          <div class="stat-item">
+            <strong>{{ readiness.assigned_slots }}/{{ readiness.total_slots }}</strong>
+            <span>slots assigned</span>
+          </div>
+          <div class="stat-item">
+            <strong>{{ readiness.open_slots }}</strong>
+            <span>open slots</span>
+          </div>
+          <div class="stat-item">
+            <strong>{{ readiness.unassigned_signup_count }}</strong>
+            <span>unassigned signups</span>
+          </div>
+          <div class="stat-item">
+            <strong>{{ readiness.attendance_marked_count }}</strong>
+            <span>attendance marked</span>
+          </div>
+        </div>
+        {% if readiness.missing_roles %}
+        <p class="text-danger" style="margin-top:.75rem;">
+          Role gaps:
+          {% for role, count in readiness.missing_roles.items() %}
+            {{ role }} ×{{ count }}{% if not loop.last %},{% endif %}
+          {% endfor %}
+        </p>
+        {% endif %}
+        {% if readiness.missing_builds %}
+        <p class="text-warning" style="margin-top:.5rem;">
+          Build gaps:
+          {% for build, count in readiness.missing_builds.items() %}
+            {{ build }} ×{{ count }}{% if not loop.last %},{% endif %}
+          {% endfor %}
+        </p>
+        {% endif %}
+        <p class="text-muted" style="margin-top:.75rem;font-size:.85rem;">
+          Attendance: {{ readiness.attendance_unmarked_count }} not marked
+          &nbsp;·&nbsp;
+          Scouts: {{ readiness.scout_count }}
+          &nbsp;·&nbsp;
+          Support: {{ readiness.support_count }}
+        </p>
+        {% else %}
+        <p class="empty-state">No readiness snapshot yet.</p>
+        {% endif %}
+      </div>
+    </div>
+
+    {# Discord announcement preview — owner/officer only, read-only #}
+    {% if can_mutate %}
+    <div class="card">
+      <div class="card-header"><h2>Discord Announcement Preview</h2></div>
+      <div class="card-body">
+
+        {% if discord_preview %}
+        {# Render mock Discord embed #}
+        <div class="discord-embed" style="border-left-color: {{ discord_preview.color_hex }}">
+          <div class="discord-embed__title">{{ discord_preview.title }}</div>
+          {% if discord_preview.description %}
+          <div class="discord-embed__description">{{ discord_preview.description }}</div>
+          {% endif %}
+          <div class="discord-embed__fields">
+            {% for field in discord_preview.fields %}
+            <div class="discord-embed__field{% if not field.inline %} discord-embed__field--block{% endif %}">
+              <div class="discord-embed__field-name">{{ field.name }}</div>
+              <div class="discord-embed__field-value">{{ field.value }}</div>
+            </div>
+            {% endfor %}
+          </div>
+          {% if discord_preview.footer %}
+          <div class="discord-embed__footer">{{ discord_preview.footer.text }}</div>
+          {% endif %}
+        </div>
+        <p class="discord-preview-target">
+          {% from "_discord_macros.html" import discord_name %}
+          Server: {{ discord_name(workspace.discord_guild_id, discord_meta) }}
+          &nbsp;·&nbsp;
+          Channel: #{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}
+        </p>
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/discord/announce"
+              class="inline-form"
+              style="margin-top:0.6rem;display:block">
+          {% if discord_announcement_msg and not discord_announcement_msg.is_deleted %}
+          <button type="submit" class="btn btn-sm btn-primary">
+            Update Discord Announcement
+          </button>
+          <span class="text-muted" style="font-size:0.8rem">
+            (last posted: {{ discord_announcement_msg.posted_at[:16] | replace("T", " ") }})
+          </span>
+          {% else %}
+          <button type="submit" class="btn btn-sm btn-primary">
+            Post to Discord
+          </button>
+          {% endif %}
+        </form>
+
+        {% elif discord_config_gap == "no_guild" %}
+        <div class="alert alert-info">
+          No Discord server configured.
+          <a href="/workspaces/{{ workspace.slug }}/settings/discord">
+            Add your Discord Server ID in Workspace Settings →
+          </a>
+        </div>
+
+        {% elif discord_config_gap == "no_channel" %}
+        <div class="alert alert-info">
+          No announcement channel configured.
+          <a href="/workspaces/{{ workspace.slug }}/settings/discord">
+            Add an announcement channel ID in Workspace Settings →
+          </a>
+        </div>
+
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    <div class="card">
+      <div class="card-header"><h2>Next actions</h2></div>
+      <div class="card-body">
+        <div class="stack">
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn">Open Planner Board</a>
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup" class="btn">Open Signup page</a>
+          {% if readiness %}
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn btn-sm">Recalculate on Planner Board →</a>
+          {% elif not readiness %}
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn btn-sm">Calculate readiness on Planner Board →</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="action-bar" style="margin-top:1rem">
+  <a href="/workspaces/{{ workspace.slug }}" class="btn">← Dashboard</a>
+</div>
+{% endblock %}

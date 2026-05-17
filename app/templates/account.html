@@ -1,0 +1,201 @@
+{% extends "base.html" %}
+{% block title %}My Account — IronkeepV2{% endblock %}
+
+{% block content %}
+<div class="page-container">
+
+  {% set title = 'My Account' %}
+  {% include "page_header.html" %}
+
+  {% if success == 'discord_linked' %}
+  <div class="flash flash-success">Discord account linked successfully.</div>
+  {% endif %}
+  {% if error %}
+  <div class="flash flash-error">{{ error }}</div>
+  {% endif %}
+
+  <div class="card" style="max-width:520px">
+    <div class="card-body">
+      <h2 style="font-size:1rem;margin-bottom:1rem;color:var(--text-muted)">Account</h2>
+
+      <dl class="kv-list">
+        <dt>Display name</dt>
+        <dd>{{ user.display_name }}</dd>
+        <dt>Primary auth</dt>
+        <dd><span class="badge badge-{{ user.auth_provider }}">{{ user.auth_provider }}</span></dd>
+      </dl>
+    </div>
+  </div>
+
+  <div class="card" style="max-width:520px;margin-top:1rem">
+    <div class="card-body">
+      <h2 style="font-size:1rem;margin-bottom:1rem;color:var(--text-muted)">Login identities</h2>
+
+      {% if identities %}
+      <ul class="identity-list">
+        {% for ident in identities %}
+        <li class="identity-row">
+          <span class="badge badge-{{ ident.auth_provider }}">{{ ident.auth_provider }}</span>
+          <span class="identity-pid">{{ ident.provider_user_id }}</span>
+          <span class="page-meta" style="font-size:0.75rem">linked {{ ident.created_at[:10] }}</span>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="page-meta">No identity rows found (backfill may not have run yet).</p>
+      {% endif %}
+
+      {# ------------------------------------------------------------------ #}
+      {# Link Discord button — only for dev users without a discord identity #}
+      {# ------------------------------------------------------------------ #}
+      {% set has_discord = identities | selectattr('auth_provider', 'equalto', 'discord') | list | length > 0 %}
+      {% set has_dev     = identities | selectattr('auth_provider', 'equalto', 'dev') | list | length > 0
+                           or user.auth_provider == 'dev' %}
+
+      {% if has_dev and not has_discord %}
+      <div class="action-bar" style="margin-top:1.25rem">
+        <a href="/auth/discord/link"
+           class="btn btn-primary"
+           style="display:inline-flex;align-items:center;gap:0.5rem">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M20.317 4.37a19.791 19.791 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128 10.2 10.2 0 0 0 .372-.292.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.098.246.198.373.292a.077.077 0 0 1-.006.127 12.299 12.299 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.03z"/>
+          </svg>
+          Link Discord Account
+        </a>
+        <p class="page-meta" style="margin-top:0.5rem;font-size:0.8rem">
+          Linking lets you log in with Discord in production while keeping
+          your workspace memberships and history.
+        </p>
+      </div>
+      {% elif has_discord %}
+      <p class="page-meta" style="margin-top:1rem">
+        Your Discord account is linked. You can log in with Discord in production.
+      </p>
+      {% endif %}
+    </div>
+  </div>
+
+  {# ------------------------------------------------------------------ #}
+  {# Albion Online character claims                                      #}
+  {# ------------------------------------------------------------------ #}
+  <div class="card" style="max-width:520px;margin-top:1rem">
+    <div class="card-body">
+      <h2 style="font-size:1rem;margin-bottom:1rem;color:var(--text-muted)">Albion Online Characters</h2>
+
+      {% if not workspaces_with_claims %}
+      <p class="page-meta">You are not a member of any workspace yet.</p>
+      {% else %}
+
+      {% for item in workspaces_with_claims %}
+      <div style="margin-bottom:1.25rem;padding-bottom:1.25rem;{% if not loop.last %}border-bottom:1px solid var(--border){% endif %}">
+        <p style="font-size:0.85rem;color:var(--text-muted);margin-bottom:0.4rem">
+          <strong style="color:var(--text)">{{ item.workspace.name }}</strong>
+        </p>
+        {% if item.claim %}
+          {% if item.claim.verification_status == 'approved' %}
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span class="badge" style="background:var(--green,#22c55e);color:#fff">Verified</span>
+            <strong>{{ item.claim.character_name }}</strong>
+            {% if item.cache and item.cache.guild_name %}
+            <span class="text-muted" style="font-size:0.85em">— {{ item.cache.guild_name }}</span>
+            {% endif %}
+            {% if item.cache %}
+            <span class="text-muted" style="font-size:0.8em">fetched {{ item.cache.fetched_at[:10] }}</span>
+            {% endif %}
+          </div>
+          <form method="post" action="/account/albion/refresh"
+                style="margin-top:0.5rem">
+            <input type="hidden" name="guild_workspace_id" value="{{ item.workspace.id }}">
+            <button type="submit" class="btn btn-sm">Refresh data</button>
+          </form>
+          {% elif item.claim.verification_status == 'pending' %}
+          <div style="display:flex;align-items:center;gap:0.6rem;flex-wrap:wrap">
+            <span class="badge badge-locked">Pending</span>
+            <span>{{ item.claim.character_name }}</span>
+            <span class="text-muted" style="font-size:0.8em">submitted {{ item.claim.claimed_at[:10] }}</span>
+          </div>
+          {% elif item.claim.verification_status == 'rejected' %}
+          <div>
+            <span class="badge badge-error">Rejected</span>
+            {% if item.claim.review_note %}
+            <span class="text-muted" style="font-size:0.85em;margin-left:0.4rem">{{ item.claim.review_note }}</span>
+            {% endif %}
+          </div>
+          <p class="page-meta" style="margin-top:0.4rem">
+            You may re-submit a new claim below.
+          </p>
+          {% endif %}
+        {% else %}
+        <p class="page-meta" style="margin-bottom:0.3rem">No character linked.</p>
+        {% endif %}
+      </div>
+      {% endfor %}
+
+      {# ---- Character search ----------------------------------------- #}
+      <div style="margin-top:0.75rem">
+        <form method="get" action="/account">
+          <div class="form-group" style="margin-bottom:0.5rem">
+            <label for="search_q" style="font-size:0.85rem">Search Albion character</label>
+            <div style="display:flex;gap:0.5rem;align-items:center;margin-top:0.3rem">
+              <input type="text"
+                     id="search_q"
+                     name="search_q"
+                     value="{{ search_q or '' }}"
+                     placeholder="Character name"
+                     autocomplete="off"
+                     style="flex:1">
+              <button type="submit" class="btn btn-sm">Search</button>
+            </div>
+          </div>
+        </form>
+
+        {% if search_error %}
+        <p class="flash flash-error" style="margin-top:0.5rem;padding:0.4rem 0.75rem">
+          {{ search_error }}
+        </p>
+        {% elif search_q and not search_results %}
+        <p class="text-muted" style="font-size:0.9em;margin-top:0.5rem">
+          No results found for "{{ search_q }}".
+        </p>
+        {% endif %}
+
+        {% if search_results %}
+        <div style="margin-top:0.75rem">
+          <p style="font-size:0.8rem;color:var(--text-muted);margin-bottom:0.5rem">
+            Results for "{{ search_q }}"
+          </p>
+          {% for r in search_results %}
+          <div style="display:flex;align-items:center;justify-content:space-between;
+                      padding:0.45rem 0;border-bottom:1px solid var(--border);gap:1rem;flex-wrap:wrap">
+            <div>
+              <strong style="font-size:0.9rem">{{ r.character_name }}</strong>
+              {% if r.guild_name %}
+              <span class="text-muted" style="font-size:0.82em"> — {{ r.guild_name }}</span>
+              {% endif %}
+            </div>
+            <div style="display:flex;gap:0.4rem;flex-wrap:wrap">
+              {% for item in workspaces_with_claims %}
+              {% if not item.claim or item.claim.verification_status == 'rejected' %}
+              <form method="post" action="/account/albion/claim">
+                <input type="hidden" name="albion_player_id"   value="{{ r.albion_player_id }}">
+                <input type="hidden" name="guild_workspace_id" value="{{ item.workspace.id }}">
+                <button type="submit" class="btn btn-sm btn-primary"
+                        title="Claim for {{ item.workspace.name }}">
+                  Claim — {{ item.workspace.name }}
+                </button>
+              </form>
+              {% endif %}
+              {% endfor %}
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      {% endif %}
+    </div>
+  </div>
+
+</div>
+{% endblock %}

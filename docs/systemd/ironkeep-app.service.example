@@ -1,0 +1,64 @@
+# docs/systemd/ironkeep-app.service.example
+#
+# Systemd service unit for the IronkeepV2 web process.
+#
+# Installation:
+#   sudo cp docs/systemd/ironkeep-app.service.example \
+#             /etc/systemd/system/ironkeep-app.service
+#
+#   # Edit the file to match your paths and user
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ironkeep-app
+#   sudo systemctl start ironkeep-app
+#
+# Logs:
+#   journalctl -u ironkeep-app -f
+#
+# Health check:
+#   curl http://localhost:8000/health
+
+[Unit]
+Description=IronkeepV2 Web Application
+Documentation=file:///opt/ironkeep/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ironkeep
+Group=ironkeep
+WorkingDirectory=/opt/ironkeep
+
+# Load secrets from a file outside the repository.
+# The file must be chmod 600 and owned by the service user.
+EnvironmentFile=/etc/ironkeep/ironkeep.env
+
+# Optional overrides (can also live in ironkeep.env)
+Environment=IRONKEEP_HOST=127.0.0.1
+Environment=IRONKEEP_PORT=8000
+Environment=IRONKEEP_LOG_LEVEL=info
+
+ExecStart=/opt/ironkeep/.venv/bin/bash /opt/ironkeep/scripts/run_app.sh
+
+# Alternatively, invoke uvicorn directly:
+# ExecStart=/opt/ironkeep/.venv/bin/uvicorn app.main:app \
+#   --host 127.0.0.1 --port 8000 --workers 1 --log-level info
+
+Restart=on-failure
+RestartSec=5s
+
+# Resource limits
+LimitNOFILE=65536
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ironkeep
+PrivateTmp=true
+
+# Graceful shutdown timeout
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

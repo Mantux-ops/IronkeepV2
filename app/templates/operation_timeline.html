@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}Timeline — {{ operation.title }}{% endblock %}
+{% block main_attrs %} data-op-status="{{ operation.status }}"{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">{{ operation.title }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Timeline</span>
+{% endblock %}
+
+{% block content %}
+{% include "operation_tabs.html" %}
+{% include "flash_messages.html" %}
+
+{% set title = operation.title ~ ' — Event Timeline' %}
+{% include "page_header.html" %}
+
+{% if events %}
+<div class="card">
+  <div class="card-body" style="padding:0">
+    <ul class="timeline-list" style="padding:var(--space-3)">
+      {% for e in events %}
+      <li class="timeline-entry">
+        {# ── Left column: timestamp ─────────────────────────────────────── #}
+        <div class="timeline-time">
+          {{ e.occurred_at[:10] }}<br>
+          <span style="font-size:0.78rem">{{ e.occurred_at[11:19] }} UTC</span>
+        </div>
+
+        {# ── Right column: label + meta + payload ───────────────────────── #}
+        <div class="timeline-body">
+          <div class="timeline-label">
+            <span class="badge badge-{{ e._group }}">{{ e._group }}</span>
+            {{ e._label }}
+          </div>
+
+          <div class="timeline-meta">
+            {% if e.actor_type == 'user' and e.actor_id %}
+              Officer action
+              <span class="text-muted" style="font-size:0.75rem">({{ e.actor_id[:8] }}…)</span>
+            {% elif e.actor_type == 'discord' %}
+              via Discord
+            {% else %}
+              system
+            {% endif %}
+            &nbsp;·&nbsp;
+            <span class="text-muted" style="font-size:0.75rem">{{ e.entity_type }} {{ e.entity_id[:8] }}…</span>
+          </div>
+
+          {# ── Payout ledger: structured summary ─────────────────────────── #}
+          {% if e._payout_detail %}
+          {% set d = e._payout_detail %}
+          <div class="timeline-payout-detail" style="
+               margin-top: var(--space-1);
+               font-size: 0.82rem;
+               display: flex; flex-wrap: wrap; gap: var(--space-3);
+               color: var(--text-muted)">
+            {% if d.entry_type %}
+            <span>Type: <strong style="color: var(--text)">{{ d.entry_type }}</strong></span>
+            {% endif %}
+            {% if d.amount_silver is not none %}
+            <span>Amount: <strong style="color: var(--text);
+              {%- if d.amount_silver < 0 %} color: var(--error);{% endif %}
+              font-variant-numeric: tabular-nums">
+              {{ '{:,}'.format(d.amount_silver) }} silver
+            </strong></span>
+            {% endif %}
+            {% if d.note %}
+            <span>Note: <em>{{ d.note }}</em></span>
+            {% endif %}
+          </div>
+          {% endif %}
+
+          {# ── Raw payload disclosure (non-payout events or for deep audit) ─ #}
+          {% if e.payload_json and e.payload_json != '{}' %}
+          <details class="timeline-payload">
+            <summary>Raw payload</summary>
+            <pre>{{ e.payload_json }}</pre>
+          </details>
+          {% endif %}
+        </div>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<p class="text-muted" style="margin-top:var(--space-2);font-size:0.85rem">
+  {{ events | length }} event{% if events | length != 1 %}s{% endif %} · newest first
+</p>
+
+{% else %}
+<p class="empty-state">No events recorded yet for this operation.</p>
+{% endif %}
+
+<div class="action-bar" style="margin-top:var(--space-3)">
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}" class="btn">← Overview</a>
+</div>
+{% endblock %}

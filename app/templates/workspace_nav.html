@@ -1,0 +1,20 @@
+{% if workspace %}
+<nav class="workspace-nav" aria-label="Workspace">
+  <a href="/workspaces/{{ workspace.slug }}"
+     class="{% if workspace_nav_active == 'dashboard' %}active{% endif %}">Dashboard</a>
+  <a href="/workspaces/{{ workspace.slug }}/compositions"
+     class="{% if workspace_nav_active == 'compositions' %}active{% endif %}">Compositions</a>
+  {% if can_manage_members %}
+  <a href="/workspaces/{{ workspace.slug }}/members"
+     class="{% if workspace_nav_active == 'members' %}active{% endif %}">Members</a>
+  {% endif %}
+  {% if can_mutate %}
+  <a href="/workspaces/{{ workspace.slug }}/settings/discord"
+     class="{% if workspace_nav_active == 'settings' %}active{% endif %}">Settings</a>
+  <a href="/workspaces/{{ workspace.slug }}/settings/scheduler"
+     class="{% if workspace_nav_active == 'scheduler' %}active{% endif %}">Scheduler</a>
+  <a href="/workspaces/{{ workspace.slug }}/settings/diagnostics"
+     class="{% if workspace_nav_active == 'diagnostics' %}active{% endif %}">Diagnostics</a>
+  {% endif %}
+</nav>
+{% endif %}

@@ -1,0 +1,19 @@
+{# Operation navigation tabs.
+   Include this at the top of every operation-level page.
+   Requires `workspace`, `operation`, and `active_tab` in context. #}
+<nav class="op-tabs">
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}"
+     class="{% if active_tab == 'overview' %}active{% endif %}">Overview</a>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner"
+     class="{% if active_tab == 'planner' %}active{% endif %}">Planner</a>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup"
+     class="{% if active_tab == 'signup' %}active{% endif %}">Signup</a>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/attendance"
+     class="{% if active_tab == 'attendance' %}active{% endif %}">Attendance</a>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/timeline"
+     class="{% if active_tab == 'timeline' %}active{% endif %}">Timeline</a>
+  {% if can_mutate %}
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/ledger"
+     class="{% if active_tab == 'ledger' %}active{% endif %}">Ledger</a>
+  {% endif %}
+</nav>

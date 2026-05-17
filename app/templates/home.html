@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}IronkeepV2 — Workspaces{% endblock %}
+
+{% block content %}
+{% set title = "Workspaces" %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card">
+  <div class="card-body">
+    {% if workspaces %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Slug</th>
+            <th>Game</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ws in workspaces %}
+          <tr>
+            <td><a href="/workspaces/{{ ws.slug }}">{{ ws.name }}</a></td>
+            <td><code>{{ ws.slug }}</code></td>
+            <td>{{ ws.primary_game }}</td>
+            <td><a href="/workspaces/{{ ws.slug }}" class="btn btn-sm">Open</a></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No workspaces yet.</p>
+    {% endif %}
+
+    <div class="action-bar">
+      <a href="/workspaces/new" class="btn btn-primary">+ New Workspace</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

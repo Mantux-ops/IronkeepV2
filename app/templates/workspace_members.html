@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Members — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'members' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+{% set title = 'Members — ' ~ workspace.name %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+    <h2 style="margin:0">Workspace members</h2>
+    {% if can_manage_members %}
+    <a href="/workspaces/{{ workspace.slug }}/members/add" class="btn btn-sm btn-primary">+ Add Member</a>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if members %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Display name</th>
+            <th>Role</th>
+            <th>Joined</th>
+            <th title="CTA attendance rate (last 90 days, excused excluded). Shows after 3+ resolved assignments.">Attendance (90d)</th>
+            <th>Albion</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for m in members %}
+          {% set is_self = m.user_id == current_user.id %}
+          {% set is_owner_target = m.role == 'owner' %}
+          {% set actor_is_owner = membership.role == 'owner' %}
+          {% set officer_removing_officer = (not actor_is_owner) and m.role == 'officer' %}
+          {% set can_remove = can_manage_members and not is_self and not is_owner_target and not officer_removing_officer %}
+          {% set pid = participant_id_by_name.get(m.display_name) %}
+          {% set rel = reliability_scores.get(pid) if pid else none %}
+          {% set albion_claim = claims_by_user_id.get(m.user_id) %}
+          {% set albion_cache = cache_by_player_id.get(albion_claim.albion_player_id) if albion_claim else none %}
+          <tr class="{% if is_self %}row-assigned{% endif %}">
+            <td>
+              <strong>{{ m.display_name }}</strong>
+              {% if is_self %}<span class="text-muted" style="font-size:0.85em"> (you)</span>{% endif %}
+            </td>
+            <td><span class="badge badge-{{ m.role }}">{{ m.role }}</span></td>
+            <td class="text-muted" style="font-size:0.9em">{{ m.created_at[:10] }}</td>
+            <td>
+              {% if rel and rel.display %}
+                <span class="rel-score {{ rel.rate_class }}">{{ rel.display }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td style="font-size:0.85em">
+              {% if albion_claim %}
+                {% if albion_claim.verification_status == 'approved' %}
+                <span style="color:var(--green,#22c55e);font-weight:600">&#10003;</span>
+                <span>{{ albion_claim.character_name }}</span>
+                {% if albion_cache and albion_cache.guild_name %}
+                <span class="text-muted"> — {{ albion_cache.guild_name }}</span>
+                {% endif %}
+                {% elif albion_claim.verification_status == 'pending' %}
+                <span class="badge badge-locked" style="font-size:0.75em">Pending</span>
+                <span class="text-muted">{{ albion_claim.character_name }}</span>
+                {% if can_manage_members %}
+                <div style="margin-top:0.3rem;display:flex;gap:0.3rem">
+                  <form method="post"
+                        action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/albion/approve"
+                        class="inline-form">
+                    <button type="submit" class="btn btn-sm btn-primary"
+                            onclick="return confirm('Approve {{ albion_claim.character_name }} for {{ m.display_name }}?')">
+                      Approve
+                    </button>
+                  </form>
+                  <form method="post"
+                        action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/albion/reject"
+                        class="inline-form">
+                    <input type="hidden" name="review_note" value="">
+                    <button type="submit" class="btn btn-sm btn-danger"
+                            onclick="return confirm('Reject claim for {{ m.display_name }}?')">
+                      Reject
+                    </button>
+                  </form>
+                </div>
+                {% endif %}
+                {% elif albion_claim.verification_status == 'rejected' %}
+                <span class="badge badge-error" style="font-size:0.75em">Rejected</span>
+                {% endif %}
+              {% else %}
+              <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if can_remove %}
+              <form method="post"
+                    action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/remove"
+                    class="inline-form"
+                    onsubmit="return confirm('Remove {{ m.display_name }} from this workspace?')">
+                <button type="submit" class="btn btn-sm btn-danger">Remove</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No members yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

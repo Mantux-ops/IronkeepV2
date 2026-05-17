@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Add Member — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'members' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Add Member — ' ~ workspace.name %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    <form method="post" action="/workspaces/{{ workspace.slug }}/members/add" class="form">
+      <div class="form-group">
+        <label for="display_name">Display name</label>
+        <input type="text" id="display_name" name="display_name" required
+               value="{{ prev_display_name }}" placeholder="BenchPlayer">
+      </div>
+      <div class="form-group">
+        <label for="role">Role</label>
+        <select id="role" name="role">
+          <option value="member" {% if prev_role == "member" %}selected{% endif %}>member</option>
+          <option value="officer" {% if prev_role == "officer" %}selected{% endif %}>officer</option>
+        </select>
+      </div>
+      <div class="action-bar">
+        <input type="submit" value="Add Member" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

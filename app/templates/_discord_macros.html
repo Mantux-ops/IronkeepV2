@@ -1,0 +1,25 @@
+{#
+  discord_name(snowflake, meta_dict)
+
+  Renders a Discord snowflake as "Name · …last4" when a cache row is present,
+  or as "…last4" when the cache is empty.  Stale rows (is_stale=True on the
+  cache dict row, set server-side by the route) append "(stale)".
+
+  Usage in templates:
+    {% from "_discord_macros.html" import discord_name %}
+    {{ discord_name(workspace.discord_guild_id, discord_meta) }}
+
+  meta_dict is the dict returned by get_discord_metadata_map(), enriched with
+  an `is_stale` boolean by the route helper _enrich_discord_meta().
+#}
+{% macro discord_name(snowflake, meta_dict) %}
+{%- if snowflake -%}
+  {%- set row = meta_dict.get(snowflake) if meta_dict else none -%}
+  {%- set short_id = '…' ~ snowflake[-4:] -%}
+  {%- if row -%}
+    <span class="discord-name" title="{{ snowflake }}">{{ row.name }}&thinsp;·&thinsp;<span class="discord-name__id">{{ short_id }}</span>{%- if row.is_stale %}&nbsp;<span class="discord-name__stale">(stale)</span>{%- endif %}</span>
+  {%- else -%}
+    <code title="{{ snowflake }}">{{ short_id }}</code>
+  {%- endif -%}
+{%- endif -%}
+{% endmacro %}

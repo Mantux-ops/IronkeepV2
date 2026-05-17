@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block title %}Scheduler Status — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'scheduler' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Scheduler Status — ' ~ workspace.name %}
+    {% set subtitle = 'Read-only view of scheduler health and recent job runs. No controls are available from this page.' %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 1: Health banner                                            #}
+    {# ------------------------------------------------------------------ #}
+    {% if health.status == 'never_run' %}
+    <div class="alert alert-info" role="status">
+      <strong>ℹ Never run</strong> — {{ health.message }}
+    </div>
+    {% elif health.status == 'stuck' %}
+    <div class="alert alert-warning" role="alert">
+      <strong>⚠ Stuck job detected</strong> — {{ health.message }}
+    </div>
+    {% elif health.status == 'stale' %}
+    <div class="alert alert-warning" role="alert">
+      <strong>⚠ Scheduler may be stopped</strong> — {{ health.message }}
+    </div>
+    {% else %}
+    <div class="alert alert-success" role="status">
+      <strong>✓ Active</strong> — {{ health.message }}
+    </div>
+    {% endif %}
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 2: Workspace-scoped dispatch failure backlog               #}
+    {# ------------------------------------------------------------------ #}
+    <div style="margin: 1rem 0;">
+      {% if pending_count > 0 %}
+      <p class="alert alert-warning" style="margin:0">
+        <strong>Pending Discord retries for this workspace:</strong>
+        {{ pending_count }} row{{ 's' if pending_count != 1 else '' }} awaiting retry.
+        The <code>retry_dispatch_failures</code> job will process these at the next poll cycle.
+      </p>
+      {% else %}
+      <p style="color: var(--text-muted); font-size: 0.875rem; margin: 0">
+        ✓ No pending Discord dispatch failures for this workspace.
+      </p>
+      {% endif %}
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 3: Pending Discord dispatch retries                        #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="font-size: 1rem; margin: 1.25rem 0 0.5rem">Pending Discord Retries</h2>
+    <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0 0 0.75rem">
+      Showing up to 50 <code>pending_retry</code> rows for this workspace, ordered by next scheduled attempt.
+      The <code>retry_dispatch_failures</code> job processes these automatically.
+    </p>
+
+    {% if pending_failures %}
+    <div style="overflow-x: auto">
+      <table class="sched-table">
+        <thead>
+          <tr>
+            <th>Event type</th>
+            <th>Retries</th>
+            <th>Last attempt (UTC)</th>
+            <th>Next attempt (UTC)</th>
+            <th>Error</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for f in pending_failures %}
+          <tr>
+            <td class="col-job" style="font-family: monospace; font-size: 0.82rem">{{ f.event_type }}</td>
+            <td style="text-align: right; font-variant-numeric: tabular-nums">{{ f.retry_count }}</td>
+            <td class="col-time">{{ f.attempted_at_fmt }}</td>
+            <td class="col-time">{{ f.next_attempt_at_fmt }}</td>
+            <td>
+              <span style="font-size: 0.82rem; color: var(--text-muted)">{{ f.error_summary }}</span>
+              {% if f.payload_safe %}
+              <details class="result-details">
+                <summary style="font-size: 0.78rem">View payload</summary>
+                <pre style="max-height: 8rem; overflow-y: auto">{{ f.payload_safe[:2000] }}</pre>
+              </details>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 0.875rem; margin: 0 0 1rem">
+      No pending Discord retries for this workspace.
+    </p>
+    {% endif %}
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 4: Recent scheduler runs table                             #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="font-size: 1rem; margin: 1.25rem 0 0.5rem">Recent Runs</h2>
+    <p style="font-size: 0.82rem; color: var(--text-muted); margin: 0 0 0.75rem">
+      Showing up to 60 most recent job executions (global — all workspaces share the same scheduler process).
+    </p>
+
+    {% if runs %}
+    <div style="overflow-x: auto">
+      <table class="sched-table">
+        <thead>
+          <tr>
+            <th>Job</th>
+            <th>Started</th>
+            <th>Duration</th>
+            <th>Status</th>
+            <th>Summary</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for run in runs %}
+          <tr class="{% if run.badge_status == 'stuck' %}row-stuck{% endif %}">
+
+            <td class="col-job">{{ run.job_name }}</td>
+
+            <td class="col-time">{{ run.started_at_fmt }}</td>
+
+            <td class="col-dur">{{ run.duration }}</td>
+
+            <td>
+              {% if run.badge_status == 'success' %}
+              <span class="badge badge-success">✓ success</span>
+              {% elif run.badge_status == 'error' %}
+              <span class="badge badge-error">✗ error</span>
+              {% elif run.badge_status == 'stuck' %}
+              <span class="badge badge-stuck">⚠ stuck?</span>
+              {% else %}
+              <span class="badge badge-running">⟳ running</span>
+              {% endif %}
+            </td>
+
+            <td>
+              {# Compact key: value summary #}
+              {% if run.result_summary %}
+              <span style="font-size: 0.82rem; color: var(--text-muted)">{{ run.result_summary }}</span>
+              {% endif %}
+
+              {# Raw result JSON in a disclosure #}
+              {% if run.result_json and run.result_json != '{}' %}
+              <details class="result-details">
+                <summary>View raw result</summary>
+                <pre>{{ run.result_json }}</pre>
+              </details>
+              {% endif %}
+
+              {# Error message #}
+              {% if run.error_message %}
+              <div class="col-err">{{ run.error_message }}</div>
+              {% endif %}
+            </td>
+
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p style="color: var(--text-muted); font-size: 0.875rem">
+      No scheduler runs recorded yet.
+    </p>
+    {% endif %}
+
+    <p style="margin-top: 1.5rem; font-size: 0.78rem; color: var(--text-muted)">
+      All times are UTC. Run history is stored in the <code>scheduler_runs</code> table and is never automatically deleted.
+      A row showing <em>⚠ stuck?</em> indicates the scheduler process may have crashed
+      (the job started but <code>finished_at</code> was never written).
+    </p>
+
+  </div>{# /card-body #}
+</div>{# /card #}
+{% endblock %}

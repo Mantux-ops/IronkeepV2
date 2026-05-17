@@ -1,0 +1,190 @@
+{% extends "base.html" %}
+{% block title %}Diagnostics — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'diagnostics' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Diagnostics — ' ~ workspace.name %}
+    {% set subtitle = 'Read-only operational health summary. No actions are available from this page.' %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 1: Database                                                 #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="margin-top: var(--space-4)">Database</h2>
+    <table class="sched-table" style="max-width: 560px">
+      <tbody>
+        <tr>
+          <td>Reachable</td>
+          <td>
+            {% if db_info.reachable %}
+            <span class="badge badge-completed">✓ yes</span>
+            {% else %}
+            <span class="badge badge-error">✗ no</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>WAL mode</td>
+          <td>
+            {% if db_info.wal_mode %}
+            <span class="badge badge-completed">enabled</span>
+            {% else %}
+            <span class="badge badge-draft">disabled</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>File</td>
+          <td><code>{{ db_file_info.display_name }}</code></td>
+        </tr>
+        <tr>
+          <td>File size</td>
+          <td>{{ db_file_info.size_human }}</td>
+        </tr>
+        <tr>
+          <td>Last modified</td>
+          <td class="col-time">{{ format_utc(db_file_info.modified_at) }}</td>
+        </tr>
+        <tr>
+          <td>WAL file present</td>
+          <td>
+            {% if db_file_info.wal_present %}
+            <span class="badge badge-draft">yes — {{ db_file_info.wal_size_human }}</span>
+            {% else %}
+            <span class="badge badge-completed">no (clean checkpoint)</span>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 2: Scheduler health                                         #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="margin-top: var(--space-5)">Scheduler</h2>
+
+    {% if scheduler_health.status == 'never_run' %}
+    <div class="alert alert-info" role="status">
+      <strong>ℹ Never run</strong> — {{ scheduler_health.message }}
+    </div>
+    {% elif scheduler_health.status == 'stuck' %}
+    <div class="alert alert-warning" role="alert">
+      <strong>⚠ Stuck job detected</strong> — {{ scheduler_health.message }}
+    </div>
+    {% elif scheduler_health.status == 'stale' %}
+    <div class="alert alert-warning" role="alert">
+      <strong>⚠ Scheduler may be stopped</strong> — {{ scheduler_health.message }}
+    </div>
+    {% else %}
+    <div class="alert alert-success" role="status">
+      <strong>✓ Healthy</strong> — {{ scheduler_health.message }}
+    </div>
+    {% endif %}
+
+    <table class="sched-table" style="max-width: 480px; margin-top: var(--space-3)">
+      <tbody>
+        <tr>
+          <td>Last seen</td>
+          <td class="col-time">
+            {{ format_utc(scheduler_health.last_seen_at) }}
+          </td>
+        </tr>
+        <tr>
+          <td>Status</td>
+          <td>
+            <span class="badge
+              {%- if scheduler_health.status == 'ok' %} badge-completed
+              {%- elif scheduler_health.status == 'never_run' %} badge-draft
+              {%- else %} badge-warning
+              {%- endif %}">{{ scheduler_health.status }}</span>
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 3: Retry backlog                                            #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="margin-top: var(--space-5)">Retry Backlog</h2>
+    <table class="sched-table" style="max-width: 480px">
+      <tbody>
+        <tr>
+          <td>Pending retries (all workspaces)</td>
+          <td>
+            {% if pending_retries == 0 %}
+            <span class="badge badge-completed">0</span>
+            {% else %}
+            <span class="badge badge-warning">{{ pending_retries }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>Pending retries (this workspace)</td>
+          <td>
+            {% if ws_pending == 0 %}
+            <span class="badge badge-completed">0</span>
+            {% else %}
+            <span class="badge badge-warning">{{ ws_pending }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        <tr>
+          <td>Failed scheduler runs (last 24 h)</td>
+          <td>
+            {% if recent_errors == 0 %}
+            <span class="badge badge-completed">0</span>
+            {% else %}
+            <span class="badge badge-error">{{ recent_errors }}</span>
+            {% endif %}
+          </td>
+        </tr>
+      </tbody>
+    </table>
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 4: Backup & Recovery guidance                               #}
+    {# ------------------------------------------------------------------ #}
+    <h2 style="margin-top: var(--space-5)">Backup &amp; Recovery</h2>
+
+    <div class="alert alert-info" role="note" style="max-width: 700px">
+      <strong>Backup recommendations</strong>
+      <ul style="margin: var(--space-2) 0 0 var(--space-3)">
+        <li>Copy the database file to a safe location while the application is running using Python's <code>sqlite3.Connection.backup()</code> API (WAL-aware, no CLI required).</li>
+        <li>Always include the <code>{{ db_file_info.display_name }}-wal</code> and <code>{{ db_file_info.display_name }}-shm</code> files if you copy at the OS level — missing these may produce a corrupt backup.</li>
+        <li>Store backups outside the application directory and verify them periodically.</li>
+        <li>Test your backups by running the restore validation checks before relying on them in production.</li>
+      </ul>
+    </div>
+
+    <div class="alert alert-warning" role="note" style="max-width: 700px; margin-top: var(--space-3)">
+      <strong>Restore cautions</strong>
+      <ul style="margin: var(--space-2) 0 0 var(--space-3)">
+        <li>Stop the application and scheduler before replacing the database file.</li>
+        <li>After restoring, verify the backup is readable and all core tables are present before restarting.</li>
+        <li>Run <code>PRAGMA integrity_check</code> on the restored file to confirm it is intact.</li>
+        <li>Any operations, events, or ledger entries created after the backup was taken will be lost.</li>
+      </ul>
+    </div>
+
+    {# ------------------------------------------------------------------ #}
+    {# Section 5: Links                                                    #}
+    {# ------------------------------------------------------------------ #}
+    <div class="action-bar" style="margin-top: var(--space-4)">
+      <a href="/workspaces/{{ workspace.slug }}/settings/scheduler" class="btn">
+        View full scheduler status →
+      </a>
+      <a href="/health" class="btn" target="_blank" rel="noopener">
+        JSON health endpoint ↗
+      </a>
+    </div>
+
+  </div>
+</div>
+{% endblock %}

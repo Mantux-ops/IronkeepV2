@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block title %}New Operation — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'dashboard' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <span class="crumb-current">New Operation</span>
+{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'New Operation — ' ~ workspace.name %}
+    {% include "page_header.html" %}
+    {% include "flash_messages.html" %}
+
+    <form method="post" action="/workspaces/{{ workspace.slug }}/operations" class="form">
+      <div class="form-group">
+        <label for="title">Title</label>
+        <input type="text" id="title" name="title" required
+               value="{{ prev_title }}" placeholder="Saturday ZvZ">
+      </div>
+
+      <div class="form-group">
+        <label for="operation_type">Type</label>
+        <select id="operation_type" name="operation_type">
+          {% set types = ["zvz", "ganking", "roads", "hellgate", "avalon", "other"] %}
+          {% for t in types %}
+          <option value="{{ t }}" {% if prev_type == t %}selected{% endif %}>{{ t }}</option>
+          {% endfor %}
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="scheduled_start_at">Scheduled start</label>
+        <input type="datetime-local" id="scheduled_start_at" name="scheduled_start_at"
+               required value="{{ default_start }}">
+        <span class="form-hint">Your local time. Stored as-is.</span>
+      </div>
+
+      <div class="action-bar">
+        <input type="submit" value="Create Operation" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

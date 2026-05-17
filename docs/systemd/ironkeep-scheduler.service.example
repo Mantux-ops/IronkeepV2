@@ -1,0 +1,68 @@
+# docs/systemd/ironkeep-scheduler.service.example
+#
+# Systemd service unit for the IronkeepV2 background scheduler process.
+#
+# Installation:
+#   sudo cp docs/systemd/ironkeep-scheduler.service.example \
+#             /etc/systemd/system/ironkeep-scheduler.service
+#
+#   # Edit the file to match your paths and user
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable ironkeep-scheduler
+#   sudo systemctl start ironkeep-scheduler
+#
+# Logs:
+#   journalctl -u ironkeep-scheduler -f
+#
+# Notes:
+#   - The scheduler shares the same SQLite database as the web process.
+#   - SCHEDULER_ENABLED=1 is required — the process exits immediately without it.
+#   - DISCORD_DISPATCH_ENABLED=1 enables live dispatch retry execution.
+#     Set to "0" or omit to run the scheduler in dry-run mode (no Discord calls).
+#   - Safe to restart at any time — all jobs are idempotent and use
+#     claim/finalize patterns to prevent duplicate work.
+
+[Unit]
+Description=IronkeepV2 Background Scheduler
+Documentation=file:///opt/ironkeep/docs/deployment.md
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ironkeep
+Group=ironkeep
+WorkingDirectory=/opt/ironkeep
+
+# Load secrets from a file outside the repository.
+EnvironmentFile=/etc/ironkeep/ironkeep.env
+
+# Scheduler-specific settings
+Environment=SCHEDULER_ENABLED=1
+Environment=DISCORD_DISPATCH_ENABLED=1
+Environment=SCHEDULER_POLL_SECONDS=300
+
+ExecStart=/opt/ironkeep/.venv/bin/bash /opt/ironkeep/scripts/run_scheduler.sh
+
+# Alternatively, invoke the module directly:
+# ExecStart=/opt/ironkeep/.venv/bin/python -m app.scheduler
+
+Restart=on-failure
+RestartSec=10s
+
+# Resource limits
+LimitNOFILE=4096
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/ironkeep
+PrivateTmp=true
+
+# The scheduler loop is intentionally long-running.
+# Give it time to complete a job before SIGKILL.
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

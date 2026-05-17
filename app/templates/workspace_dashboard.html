@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% block title %}{{ workspace.name }} — IronkeepV2{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'dashboard' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+{% set title = workspace.name %}
+{% set meta = workspace.primary_game ~ ' · slug: ' ~ workspace.slug %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+    <h2 style="margin:0">Operations</h2>
+    {% if show_archived %}
+      <a href="?" class="text-muted" style="font-size:0.85rem">Hide archived</a>
+    {% elif (archived_count | default(0)) > 0 %}
+      <a href="?show_archived=1" class="text-muted" style="font-size:0.85rem">
+        Show {{ archived_count }} archived
+      </a>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    {% if operations %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Title</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Readiness</th>
+            <th>Slots</th>
+            <th>Pending</th>
+            <th>Scheduled</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for op in operations %}
+          {% set rs = readiness_by_op.get(op.id) if readiness_by_op is defined else None %}
+          <tr class="{% if op.status == 'archived' %}row-muted{% endif %}">
+            <td><a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}">{{ op.title }}</a></td>
+            <td>{{ op.operation_type }}</td>
+            <td><span class="badge badge-{{ op.status }}">{{ op.status }}</span></td>
+            <td>
+              {% if rs %}
+                <span class="badge badge-{{ rs.readiness_state }}">{{ rs.readiness_state | replace("_", " ") }}</span>
+              {% else %}
+                <em class="text-muted">—</em>
+              {% endif %}
+            </td>
+            <td>
+              {% if rs %}
+                {{ rs.assigned_slots }} / {{ rs.total_slots }}
+                {% if rs.open_slots > 0 %}
+                  <span class="text-muted" style="font-size:0.85em"> · {{ rs.open_slots }} open</span>
+                {% endif %}
+              {% else %}
+                <em class="text-muted">—</em>
+              {% endif %}
+            </td>
+            <td>
+              {% if rs %}
+                {% if rs.unassigned_signup_count > 0 %}
+                  <span class="text-warning">{{ rs.unassigned_signup_count }}</span>
+                {% else %}
+                  <span class="text-muted">0</span>
+                {% endif %}
+              {% else %}
+                <em class="text-muted">—</em>
+              {% endif %}
+            </td>
+            <td class="text-muted" style="white-space:nowrap;font-size:0.9em">
+              {{ friendly_dt(op.scheduled_start_at) if friendly_dt is defined else op.scheduled_start_at[:16] | replace("T", " ") }}
+            </td>
+            <td>
+              <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}" class="btn btn-sm">Detail</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif show_archived %}
+    <p class="empty-state">No operations in this workspace.</p>
+    {% else %}
+    <p class="empty-state">No operations yet.</p>
+    {% endif %}
+
+    <div class="action-bar">
+      <a href="/workspaces/{{ workspace.slug }}/operations/new" class="btn btn-primary">+ New Operation</a>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Quick links</h2></div>
+  <div class="card-body">
+    <div class="action-bar">
+      <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">Compositions</a>
+    </div>
+  </div>
+</div>
+{% endblock %}
