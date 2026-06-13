@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% from "_doctrine_macros.html" import doctrine_summary %}
+{% block title %}Builds — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <span class="crumb-current">Builds</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'Build Library — ' ~ workspace.name %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+{% if success == 'retired' %}
+<div class="alert alert-info" style="margin-bottom:var(--space-4)">Build retired.</div>
+{% endif %}
+
+<div class="action-bar" style="margin-bottom:var(--space-4)">
+  {% if can_mutate %}
+  <a href="/workspaces/{{ workspace.slug }}/builds/new" class="btn btn-primary">+ New Build</a>
+  <a href="/workspaces/{{ workspace.slug }}/builds/import" class="btn btn-sm">Import CSV</a>
+  {% endif %}
+  {% if not show_retired and retired_count > 0 %}
+  <a href="?show_retired=1" class="btn btn-sm btn-muted">Show {{ retired_count }} retired</a>
+  {% elif show_retired %}
+  <a href="/workspaces/{{ workspace.slug }}/builds" class="btn btn-sm btn-muted">Hide retired</a>
+  {% endif %}
+</div>
+
+{# Role filter pills — only shown when 2+ distinct roles exist #}
+{% if available_roles | length >= 2 %}
+<div class="bld-role-filter" style="margin-bottom:var(--space-4);display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center">
+  <span class="text-muted" style="font-size:0.85rem">Filter:</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds{% if show_retired %}?show_retired=1{% endif %}"
+     class="btn btn-sm{% if not role_filter %} btn-secondary{% else %} btn-ghost{% endif %}">All</a>
+  {% for r in available_roles %}
+  <a href="/workspaces/{{ workspace.slug }}/builds?role={{ r | urlencode }}{% if show_retired %}&show_retired=1{% endif %}"
+     class="btn btn-sm{% if role_filter == r | lower %} btn-secondary{% else %} btn-ghost{% endif %}">{{ r }}</a>
+  {% endfor %}
+</div>
+{% endif %}
+
+{% if builds %}
+<div class="bld-list">
+  {% for build in builds %}
+  <div class="bld-card{% if build.retired_at %} bld-card--retired{% endif %}" data-role="{{ build.role | lower }}">
+    <div class="bld-card__header">
+      {% if build.doctrine_role %}
+      <span class="bld-card__doctrine-role bld-doctrine-role">{{ build.doctrine_role }}</span>
+      {% endif %}
+      <span class="bld-card__role">{{ build.role }}</span>
+      <span class="bld-card__name">
+        <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}">{{ build.name }}</a>
+      </span>
+      {% if build.usage_count and build.usage_count > 0 %}
+      <span class="bld-card__usage text-muted" style="font-size:0.8rem" title="Referenced in {{ build.usage_count }} active composition(s)">
+        used in {{ build.usage_count }} comp{% if build.usage_count != 1 %}s{% endif %}
+      </span>
+      {% endif %}
+      {% if build.retired_at %}
+      <span class="badge badge-archived">retired</span>
+      {% endif %}
+    </div>
+    <div class="bld-card__body">
+      {{ doctrine_summary(build, css_class='bld-card__doctrine') }}
+    </div>
+    {% if can_mutate and not build.retired_at %}
+    <div class="bld-card__actions">
+      <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/edit"
+         class="btn btn-sm">Edit</a>
+      <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/fork"
+         class="btn btn-sm">Fork →</a>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card">
+  <div class="card-body">
+    <p class="empty-state">
+      No builds defined yet.
+      {% if can_mutate %}
+      <a href="/workspaces/{{ workspace.slug }}/builds/new">Create your first build →</a>
+      {% endif %}
+    </p>
+  </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top:var(--space-4)">
+  <a href="/workspaces/{{ workspace.slug }}" class="btn">← Dashboard</a>
+</div>
+{% endblock %}

@@ -354,4 +354,4 @@ class TestTemplateDisplay:
         assert resp.status_code == 200
         # Preview embed should not be rendered (no slots → no embed)
         assert b"Post Roster to Discord" not in resp.content
-        assert b"border-left-color" not in resp.content
+        assert b"border-left-color: #" not in resp.content

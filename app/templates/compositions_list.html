@@ -17,58 +17,146 @@
 {% include "flash_messages.html" %}
 
 <div class="card">
-  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap">
     <h2 style="margin:0">Compositions</h2>
-    {% if show_deleted %}
-      <a href="?" class="text-muted" style="font-size:0.85rem">Hide retired</a>
-    {% elif (deleted_count | default(0)) > 0 %}
-      <a href="?show_deleted=1" class="text-muted" style="font-size:0.85rem">
-        Show {{ deleted_count }} retired
-      </a>
-    {% endif %}
+    <div style="display:flex;align-items:center;gap:0.75rem;flex-wrap:wrap">
+      {# Name search — server-side, preserves show_deleted state #}
+      <form method="get" action="" class="inline-form">
+        {% if show_deleted %}<input type="hidden" name="show_deleted" value="1">{% endif %}
+        <input type="text" name="q" value="{{ q }}" placeholder="Search by name…"
+               style="width:14rem;font-size:0.875rem" aria-label="Search compositions">
+        <button type="submit" class="btn btn-sm">Search</button>
+        {% if q %}<a href="?{% if show_deleted %}show_deleted=1{% endif %}" class="btn btn-sm btn-ghost">✕ Clear</a>{% endif %}
+      </form>
+      {# Retired compositions toggle #}
+      {% if show_deleted %}
+        <a href="?{% if q %}q={{ q }}&{% endif %}" class="text-muted" style="font-size:0.85rem">Hide retired</a>
+      {% elif (deleted_count | default(0)) > 0 %}
+        <a href="?{% if q %}q={{ q }}&{% endif %}show_deleted=1" class="text-muted" style="font-size:0.85rem">
+          Show {{ deleted_count }} retired
+        </a>
+      {% endif %}
+    </div>
   </div>
   <div class="card-body">
+
+    {# ── Framing copy: compositions as reusable tactical assets ── #}
+    <p class="text-muted" style="font-size:0.875rem;margin-bottom:var(--space-4)">
+      A composition defines the tactical plan for an operation — the parties, roles, and builds
+      your guild will field. Attach a composition to an operation to generate roster slots and begin
+      assigning players in the Tactical Planner.
+      <span style="display:block;margin-top:0.25rem;color:var(--text-faint)">
+        Compositions are reusable. The same composition can back multiple operations.
+        Update build assignments directly in the Tactical Planner once an operation is active.
+      </span>
+    </p>
+
     {% if compositions %}
     <div class="table-wrap">
       <table class="data-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Slots</th>
-            <th>Description</th>
-            <th></th>
+            <th scope="col">Name</th>
+            <th scope="col">Slots</th>
+            <th scope="col">Role mix</th>
+            <th scope="col">Active ops</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           {% for comp in compositions %}
+          {% set tally = comp_role_tallies.get(comp.id, {}) %}
+          {% set active_ops = comp_op_counts.get(comp.id, 0) %}
           <tr class="{% if comp.deleted_at %}row-muted{% endif %}">
+
+            {# Name + retired badge — name links to tactical detail page #}
             <td>
-              <strong>{{ comp.name }}</strong>
+              <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}"
+                 style="font-weight:700">{{ comp.name }}</a>
               {% if comp.deleted_at %}
                 <span class="badge badge-archived" style="margin-left:0.4em">retired</span>
               {% endif %}
-            </td>
-            <td>{{ slot_counts[comp.id] }}</td>
-            <td>{{ comp.description or "—" }}</td>
-            <td>
-              {% if can_mutate and not comp.deleted_at %}
-              <form method="post"
-                    action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/retire"
-                    class="inline-form"
-                    onsubmit="return confirm('Retire {{ comp.name }}? Existing operations will not be affected.')">
-                <button type="submit" class="btn btn-sm btn-danger">Retire</button>
-              </form>
+              {% if comp.description %}
+                <div class="col-meta">{{ comp.description }}</div>
               {% endif %}
             </td>
+
+            {# Slot count — link to Edit Slots when zero so the state is actionable #}
+            <td style="font-variant-numeric:tabular-nums">
+              {% if slot_counts[comp.id] == 0 and can_mutate and not comp.deleted_at %}
+              <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/edit"
+                 class="text-muted" style="font-size:0.85rem" title="No slots yet — add slots">0 <span style="font-size:0.75rem">(no slots yet)</span></a>
+              {% else %}
+              {{ slot_counts[comp.id] }}
+              {% endif %}
+            </td>
+
+            {# Role mix: compact T/H/D/S/R tally #}
+            <td>
+              {% if slot_counts[comp.id] > 0 %}
+              <span class="role-tally" style="font-size:0.75rem">
+                <span class="role-tally__item{% if tally.get('tank',0) == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ tally.get('tank', 0) }}</strong></span>
+                <span class="role-tally__item{% if tally.get('healer',0) == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ tally.get('healer', 0) }}</strong></span>
+                <span class="role-tally__item{% if tally.get('dps',0) == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ tally.get('dps', 0) }}</strong></span>
+                <span class="role-tally__item{% if tally.get('support',0) == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ tally.get('support', 0) }}</strong></span>
+                <span class="role-tally__item{% if tally.get('ranged',0) == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ tally.get('ranged', 0) }}</strong></span>
+              </span>
+              {% else %}
+              <span class="text-muted" style="font-size:0.8rem">—</span>
+              {% endif %}
+            </td>
+
+            {# Active ops count — reuse context #}
+            <td style="font-variant-numeric:tabular-nums">
+              {% if active_ops > 0 %}
+              <a href="/workspaces/{{ workspace.slug }}"
+                 class="text-muted"
+                 style="font-size:0.85rem"
+                 title="View active operations on the dashboard">
+                {{ active_ops }} active
+              </a>
+              {% else %}
+              <span class="text-muted" style="font-size:0.8rem">—</span>
+              {% endif %}
+            </td>
+
+            {# Actions: Edit · Clone · Retire #}
+            <td>
+              <div style="display:flex;gap:0.5rem;align-items:center;flex-wrap:wrap">
+                {% if can_mutate and not comp.deleted_at %}
+                <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/edit"
+                   class="btn btn-sm">Edit</a>
+                <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/clone"
+                   class="btn btn-sm btn-ghost">Clone →</a>
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/retire"
+                      class="inline-form"
+                      onsubmit="return confirm('Retire {{ comp.name }}? Existing operations will not be affected.')">
+                  <button type="submit" class="btn btn-sm btn-muted">Retire</button>
+                </form>
+                {% endif %}
+              </div>
+            </td>
+
           </tr>
           {% endfor %}
         </tbody>
       </table>
     </div>
+
+    {% elif q %}
+    <p class="empty-state">No compositions match "<strong>{{ q }}</strong>". <a href="?{% if show_deleted %}show_deleted=1{% endif %}">Clear search →</a></p>
+
     {% elif show_deleted %}
     <p class="empty-state">No compositions in this workspace.</p>
+
     {% else %}
-    <p class="empty-state">No compositions yet.</p>
+    <p class="empty-state">
+      No tactical compositions yet.
+      {% if can_mutate %}
+      <a href="/workspaces/{{ workspace.slug }}/compositions/new">Create your first composition →</a>
+      {% endif %}
+    </p>
     {% endif %}
 
     <div class="action-bar">

@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ workspace.name }} — IronkeepV2{% endblock %}
+{% block title %}{{ workspace.name }} — Ironkeep{% endblock %}
 
 {% block workspace_nav %}
 {% set workspace_nav_active = 'dashboard' %}
@@ -7,102 +7,385 @@
 {% endblock %}
 
 {% block content %}
-{% set title = workspace.name %}
-{% set meta = workspace.primary_game ~ ' · slug: ' ~ workspace.slug %}
-{% include "page_header.html" %}
 {% include "flash_messages.html" %}
 
-<div class="card">
-  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
-    <h2 style="margin:0">Operations</h2>
-    {% if show_archived %}
-      <a href="?" class="text-muted" style="font-size:0.85rem">Hide archived</a>
-    {% elif (archived_count | default(0)) > 0 %}
-      <a href="?show_archived=1" class="text-muted" style="font-size:0.85rem">
-        Show {{ archived_count }} archived
-      </a>
+{# ── Workspace hero strip ──────────────────────────────────────────────────── #}
+{# Frames the workspace before metrics begin. Name, game descriptor, primary action. #}
+<div class="ws-hero">
+  <div class="ws-hero__content">
+    <h1 class="ws-hero__name">{{ workspace.name }}</h1>
+    <p class="ws-hero__meta">{{ workspace.primary_game }}&nbsp;&middot;&nbsp;{{ workspace.slug }}</p>
+  </div>
+  {% if can_mutate %}
+  <div class="ws-hero__actions">
+    <a href="/workspaces/{{ workspace.slug }}/operations/new" class="btn btn-primary btn-sm">+ New Operation</a>
+  </div>
+  {% endif %}
+</div>
+
+{# ── 1. Summary metrics strip ──────────────────────────────────────────────── #}
+{# Always rendered. Gives immediate operational state at a glance.              #}
+{% set _not_ready_count = attention_ops_danger | length %}
+{% set _forming_count   = attention_ops_warning | length %}
+<div class="summary-metrics">
+
+  <div class="metric-card metric-card--neutral">
+    <div class="metric-card__value op-metric">{{ active_op_count }}</div>
+    <div class="metric-card__label">Active operations</div>
+    {% if archived_count > 0 %}
+    <div class="metric-card__sub">{{ archived_count }} archived</div>
     {% endif %}
   </div>
-  <div class="card-body">
-    {% if operations %}
-    <div class="table-wrap">
-      <table class="data-table">
-        <thead>
-          <tr>
-            <th>Title</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Readiness</th>
-            <th>Slots</th>
-            <th>Pending</th>
-            <th>Scheduled</th>
-            <th></th>
-          </tr>
-        </thead>
-        <tbody>
-          {% for op in operations %}
-          {% set rs = readiness_by_op.get(op.id) if readiness_by_op is defined else None %}
-          <tr class="{% if op.status == 'archived' %}row-muted{% endif %}">
-            <td><a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}">{{ op.title }}</a></td>
-            <td>{{ op.operation_type }}</td>
-            <td><span class="badge badge-{{ op.status }}">{{ op.status }}</span></td>
-            <td>
-              {% if rs %}
-                <span class="badge badge-{{ rs.readiness_state }}">{{ rs.readiness_state | replace("_", " ") }}</span>
-              {% else %}
-                <em class="text-muted">—</em>
-              {% endif %}
-            </td>
-            <td>
-              {% if rs %}
-                {{ rs.assigned_slots }} / {{ rs.total_slots }}
-                {% if rs.open_slots > 0 %}
-                  <span class="text-muted" style="font-size:0.85em"> · {{ rs.open_slots }} open</span>
-                {% endif %}
-              {% else %}
-                <em class="text-muted">—</em>
-              {% endif %}
-            </td>
-            <td>
-              {% if rs %}
-                {% if rs.unassigned_signup_count > 0 %}
-                  <span class="text-warning">{{ rs.unassigned_signup_count }}</span>
-                {% else %}
-                  <span class="text-muted">0</span>
-                {% endif %}
-              {% else %}
-                <em class="text-muted">—</em>
-              {% endif %}
-            </td>
-            <td class="text-muted" style="white-space:nowrap;font-size:0.9em">
-              {{ friendly_dt(op.scheduled_start_at) if friendly_dt is defined else op.scheduled_start_at[:16] | replace("T", " ") }}
-            </td>
-            <td>
-              <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}" class="btn btn-sm">Detail</a>
-            </td>
-          </tr>
-          {% endfor %}
-        </tbody>
-      </table>
+
+  <div class="metric-card
+    {%- if ready_op_count == active_op_count and active_op_count > 0 %} metric-card--ok
+    {%- elif _not_ready_count > 0 %} metric-card--danger
+    {%- elif _forming_count > 0 %} metric-card--warning
+    {%- else %} metric-card--neutral{%- endif %}">
+    <div class="metric-card__value op-metric">
+      {{ ready_op_count }}<span class="metric-card__fraction"> / {{ operations | length }}</span>
     </div>
-    {% elif show_archived %}
-    <p class="empty-state">No operations in this workspace.</p>
+    <div class="metric-card__label">Ready</div>
+    {% if _not_ready_count > 0 %}
+    <div class="metric-card__sub"><span class="badge badge-not_ready op-metric">{{ _not_ready_count }} not ready</span></div>
+    {% elif _forming_count > 0 %}
+    <div class="metric-card__sub"><span class="badge badge-forming op-metric">{{ _forming_count }} forming</span></div>
+    {% elif active_op_count == 0 %}
+    <div class="metric-card__sub">No active operations</div>
     {% else %}
-    <p class="empty-state">No operations yet.</p>
+    <div class="metric-card__sub"><span class="badge badge-ready">All ready</span></div>
+    {% endif %}
+  </div>
+
+  <div class="metric-card {% if total_unassigned_signups > 0 %}metric-card--warning{% else %}metric-card--neutral{% endif %}">
+    <div class="metric-card__value op-metric">{{ total_unassigned_signups }}</div>
+    <div class="metric-card__label">Unassigned signups</div>
+    <div class="metric-card__sub">
+      {% if total_unassigned_signups == 0 %}All assigned{% else %}Awaiting slot assignment{% endif %}
+    </div>
+  </div>
+
+</div>
+
+{# ── 2. Needs Attention / All-clear ───────────────────────────────────────── #}
+{# Strict priority: danger ops → warning ops → infra (scheduler → retries) → admin (ledger) #}
+{% set _has_danger   = attention_ops_danger | length > 0 %}
+{% set _has_warning  = attention_ops_warning | length > 0 %}
+{% set _has_sched    = can_mutate and scheduler_stale %}
+{% set _has_retries  = can_mutate and pending_retry_count > 0 %}
+{% set _has_ledger   = can_mutate and pending_ledger_count > 0 %}
+{% set _any_attention = _has_danger or _has_warning or _has_sched or _has_retries or _has_ledger %}
+
+{% if _any_attention %}
+<div class="card" style="margin-bottom:var(--space-5)">
+  <div class="card-header">
+    <h2>Needs attention</h2>
+    {% set _total = (attention_ops_danger | length) + (attention_ops_warning | length)
+                    + (1 if _has_sched else 0)
+                    + (pending_retry_count if _has_retries else 0) %}
+    <span class="badge badge-warning">{{ _total }}</span>
+  </div>
+  <div class="attention-list">
+
+    {# Tier 1 — Danger: operations that are not ready (cannot proceed) #}
+    {% for op in attention_ops_danger %}
+    {% set rs = readiness_by_op.get(op.id) %}
+    <div class="attention-item attention-item--danger">
+      <div class="attention-item__count op-metric">
+        {% if rs and rs.unassigned_signup_count > 0 %}{{ rs.unassigned_signup_count }}{% else %}!{% endif %}
+      </div>
+      <div class="attention-item__body">
+        <strong>{{ op.title }}</strong>
+        <small>
+          <span class="badge badge-{{ op.status }}">{{ op.status }}</span>
+          &nbsp;·&nbsp;<span class="badge badge-not_ready">not ready</span>
+          {% if rs and rs.open_slots > 0 %}&nbsp;·&nbsp;<span class="op-metric">{{ rs.open_slots }}</span> open slot{% if rs.open_slots != 1 %}s{% endif %}{% endif %}
+          {% if rs and rs.unassigned_signup_count > 0 %}&nbsp;·&nbsp;<span class="op-metric">{{ rs.unassigned_signup_count }}</span> unassigned{% endif %}
+        </small>
+      </div>
+      {% if can_mutate %}
+      <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}/planner" class="btn btn-sm">Planner →</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {# Tier 2 — Warning: operations that are forming (partial fill, time may resolve) #}
+    {% for op in attention_ops_warning %}
+    {% set rs = readiness_by_op.get(op.id) %}
+    <div class="attention-item attention-item--warning">
+      <div class="attention-item__count op-metric">
+        {% if rs and rs.open_slots > 0 %}{{ rs.open_slots }}{% else %}~{% endif %}
+      </div>
+      <div class="attention-item__body">
+        <strong>{{ op.title }}</strong>
+        <small>
+          <span class="badge badge-{{ op.status }}">{{ op.status }}</span>
+          &nbsp;·&nbsp;<span class="badge badge-forming">forming</span>
+          {% if rs %}&nbsp;·&nbsp;<span class="op-metric">{{ rs.assigned_slots }}/{{ rs.total_slots }}</span> slots{% endif %}
+          {% if rs and rs.unassigned_signup_count > 0 %}&nbsp;·&nbsp;<span class="op-metric">{{ rs.unassigned_signup_count }}</span> unassigned{% endif %}
+        </small>
+      </div>
+      {% if can_mutate %}
+      <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}/planner" class="btn btn-sm">Planner →</a>
+      {% endif %}
+    </div>
+    {% endfor %}
+
+    {# Tier 3 — Infra: stale scheduler (infra health, highest infra priority) #}
+    {% if _has_sched %}
+    <div class="attention-item attention-item--warning">
+      <div class="attention-item__count">!</div>
+      <div class="attention-item__body">
+        <strong>Scheduler appears stale</strong>
+        <small>No recent scheduler activity — jobs may not be running</small>
+      </div>
+      <a href="/workspaces/{{ workspace.slug }}/settings/diagnostics" class="btn btn-sm">Diagnostics →</a>
+    </div>
     {% endif %}
 
-    <div class="action-bar">
-      <a href="/workspaces/{{ workspace.slug }}/operations/new" class="btn btn-primary">+ New Operation</a>
+    {# Tier 3 — Infra: Discord dispatch retries #}
+    {% if _has_retries %}
+    <div class="attention-item attention-item--warning">
+      <div class="attention-item__count op-metric">{{ pending_retry_count }}</div>
+      <div class="attention-item__body">
+        <strong>Discord retries pending</strong>
+        <small>{{ pending_retry_count }} failed dispatch{% if pending_retry_count != 1 %}es{% endif %} awaiting retry</small>
+      </div>
+      <a href="/workspaces/{{ workspace.slug }}/settings/scheduler" class="btn btn-sm">Scheduler →</a>
     </div>
+    {% endif %}
+
+    {# Tier 4 — Administrative: payout ledger entries (lower urgency) #}
+    {% if _has_ledger %}
+    <div class="attention-item attention-item--info">
+      <div class="attention-item__count op-metric">{{ pending_ledger_count }}</div>
+      <div class="attention-item__body">
+        <strong>Payout entries need review</strong>
+        <small>{{ pending_ledger_count }} draft or approved entr{% if pending_ledger_count != 1 %}ies{% else %}y{% endif %} — open the operation below to manage</small>
+      </div>
+    </div>
+    {% endif %}
+
   </div>
 </div>
 
-<div class="card">
-  <div class="card-header"><h2>Quick links</h2></div>
-  <div class="card-body">
-    <div class="action-bar">
-      <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">Compositions</a>
+{% elif active_op_count > 0 %}
+{# ── All clear: positive health signal — only shown when there are active ops #}
+<div class="all-clear-state">
+  <span class="badge badge-success">All clear</span>
+  All active operations are healthy. No pending retries or unresolved issues.
+</div>
+{% endif %}
+
+{# ── 3. Main dashboard grid: operations table + sidebar ───────────────────── #}
+<div class="dashboard-grid">
+
+  {# ── Main column: Operations ─────────────────────────────── #}
+  <div>
+    <div class="card">
+      <div class="card-header">
+        <h2>Operations</h2>
+        <div class="cluster">
+          {% if show_archived %}
+            <a href="?" class="section-header__action">Hide archived</a>
+          {% elif (archived_count | default(0)) > 0 %}
+            <a href="?show_archived=1" class="section-header__action">
+              Show {{ archived_count }} archived
+            </a>
+          {% endif %}
+        </div>
+      </div>
+      <div class="card-body">
+
+        {% if operations %}
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th scope="col">Operation</th>
+                <th scope="col">Status</th>
+                <th scope="col">Readiness</th>
+                <th scope="col">Slots</th>
+                <th scope="col">Unassigned</th>
+                <th scope="col">Scheduled</th>
+                <th scope="col"><span class="sr-only">Actions</span></th>
+              </tr>
+            </thead>
+            <tbody>
+              {% for op in operations %}
+              {% set rs = readiness_by_op.get(op.id) if readiness_by_op is defined else None %}
+              {% set _rs_state = rs.readiness_state if rs else '' %}
+              <tr class="
+                {%- if op.status == 'archived' %}row-muted
+                {%- elif _rs_state == 'not_ready' and op.status in ('planning','locked') %} row-not-ready
+                {%- elif _rs_state == 'forming'   and op.status in ('planning','locked') %} row-forming
+                {%- endif %}">
+
+                {# Title cell: op name + type + workflow continuation hint #}
+                <td class="op-title-cell">
+                  <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}">{{ op.title }}</a>
+                  <span class="op-type-cell">{{ op.operation_type }}</span>
+                  {# Show a continuation hint for states where the next action is non-obvious #}
+                  {% if op.status == 'draft' %}
+                  <span class="op-next-step">Attach plan and generate slots to begin</span>
+                  {% elif op.status == 'completed' %}
+                  <span class="op-next-step">Archive when post-op work is done</span>
+                  {% elif op.status == 'planning' and _rs_state == 'not_ready' %}
+                  <span class="op-next-step">Role gaps remain — planner needs attention</span>
+                  {% elif op.status == 'locked' and _rs_state not in ('ready', '') %}
+                  <span class="op-next-step">Roster locked — verify readiness before op</span>
+                  {% endif %}
+                </td>
+
+                <td><span class="badge badge-{{ op.status }}">{{ op.status }}</span></td>
+                <td>
+                  {% if rs %}
+                    <span class="badge badge-{{ rs.readiness_state }}">{{ rs.readiness_state | replace("_", " ") }}</span>
+                  {% else %}
+                    <em class="text-muted">—</em>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if rs %}
+                    <span class="op-metric">{{ rs.assigned_slots }} / {{ rs.total_slots }}</span>
+                    {% if rs.open_slots > 0 %}
+                      <span class="op-metric--hint">&nbsp;({{ rs.open_slots }} open)</span>
+                    {% endif %}
+                  {% else %}
+                    <em class="text-muted">—</em>
+                  {% endif %}
+                </td>
+                <td>
+                  {% if rs %}
+                    {% if rs.unassigned_signup_count > 0 %}
+                      <span class="badge badge-forming op-metric">{{ rs.unassigned_signup_count }}</span>
+                    {% else %}
+                      <span class="text-muted">—</span>
+                    {% endif %}
+                  {% else %}
+                    <em class="text-muted">—</em>
+                  {% endif %}
+                </td>
+                <td class="col-meta op-metric--timestamp">
+                  {{ friendly_dt(op.scheduled_start_at) if friendly_dt is defined else op.scheduled_start_at[:16] | replace("T", " ") }}
+                </td>
+
+                {# Context-aware row CTA: label reflects what the officer should do next #}
+                <td class="col-action">
+                  {% if op.status == 'planning' and _rs_state in ('not_ready', 'forming') %}
+                  <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}/planner" class="btn btn-sm">Planner →</a>
+                  {% elif op.status == 'draft' %}
+                  <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}" class="btn btn-sm">Setup →</a>
+                  {% elif op.status in ('completed', 'archived') %}
+                  <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}" class="btn btn-sm btn-muted">View</a>
+                  {% else %}
+                  <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}" class="btn btn-sm">Open</a>
+                  {% endif %}
+                </td>
+
+              </tr>
+              {% endfor %}
+            </tbody>
+          </table>
+        </div>
+
+        {# Empty / transitional states #}
+        {% elif active_op_count == 0 and archived_count > 0 %}
+        {# All operations have been archived — positive transitional state #}
+        <p class="empty-state">
+          All operations are archived.
+          {% if can_mutate %}
+          <a href="/workspaces/{{ workspace.slug }}/operations/new" style="margin-left:0.3em">Start a new one →</a>
+          {% endif %}
+        </p>
+        {% elif show_archived %}
+        <p class="empty-state">No operations in this workspace.</p>
+        {% else %}
+        <p class="empty-state">
+          No operations yet.
+          {% if can_mutate %}
+          <a href="/workspaces/{{ workspace.slug }}/operations/new" style="margin-left:0.3em">Create the first one →</a>
+          {% endif %}
+        </p>
+        {% endif %}
+
+      </div>
     </div>
   </div>
+
+  {# ── Sidebar ─────────────────────────────────────────────── #}
+  <aside class="sidebar-panel">
+
+    {# Quick actions — split into operational vs configuration sections #}
+    <div class="card">
+      <div class="card-header"><h3>Quick actions</h3></div>
+      <div class="card-body">
+        <div class="action-group">
+
+          {# Operational actions — primary workflow entry points #}
+          <span class="action-section-label">Plan</span>
+          <a href="/workspaces/{{ workspace.slug }}/operations/new" class="btn btn-primary">+ New Operation</a>
+          <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">Compositions</a>
+
+          {# Member management — secondary but still operational #}
+          {% if can_manage_members %}
+          <span class="action-section-label">Manage</span>
+          <a href="/workspaces/{{ workspace.slug }}/members" class="btn">Members</a>
+          {% endif %}
+
+          {# Configuration / admin — receded, ghost-button weight #}
+          {% if can_mutate %}
+          <span class="action-section-label">Settings</span>
+          <a href="/workspaces/{{ workspace.slug }}/settings/discord" class="btn btn-ghost">Discord settings</a>
+          <a href="/workspaces/{{ workspace.slug }}/settings/scheduler" class="btn btn-ghost">Scheduler</a>
+          {% endif %}
+
+        </div>
+      </div>
+    </div>
+
+    {# Recent activity — compact event feed, newest first.
+       Shows last 5 notable events: lifecycle transitions, payouts, Discord posts.
+       Individual signups, slot assignments, and attendance are excluded (high-frequency noise).
+       Absent when empty (new workspace, no notable events yet). #}
+    {% if recent_activity %}
+    <div class="card card--compact">
+      <div class="sidebar-label">Recent activity</div>
+      <div class="activity-list">
+        {% for ev in recent_activity %}
+        <div class="activity-item">
+          <div class="activity-item__event">{{ ev.label }}</div>
+          {% if ev.op_title and ev.guild_operation_id %}
+          <div class="activity-item__op">
+            <a href="/workspaces/{{ workspace.slug }}/operations/{{ ev.guild_operation_id }}">{{ ev.op_title }}</a>
+          </div>
+          {% endif %}
+          <div class="activity-item__meta">{{ ev.relative_time }}</div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# Workspace info — secondary, compact, visually quiet #}
+    <div class="card card--compact">
+      <div class="sidebar-label">Workspace</div>
+      <div class="card-body">
+        <dl class="kv-list">
+          <dt>Game</dt>
+          <dd>{{ workspace.primary_game }}</dd>
+          <dt>Slug</dt>
+          <dd><code>{{ workspace.slug }}</code></dd>
+        </dl>
+        {% if archived_count > 0 %}
+        <p class="text-muted" style="font-size:0.8rem;margin-top:var(--space-2)">
+          <a href="?show_archived=1" class="text-muted">{{ archived_count }} archived</a>
+        </p>
+        {% endif %}
+      </div>
+    </div>
+
+  </aside>
+
 </div>
 {% endblock %}

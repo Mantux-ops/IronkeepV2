@@ -545,7 +545,8 @@ def test_attendance_page_hides_reliability_column_for_member():
     client.post("/login", data={"display_name": "PlainMember"}, follow_redirects=True)
     resp = client.get(f"/workspaces/reli-ws/operations/{op['id']}/attendance")
     assert resp.status_code == 200
-    assert "Reliability" not in resp.text
+    # "Reliability" also appears in a CSS comment; check the table header specifically.
+    assert ">Reliability<" not in resp.text
 
 
 def test_members_page_shows_dash_for_new_member():

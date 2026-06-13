@@ -33,7 +33,8 @@
     <form method="post"
           action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/lock"
           class="inline-form">
-      <button type="submit" class="btn btn-lock">Lock Roster</button>
+      <button type="submit" class="btn btn-lock"
+              onclick="return confirm('Lock the roster? Assignment mutations will be disabled and cannot be undone from the UI.')">Lock Roster</button>
     </form>
     {% elif operation.status == "locked" %}
     <form method="post"
@@ -83,7 +84,7 @@
     {% endif %}
 
     <div class="card">
-      <div class="card-header"><h2>Plan</h2></div>
+      <div class="card-header"><h2>Tactical Composition</h2></div>
       <div class="card-body">
         {% if plan %}
         <p>
@@ -96,8 +97,26 @@
           Signup: <span class="badge badge-{{ plan.signup_status }}">{{ plan.signup_status }}</span>
         </p>
         {% if plan.notes %}<p><em>{{ plan.notes }}</em></p>{% endif %}
+        {% if composition and not composition.deleted_at and composition_slot_count == 0 %}
+        <p class="text-muted" style="margin-top:var(--space-2);font-size:0.875rem">
+          The attached composition currently has no slot templates yet.
+          {% if can_mutate %}
+          <a href="/workspaces/{{ workspace.slug }}/compositions/{{ composition.id }}/edit">Edit Slots →</a>
+          {% endif %}
+        </p>
+        {% endif %}
+        {% if slot_count > 0 %}
+        <div style="margin-top:var(--space-3)">
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner"
+             class="btn btn-primary">Tactical Planner →</a>
+        </div>
+        {% endif %}
 
         {% elif can_mutate and compositions and can_attach_plan %}
+        <p class="form-hint" style="margin-bottom:var(--space-3)">
+          Select the tactical composition for this operation. Officers and players
+          will be assigned to its roster slots in the planner.
+        </p>
         <form method="post"
               action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/plan"
               class="form">
@@ -122,33 +141,41 @@
             <textarea id="notes" name="notes" rows="2"
                       placeholder="Any notes for participants..."></textarea>
           </div>
-          <input type="submit" value="Attach Plan" class="btn btn-primary">
+          <input type="submit" value="Attach Composition" class="btn btn-primary">
         </form>
 
         {% elif compositions %}
-        <p class="empty-state">Plan attachment is only available while the operation is in draft.</p>
+        <p class="empty-state">Composition attachment is only available while the operation is in draft.</p>
         {% else %}
         <p class="empty-state">
-          No plan attached and no compositions exist.
-          <a href="/workspaces/{{ workspace.slug }}/compositions/new">Create a composition first →</a>
+          No composition attached and none exist yet.
+          <a href="/workspaces/{{ workspace.slug }}/compositions/new">Create your first tactical composition →</a>
         </p>
         {% endif %}
       </div>
     </div>
 
     <div class="card">
-      <div class="card-header"><h2>Operation Slots</h2></div>
+      <div class="card-header"><h2>Roster Slots</h2></div>
       <div class="card-body">
         {% if slot_count > 0 %}
         <p>
           <strong>{{ slot_count }}</strong> slot{% if slot_count != 1 %}s{% endif %} generated.
           &nbsp;·&nbsp;
           <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner">
-            Open Planner Board →
+            Open Tactical Planner →
           </a>
         </p>
 
         {% elif can_mutate and plan and can_generate_slots %}
+        {% if composition_slot_count == 0 %}
+        <p class="text-muted" style="font-size:0.875rem">
+          The attached composition currently has no slot templates. Add slots before generating.
+          {% if can_mutate and composition and not composition.deleted_at %}
+          <a href="/workspaces/{{ workspace.slug }}/compositions/{{ composition.id }}/edit">Edit Slots →</a>
+          {% endif %}
+        </p>
+        {% else %}
         <p class="empty-state">No slots generated yet.</p>
         <form method="post"
               action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/generate-slots"
@@ -157,6 +184,7 @@
             Generate Slots from {{ composition.name if composition else "composition" }}
           </button>
         </form>
+        {% endif %}
 
         {% elif plan %}
         <p class="empty-state">Slot generation is not available while the operation status is {{ operation.status }}.</p>
@@ -178,6 +206,24 @@
             Signup page →
           </a>
         </p>
+
+        {# ── Signup share URL — readable, selectable, one-click copy ──────── #}
+        {% set _signup_path = '/workspaces/' ~ workspace.slug ~ '/operations/' ~ operation.id ~ '/signup' %}
+        {% set _signup_full_url = request.url.scheme ~ '://' ~ request.url.netloc ~ _signup_path %}
+        <div class="signup-share-block">
+          <span class="signup-share-label">Share link:</span>
+          <input type="text" readonly
+                 class="signup-share-url"
+                 value="{{ _signup_full_url }}"
+                 onclick="this.select()"
+                 aria-label="Signup URL">
+          <button type="button"
+                  class="btn btn-sm signup-share-copy"
+                  onclick="var u=this.previousElementSibling.value;navigator.clipboard.writeText(u).then(function(){}).catch(function(){});this.textContent='Copied!';var b=this;setTimeout(function(){b.textContent='Copy'},1500)"
+                  aria-label="Copy signup link">
+            Copy
+          </button>
+        </div>
       </div>
     </div>
   </div>
@@ -191,43 +237,43 @@
           <span class="badge badge-{{ readiness.readiness_state }}">
             {{ readiness.readiness_state | upper }}
           </span>
-          <span class="text-muted" style="font-size:.8rem">{{ readiness.created_at[:19] | replace("T", " ") }}</span>
+          <span class="op-metric--timestamp">{{ readiness.created_at[:19] | replace("T", " ") }}</span>
         </p>
         <div class="stat-grid">
           <div class="stat-item">
-            <strong>{{ readiness.assigned_slots }}/{{ readiness.total_slots }}</strong>
+            <strong class="op-metric">{{ readiness.assigned_slots }}/{{ readiness.total_slots }}</strong>
             <span>slots assigned</span>
           </div>
           <div class="stat-item">
-            <strong>{{ readiness.open_slots }}</strong>
+            <strong class="op-metric">{{ readiness.open_slots }}</strong>
             <span>open slots</span>
           </div>
           <div class="stat-item">
-            <strong>{{ readiness.unassigned_signup_count }}</strong>
+            <strong class="op-metric">{{ readiness.unassigned_signup_count }}</strong>
             <span>unassigned signups</span>
           </div>
           <div class="stat-item">
-            <strong>{{ readiness.attendance_marked_count }}</strong>
+            <strong class="op-metric">{{ readiness.attendance_marked_count }}</strong>
             <span>attendance marked</span>
           </div>
         </div>
         {% if readiness.missing_roles %}
-        <p class="text-danger" style="margin-top:.75rem;">
-          Role gaps:
+        <div class="gap-pills" style="margin-top:var(--space-3)">
+          <span style="font-size:0.8rem;color:var(--text-muted);align-self:center">Role gaps:</span>
           {% for role, count in readiness.missing_roles.items() %}
-            {{ role }} ×{{ count }}{% if not loop.last %},{% endif %}
+          <span class="gap-pill gap-pill--role">{{ role }} ×{{ count }}</span>
           {% endfor %}
-        </p>
+        </div>
         {% endif %}
         {% if readiness.missing_builds %}
-        <p class="text-warning" style="margin-top:.5rem;">
-          Build gaps:
+        <div class="gap-pills">
+          <span style="font-size:0.8rem;color:var(--text-muted);align-self:center">Build gaps:</span>
           {% for build, count in readiness.missing_builds.items() %}
-            {{ build }} ×{{ count }}{% if not loop.last %},{% endif %}
+          <span class="gap-pill gap-pill--build">{{ build }} ×{{ count }}</span>
           {% endfor %}
-        </p>
+        </div>
         {% endif %}
-        <p class="text-muted" style="margin-top:.75rem;font-size:.85rem;">
+        <p class="text-muted op-metric" style="margin-top:.75rem;font-size:.85rem;">
           Attendance: {{ readiness.attendance_unmarked_count }} not marked
           &nbsp;·&nbsp;
           Scouts: {{ readiness.scout_count }}
@@ -247,26 +293,9 @@
       <div class="card-body">
 
         {% if discord_preview %}
-        {# Render mock Discord embed #}
-        <div class="discord-embed" style="border-left-color: {{ discord_preview.color_hex }}">
-          <div class="discord-embed__title">{{ discord_preview.title }}</div>
-          {% if discord_preview.description %}
-          <div class="discord-embed__description">{{ discord_preview.description }}</div>
-          {% endif %}
-          <div class="discord-embed__fields">
-            {% for field in discord_preview.fields %}
-            <div class="discord-embed__field{% if not field.inline %} discord-embed__field--block{% endif %}">
-              <div class="discord-embed__field-name">{{ field.name }}</div>
-              <div class="discord-embed__field-value">{{ field.value }}</div>
-            </div>
-            {% endfor %}
-          </div>
-          {% if discord_preview.footer %}
-          <div class="discord-embed__footer">{{ discord_preview.footer.text }}</div>
-          {% endif %}
-        </div>
+        {% from "_discord_macros.html" import discord_name, discord_embed %}
+        {{ discord_embed(discord_preview) }}
         <p class="discord-preview-target">
-          {% from "_discord_macros.html" import discord_name %}
           Server: {{ discord_name(workspace.discord_guild_id, discord_meta) }}
           &nbsp;·&nbsp;
           Channel: #{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}
@@ -311,16 +340,13 @@
     {% endif %}
 
     <div class="card">
-      <div class="card-header"><h2>Next actions</h2></div>
+      <div class="card-header"><h2>Continue planning</h2></div>
       <div class="card-body">
         <div class="stack">
-          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn">Open Planner Board</a>
-          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup" class="btn">Open Signup page</a>
-          {% if readiness %}
-          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn btn-sm">Recalculate on Planner Board →</a>
-          {% elif not readiness %}
-          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner" class="btn btn-sm">Calculate readiness on Planner Board →</a>
-          {% endif %}
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner"
+             class="btn btn-primary">Tactical Planner →</a>
+          <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup"
+             class="btn">Signup page</a>
         </div>
       </div>
     </div>

@@ -1,2 +1,15 @@
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+# Registered markers — prevents PytestUnknownMarkWarning when markers are added
+# to individual tests in future phases. Markers are not yet applied to test
+# functions; this registration is preparatory for Phase 2+ formalisation.
+markers = [
+    "tactical: tactical domain logic (role family, tally, gap detection, readiness)",
+    "ui: server-rendered template / route rendering tests",
+    "discord: Discord formatter, dispatcher, and preview tests",
+    "repository: database repository and guild-scoping tests",
+    "workflow: end-to-end operation and assignment workflow tests",
+    "smoke: import / collection smoke — syntax and import safety only",
+    "slow: tests that take >1s individually (audit candidates)",
+]

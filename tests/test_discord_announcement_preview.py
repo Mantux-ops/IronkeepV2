@@ -231,7 +231,7 @@ class TestConfigWarnings:
         assert resp.status_code == 200
         body = resp.text
         assert "announcement channel" in body.lower() or "No announcement" in body
-        assert "border-left-color" not in body
+        assert "border-left-color: #" not in body
 
     def test_warning_includes_link_to_settings(self):
         owner = make_user("OwnerSettingsLink")

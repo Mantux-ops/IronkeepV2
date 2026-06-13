@@ -1,6 +1,6 @@
 # IronkeepV2 — Progress Checkpoint
 
-*Last updated: 2026-05-11*
+*Last updated: 2026-05-22*
 
 ---
 
@@ -172,7 +172,9 @@ The following are explicitly out of scope for the current phase and must not be 
 
 ## 6. Test Count and Key Coverage Areas
 
-**Total: 381 tests, 0 failures** (as of 2026-05-11)
+**Total: 1945 tests, 0 failures** (as of 2026-05-22, Tier 5 full suite)
+
+*Note: suite grew from 381 (2026-05-11) to 1945 through the composition builder phases (1–6 Slice 2), doctrine identity, and assignment workflow additions. Full summary in `docs/integrated_composition_builder_foundation.md`.*
 
 | Test file | Tests | Coverage area |
 |---|---|---|

@@ -35,6 +35,20 @@ def membership_context(membership: dict) -> dict[str, object]:
     }
 
 
+def visitor_context() -> dict[str, object]:
+    """Access context for authenticated users with no workspace membership.
+
+    Used on the signup page only.  Any authenticated user may view and
+    submit signups; all officer/owner capabilities remain False.
+    """
+    return {
+        "membership": None,
+        "can_mutate": False,
+        "can_submit_signup": True,
+        "can_manage_members": False,
+    }
+
+
 def resolve_workspace_view(
     db,
     request: Request,
@@ -44,6 +58,30 @@ def resolve_workspace_view(
         db, request, slug
     )
     return user, workspace, membership_context(membership)
+
+
+def resolve_workspace_for_signup(
+    db,
+    request: Request,
+    slug: str,
+) -> tuple[dict, dict, dict[str, object]]:
+    """Auth for the operation signup page.
+
+    Any authenticated user may view the page and submit signups regardless of
+    workspace membership — alliance players should not need to be pre-added.
+    Officer / owner capabilities are gated by the membership check as usual.
+
+    Raises AuthenticationRequired if the user is not logged in.
+    Raises NotFoundError if the workspace slug does not exist.
+    """
+    user = require_current_user(db, request)
+    workspace = repositories.get_workspace_by_slug(db, slug)
+    if not workspace:
+        raise NotFoundError("Workspace not found.")
+    membership = repositories.get_workspace_membership(db, workspace["id"], user["id"])
+    if membership:
+        return user, workspace, membership_context(membership)
+    return user, workspace, visitor_context()
 
 
 def require_workspace_mutator(db, user_id: str, guild_workspace_id: str) -> dict:

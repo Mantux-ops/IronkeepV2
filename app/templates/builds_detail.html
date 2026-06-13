@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% from "_doctrine_macros.html" import doctrine_summary %}
+{% block title %}{{ build.name }} — Builds — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">{{ build.name }}</span>
+{% endblock %}
+
+{% block content %}
+{% include "flash_messages.html" %}
+
+{% if success == 'created' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Build created.</div>
+{% elif success == 'updated' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Build updated.</div>
+{% endif %}
+
+<header class="page-header">
+  <div class="page-header__main">
+    <h1>{{ build.name }}</h1>
+    <p class="page-meta">
+      {% if build.doctrine_role %}
+      <span class="bld-doctrine-role" aria-label="Doctrine role: {{ build.doctrine_role }}">{{ build.doctrine_role }}</span>
+      &nbsp;·&nbsp;
+      {% endif %}
+      <span class="badge" data-role="{{ build.role | lower }}">{{ build.role }}</span>
+      {% if build.retired_at %}
+      &nbsp;·&nbsp;<span class="badge badge-archived">retired</span>
+      {% endif %}
+    </p>
+    {# Compact doctrine summary — operational scan speed #}
+    {{ doctrine_summary(build, css_class='bld-detail__doctrine') }}
+  </div>
+  {% if can_mutate and not build.retired_at %}
+  <div class="action-group action-group--compact">
+    <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/edit"
+       class="btn btn-sm btn-primary">Edit</a>
+    <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/fork"
+       class="btn btn-sm">Fork →</a>
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/retire"
+          class="inline-form"
+          onsubmit="return confirm('Retire {{ build.name }}? Compositions using this build will not be affected.')">
+      <button type="submit" class="btn btn-sm btn-muted">Retire</button>
+    </form>
+  </div>
+  {% endif %}
+</header>
+
+{# ── Full doctrine card ────────────────────────────────────────────────────── #}
+<div class="card bld-detail-card" style="margin-bottom:var(--space-4)">
+  <div class="card-body">
+    {% if build.doctrine_role %}
+    <div class="bld-detail__field bld-detail__field--doctrine">
+      <span class="bld-detail__label">Doctrine role</span>
+      <span class="bld-detail__value bld-doctrine-role">{{ build.doctrine_role }}</span>
+    </div>
+    {% endif %}
+
+    <div class="bld-detail__primary">
+      <div class="bld-detail__field">
+        <span class="bld-detail__label">Weapon</span>
+        <span class="bld-detail__value bld-detail__value--primary">{{ build.weapon_name }}</span>
+      </div>
+      {% if build.offhand_name %}
+      <div class="bld-detail__field">
+        <span class="bld-detail__label">Offhand</span>
+        <span class="bld-detail__value">{{ build.offhand_name }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Armour ──────────────────────────────────────────────────────────── #}
+    {% set has_armour = build.head_name or build.armor_name or build.shoes_name or build.cape_name %}
+    {% if has_armour %}
+    <div class="bld-detail__group">
+      <h3 class="bld-detail__group-title">Armour</h3>
+      <div class="bld-detail__row">
+        {% if build.head_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Head</span>
+          <span class="bld-detail__value">{{ build.head_name }}</span>
+        </div>
+        {% endif %}
+        {% if build.armor_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Armour</span>
+          <span class="bld-detail__value">{{ build.armor_name }}</span>
+        </div>
+        {% endif %}
+        {% if build.shoes_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Shoes</span>
+          <span class="bld-detail__value">{{ build.shoes_name }}</span>
+        </div>
+        {% endif %}
+        {% if build.cape_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Cape</span>
+          <span class="bld-detail__value">{{ build.cape_name }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Consumables ─────────────────────────────────────────────────────── #}
+    {% set has_consumables = build.food_name or build.potion_name %}
+    {% if has_consumables %}
+    <div class="bld-detail__group">
+      <h3 class="bld-detail__group-title">Consumables</h3>
+      <div class="bld-detail__row">
+        {% if build.food_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Food</span>
+          <span class="bld-detail__value">{{ build.food_name }}</span>
+        </div>
+        {% endif %}
+        {% if build.potion_name %}
+        <div class="bld-detail__field">
+          <span class="bld-detail__label">Potion</span>
+          <span class="bld-detail__value">{{ build.potion_name }}</span>
+        </div>
+        {% endif %}
+      </div>
+    </div>
+    {% endif %}
+
+    {# ── Notes ───────────────────────────────────────────────────────────── #}
+    {% if build.notes %}
+    <div class="bld-detail__group">
+      <h3 class="bld-detail__group-title">Notes</h3>
+      <p class="bld-detail__notes">{{ build.notes }}</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{# ── Used in compositions ─────────────────────────────────────────────────── #}
+{% if used_in %}
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-body">
+    <h3 style="margin:0 0 var(--space-2) 0;font-size:0.9rem;font-weight:600">
+      Referenced by {{ used_in | length }} active composition{% if used_in | length != 1 %}s{% endif %}
+    </h3>
+    <ul class="bld-usage-list" style="margin:0;padding:0;list-style:none;display:flex;flex-direction:column;gap:var(--space-1)">
+      {% for comp in used_in %}
+      <li>
+        <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}">{{ comp.name }}</a>
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<div class="action-bar">
+  <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">← All Builds</a>
+  {% if can_mutate %}
+  <a href="/workspaces/{{ workspace.slug }}/compositions/new" class="btn btn-sm">
+    Attach to new composition →
+  </a>
+  {% endif %}
+</div>
+{% endblock %}

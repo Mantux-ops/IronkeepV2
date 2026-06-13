@@ -1,0 +1,171 @@
+{% extends "base.html" %}
+{% block title %}Import Builds — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Import</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'Import Builds' %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+{% if error %}
+<div class="alert alert-error" style="margin-bottom:var(--space-4)">{{ error }}</div>
+{% endif %}
+
+{# ── Paste form ──────────────────────────────────────────────────────────── #}
+<div class="card" style="max-width:760px">
+  <div class="card-body">
+    <p class="form-hint" style="margin-bottom:var(--space-3)">
+      Paste tab-separated or comma-separated rows from a spreadsheet. The first row
+      may be a header; if omitted, columns are assumed to be
+      <code>name</code>, <code>role</code>, <code>weapon_name</code> in that order.
+    </p>
+    <p class="form-hint" style="margin-bottom:var(--space-3)">
+      <strong>Role family values:</strong>
+      <code>Tank</code> &nbsp;·&nbsp; <code>Healer</code> &nbsp;·&nbsp; <code>DPS</code> &nbsp;·&nbsp; <code>Support</code><br>
+      <em>Healer and Support are distinct families. Use <code>Healer</code> for healing builds, not <code>Support</code>.</em>
+    </p>
+    <p class="form-hint" style="margin-bottom:var(--space-4)">
+      <strong>Required:</strong> <code>name</code>, <code>role</code>, <code>weapon_name</code> &nbsp;·&nbsp;
+      <strong>Optional:</strong> <code>offhand_name</code>, <code>head_name</code>, <code>armor_name</code>,
+      <code>shoes_name</code>, <code>cape_name</code>, <code>food_name</code>,
+      <code>potion_name</code>, <code>doctrine_role</code>, <code>notes</code><br>
+      <em>Aliases accepted:</em> <code>weapon</code>, <code>offhand</code>, <code>armor</code>/<code>armour</code>,
+      <code>head</code>, <code>shoes</code>, <code>cape</code>, <code>food</code>, <code>potion</code>, <code>doctrine</code>.
+    </p>
+
+    <form method="post" action="/workspaces/{{ workspace.slug }}/builds/import/preview">
+      <div class="form-group">
+        <label for="raw-text">Paste rows</label>
+        <textarea id="raw-text" name="raw_text" rows="10"
+                  style="font-family:monospace;font-size:0.85rem;width:100%;resize:vertical"
+                  placeholder="name&#9;role&#9;weapon_name
+Hallowfall Healer&#9;Healer&#9;T8.3 Hallowfall&#9;Torch
+Bedrock Cape Tank&#9;Tank&#9;T8.3 Bedrock Cape">{{ raw_text or '' }}</textarea>
+      </div>
+      <div class="action-bar">
+        <input type="submit" value="Preview →" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+
+{# ── Preview table ───────────────────────────────────────────────────────── #}
+{% if preview_rows is not none %}
+
+{# Count valid rows for the confirm button label. #}
+{% set valid_count = preview_rows | selectattr('_error', 'equalto', None) | list | length %}
+
+{# Detect which optional columns appear in at least one row. #}
+{% set ns = namespace(
+  has_offhand=false, has_head=false, has_armor=false, has_shoes=false,
+  has_cape=false, has_food=false, has_potion=false,
+  has_doctrine=false, has_notes=false
+) %}
+{% for row in preview_rows %}
+  {% if row.offhand_name %}{% set ns.has_offhand = true %}{% endif %}
+  {% if row.head_name %}{% set ns.has_head = true %}{% endif %}
+  {% if row.armor_name %}{% set ns.has_armor = true %}{% endif %}
+  {% if row.shoes_name %}{% set ns.has_shoes = true %}{% endif %}
+  {% if row.cape_name %}{% set ns.has_cape = true %}{% endif %}
+  {% if row.food_name %}{% set ns.has_food = true %}{% endif %}
+  {% if row.potion_name %}{% set ns.has_potion = true %}{% endif %}
+  {% if row.doctrine_role %}{% set ns.has_doctrine = true %}{% endif %}
+  {% if row.notes %}{% set ns.has_notes = true %}{% endif %}
+{% endfor %}
+
+<div class="card" style="margin-top:var(--space-4);overflow-x:auto">
+  <div class="card-body">
+
+    {% if has_errors %}
+    {% set error_count = preview_rows | selectattr('_error') | list | length %}
+    <div class="alert alert-error" style="margin-bottom:var(--space-3)">
+      {{ error_count }} row{{ 's' if error_count != 1 else '' }} have validation errors.
+      Fix the data above and click <strong>Preview →</strong> again.
+    </div>
+    {% else %}
+    <div class="alert alert-success" style="margin-bottom:var(--space-3)">
+      All {{ valid_count }} row{{ 's' if valid_count != 1 else '' }} are valid.
+      Review below, then confirm to import.
+    </div>
+    {% endif %}
+
+    <table class="data-table" style="width:100%;font-size:0.85rem">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Name</th>
+          <th>Role</th>
+          <th>Weapon</th>
+          {% if ns.has_doctrine %}<th>Doctrine role</th>{% endif %}
+          {% if ns.has_offhand %}<th>Offhand</th>{% endif %}
+          {% if ns.has_head %}<th>Head</th>{% endif %}
+          {% if ns.has_armor %}<th>Armor</th>{% endif %}
+          {% if ns.has_shoes %}<th>Shoes</th>{% endif %}
+          {% if ns.has_cape %}<th>Cape</th>{% endif %}
+          {% if ns.has_food %}<th>Food</th>{% endif %}
+          {% if ns.has_potion %}<th>Potion</th>{% endif %}
+          {% if ns.has_notes %}<th>Notes</th>{% endif %}
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in preview_rows %}
+        <tr{% if row._error %} style="background:var(--color-danger-subtle,#fff0f0)"{% endif %}>
+          <td style="color:var(--text-muted);font-size:0.8rem">{{ row._row_num }}</td>
+          <td>{{ row.name or '' }}</td>
+          <td>{{ row.role or '' }}</td>
+          <td>{{ row.weapon_name or '' }}</td>
+          {% if ns.has_doctrine %}<td>{{ row.doctrine_role or '' }}</td>{% endif %}
+          {% if ns.has_offhand %}<td>{{ row.offhand_name or '' }}</td>{% endif %}
+          {% if ns.has_head %}<td>{{ row.head_name or '' }}</td>{% endif %}
+          {% if ns.has_armor %}<td>{{ row.armor_name or '' }}</td>{% endif %}
+          {% if ns.has_shoes %}<td>{{ row.shoes_name or '' }}</td>{% endif %}
+          {% if ns.has_cape %}<td>{{ row.cape_name or '' }}</td>{% endif %}
+          {% if ns.has_food %}<td>{{ row.food_name or '' }}</td>{% endif %}
+          {% if ns.has_potion %}<td>{{ row.potion_name or '' }}</td>{% endif %}
+          {% if ns.has_notes %}<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">{{ row.notes or '' }}</td>{% endif %}
+          <td>
+            {% if row._error %}
+            <span style="color:var(--color-error,#c0392b);white-space:nowrap">✗ {{ row._error }}</span>
+            {% else %}
+            <span style="color:var(--color-success,#27ae60)">✓</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+
+    {% if not has_errors %}
+    <form method="post" action="/workspaces/{{ workspace.slug }}/builds/import/confirm"
+          style="margin-top:var(--space-4)">
+      <input type="hidden" name="raw_text" value="{{ raw_text | e }}">
+      <div class="action-bar">
+        <input type="submit"
+               value="Confirm: Import {{ valid_count }} build{{ 's' if valid_count != 1 else '' }}"
+               class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">Cancel</a>
+      </div>
+    </form>
+    {% endif %}
+
+  </div>
+</div>
+{% endif %}
+
+<div class="action-bar" style="margin-top:var(--space-4)">
+  <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">← Build Library</a>
+</div>
+{% endblock %}

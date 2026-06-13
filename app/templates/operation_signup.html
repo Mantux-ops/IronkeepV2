@@ -86,19 +86,25 @@
       <table class="data-table">
         <thead>
           <tr>
-            <th>Name</th>
-            <th>Role</th>
-            <th>Build</th>
-            <th>Availability</th>
-            <th>Flexibility</th>
-            <th></th>
+            <th scope="col">Name</th>
+            <th scope="col">Role</th>
+            <th scope="col">Build</th>
+            <th scope="col">Availability</th>
+            <th scope="col">Flexibility</th>
+            <th scope="col"><span class="sr-only">Actions</span></th>
           </tr>
         </thead>
         <tbody>
           {% for s in signups %}
-          {# Dev-auth note: is_own is compared by display_name.
-             Replace with user↔participant identity link once persistent auth is in place. #}
-          {% set is_own = current_user and s.display_name == current_user.display_name %}
+          {# Ownership: mirrors the server-side logic in withdraw_signup_intent.
+             "web:{user_id}" signups — ID-only check (immune to display-name collisions).
+             "web" / legacy signups — display-name fallback. #}
+          {% set _src = s.source or '' %}
+          {% if _src[:4] == 'web:' %}
+            {% set is_own = current_user and _src[4:] == current_user.id %}
+          {% else %}
+            {% set is_own = current_user and s.display_name == current_user.display_name %}
+          {% endif %}
           <tr>
             <td>{{ s.display_name }}</td>
             <td>{{ s.preferred_role }}</td>

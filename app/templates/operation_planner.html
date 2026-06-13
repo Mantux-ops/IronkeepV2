@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Planner — {{ operation.title }}{% endblock %}
+{% block title %}Tactical Planner — {{ operation.title }}{% endblock %}
 {% block main_attrs %} data-op-status="{{ operation.status }}"{% endblock %}
 
 {% block nav_extra %}
@@ -11,20 +11,48 @@
 
 {% block page_class %} page--wide{% endblock %}
 
+{% from "_planner_macros.html" import planner_slot_build_editor %}
+
 {% block content %}
 {% include "operation_tabs.html" %}
 {% include "flash_messages.html" %}
 
+{# Locked-roster banner — informs officers that assignments are read-only.
+   Rendered before all planner content so it is visible without scrolling.
+   Informational only: does not block viewing the roster. #}
+{% if operation.status == "locked" %}
+<div class="alert alert-info" role="status">
+  Roster is locked — assignments are read-only.
+</div>
+{% endif %}
+
+{# Build-name and weapon-name datalists for slot build edit forms.
+   Sourced from previously used slot template values, workspace-scoped.
+   Referenced by list= on the build_name / weapon_name inputs below. #}
+{% if build_name_suggestions or weapon_name_suggestions %}
+<datalist id="build-name-list">
+  {% for n in build_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
+</datalist>
+<datalist id="weapon-name-list">
+  {% for n in weapon_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
+</datalist>
+{% endif %}
+
 {# ── Page header: title left, Lock Roster right when applicable ───────────── #}
 <header class="page-header">
   <div class="page-header__main">
-    <h1>{{ operation.title }} — Planner Board</h1>
+    <h1>{{ operation.title }} — Tactical Planner</h1>
     <p class="page-meta">
       {{ operation.operation_type | upper }}
       &nbsp;·&nbsp;
       {{ operation.scheduled_start_at[:16] | replace("T", " ") }}
       &nbsp;·&nbsp;
       <span class="badge badge-{{ operation.status }}">{{ operation.status }}</span>
+      {% if composition %}
+      &nbsp;·&nbsp;
+      Composition: <a href="/workspaces/{{ workspace.slug }}/compositions/{{ composition.id }}"
+                      class="text-muted" style="font-weight:600">{{ composition.name }}</a>
+      {% endif %}
     </p>
   </div>
   {% if can_mutate and operation.status == "planning" %}
@@ -34,7 +62,8 @@
           class="inline-form">
       <input type="hidden" name="next"
              value="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner">
-      <button type="submit" class="btn btn-lock">Lock Roster</button>
+      <button type="submit" class="btn btn-lock"
+              onclick="return confirm('Lock the roster? Assignment mutations will be disabled and cannot be undone from the UI.')">Lock Roster</button>
     </form>
   </div>
   {% endif %}
@@ -42,19 +71,37 @@
 
 {# ── A. Readiness summary bar — sticky on wide screens ────────────────────── #}
 <div class="card readiness-sticky">
-  <div class="card-header"><h2>Readiness</h2></div>
+  <div class="card-header"><h2>Tactical Readiness</h2></div>
   <div class="card-body">
     {% if readiness %}
 
-    {# Fill rate + state badge #}
+    {# Fill rate instrument — percentage derived from existing snapshot fields #}
+    {% if readiness.total_slots > 0 %}
+      {% set readiness_pct = (readiness.assigned_slots * 100) // readiness.total_slots %}
+    {% else %}
+      {% set readiness_pct = 0 %}
+    {% endif %}
     <div class="readiness-bar">
-      <span class="readiness-bar__fill">
-        {{ readiness.assigned_slots }} / {{ readiness.total_slots }} assigned
-      </span>
-      <span class="badge badge-{{ readiness.readiness_state }}">
-        {{ readiness.readiness_state | upper }}
-      </span>
-      <span class="readiness-bar__meta">{{ readiness.created_at[:19] | replace("T", " ") }}</span>
+      <div class="readiness-bar__header">
+        <span class="readiness-bar__fill op-metric">
+          {{ readiness.assigned_slots }} / {{ readiness.total_slots }} assigned
+        </span>
+        <span class="readiness-bar__pct op-metric--pct">{{ readiness_pct }}%</span>
+        <span class="badge badge-{{ readiness.readiness_state }} readiness-bar__badge">
+          {{ readiness.readiness_state | upper }}
+        </span>
+        <span class="readiness-bar__meta op-metric--timestamp">{{ readiness.created_at[:19] | replace("T", " ") }}</span>
+      </div>
+      <div class="readiness-fill readiness-fill--{{ readiness.readiness_state }}"
+           role="progressbar"
+           aria-valuenow="{{ readiness_pct }}"
+           aria-valuemin="0"
+           aria-valuemax="100"
+           aria-label="Slot assignment readiness">
+        <div class="readiness-fill__track">
+          <div class="readiness-fill__bar" style="width: {{ readiness_pct }}%;"></div>
+        </div>
+      </div>
     </div>
 
     {# Role gap pills #}
@@ -85,7 +132,7 @@
     {% endif %}
 
     {# Secondary stats row #}
-    <p class="readiness-bar__stats">
+    <p class="readiness-bar__stats op-metric">
       {{ readiness.unassigned_signup_count }} unassigned signup{% if readiness.unassigned_signup_count != 1 %}s{% endif %}
       &nbsp;·&nbsp;
       {{ readiness.open_slots }} open slot{% if readiness.open_slots != 1 %}s{% endif %}
@@ -98,14 +145,14 @@
     </p>
 
     {% else %}
-    <p class="empty-state">No snapshot yet.</p>
+    <p class="empty-state">No readiness data yet — assign players to slots, then recalculate to see role and build gaps.</p>
     {% endif %}
 
     {% if can_mutate and can_recalculate_readiness %}
     <form method="post"
           action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/readiness"
           class="inline-form" style="margin-top:0.75rem;display:block">
-      <button type="submit" class="btn btn-sm">Recalculate Readiness</button>
+      <button type="submit" class="btn btn-sm">Refresh Readiness</button>
     </form>
     {% endif %}
   </div>
@@ -125,22 +172,9 @@
   <div class="card-body">
 
     {% if discord_roster_preview %}
-    <div class="discord-embed" style="border-left-color: {{ discord_roster_preview.color_hex }}">
-      <div class="discord-embed__title">{{ discord_roster_preview.title }}</div>
-      <div class="discord-embed__fields">
-        {% for field in discord_roster_preview.fields %}
-        <div class="discord-embed__field discord-embed__field--block">
-          <div class="discord-embed__field-name">{{ field.name }}</div>
-          <div class="discord-embed__field-value" style="white-space:pre-line">{{ field.value }}</div>
-        </div>
-        {% endfor %}
-      </div>
-      {% if discord_roster_preview.footer %}
-      <div class="discord-embed__footer">{{ discord_roster_preview.footer.text }}</div>
-      {% endif %}
-    </div>
+    {% from "_discord_macros.html" import discord_name, discord_embed %}
+    {{ discord_embed(discord_roster_preview, value_pre_line=True) }}
     <p class="discord-preview-target">
-      {% from "_discord_macros.html" import discord_name %}
       Server: {{ discord_name(workspace.discord_guild_id, discord_meta) }}
       &nbsp;·&nbsp;
       Channel: #{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}
@@ -176,7 +210,14 @@
     </div>
 
     {% elif not parties %}
+    {% if plan %}
+    <p class="empty-state">
+      No roster slots — the attached composition may not have slot templates yet.
+      <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">Return to Overview →</a>
+    </p>
+    {% else %}
     <p class="empty-state">Generate slots first to preview the roster.</p>
+    {% endif %}
 
     {% endif %}
   </div>
@@ -228,6 +269,27 @@
             <div class="signup-card__rel">
               <span class="rel-score {{ rel.rate_class }}" title="Attendance last 90 days">★ {{ rel.display }}</span>
             </div>
+            {% endif %}
+            {# ── Assign-from-participant: pick slot → assign directly ──
+               Uses the operation-level /assign route which accepts both
+               slot_id and participant_id as form fields.  Gives officers the
+               human → slot direction in addition to the slot → human direction
+               on the right-side slot cards.                               #}
+            {% if can_mutate and can_mutate_assignments and open_slots %}
+            <form method="post"
+                  action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/assign"
+                  class="signup-card__assign-form">
+              <input type="hidden" name="participant_id" value="{{ p.id }}">
+              <select name="slot_id" class="signup-assign-select"
+                      aria-label="Assign {{ p.display_name }} to slot">
+                <option value="">→ assign to slot</option>
+                {% for os in open_slots %}
+                <option value="{{ os.id }}">{{ os.label }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-sm btn-primary signup-assign-btn"
+                      aria-label="Assign {{ p.display_name }} to the selected slot">→</button>
+            </form>
             {% endif %}
           </div>
           {% endfor %}
@@ -311,7 +373,7 @@
               {% endfor %}
             </select>
           </label>
-          <input type="text" name="notes" placeholder="Notes (optional)" style="width:14rem;">
+          <input type="text" name="notes" placeholder="Notes (optional)" aria-label="Notes (optional)" style="width:14rem;">
           <button type="submit" class="btn btn-sm">Add to bench</button>
         </form>
         {% else %}
@@ -329,9 +391,26 @@
 
     {# B+C. Party panels with fill count + core slot emphasis #}
     {% if parties %}
+
+    {# ── Composition tactical overview: full-comp role distribution + continuation hint ── #}
+    <div class="comp-overview">
+      <span class="role-tally">
+        <span class="role-tally__item{% if comp_summary.tally.tank == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ comp_summary.tally.tank }}</strong></span>
+        <span class="role-tally__item{% if comp_summary.tally.healer == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ comp_summary.tally.healer }}</strong></span>
+        <span class="role-tally__item{% if comp_summary.tally.dps == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ comp_summary.tally.dps }}</strong></span>
+        <span class="role-tally__item{% if comp_summary.tally.support == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ comp_summary.tally.support }}</strong></span>
+        <span class="role-tally__item{% if comp_summary.tally.ranged == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ comp_summary.tally.ranged }}</strong></span>
+      </span>
+      {% if comp_summary.hint %}
+      <span class="comp-overview__hint comp-overview__hint--{{ comp_summary.hint_state }}">{{ comp_summary.hint }}</span>
+      {% endif %}
+    </div>
+
       {% for party_num, party_slots in parties.items() | sort %}
-      {% set party_total = party_slots | length %}
-      {% set party_assigned = party_slots | selectattr('id', 'in', assigned_map) | list | length %}
+      {# Source fill counts from server-side tactical summary — avoids selectattr filters #}
+      {% set psumm          = party_summaries[party_num] %}
+      {% set party_total    = psumm.total %}
+      {% set party_assigned = psumm.assigned %}
       {% set party_has_open = party_slots | selectattr('id', 'in', slot_has_quick_candidates) | list | length > 0 %}
 
       {% if party_assigned == party_total %}
@@ -342,7 +421,11 @@
         {% set fill_cls = 'fill-count--partial' %}
       {% endif %}
 
-      <section class="card party-panel">
+      {# Detect any critical gaps for left-border accent on weak parties #}
+      {% set _gap_ns = namespace(has_critical=false) %}
+      {% for _sev, _txt in psumm.gaps %}{% if _sev == 'critical' %}{% set _gap_ns.has_critical = true %}{% endif %}{% endfor %}
+
+      <section id="party-{{ party_num }}" class="card party-panel{% if _gap_ns.has_critical %} party-panel--weak{% endif %}">
         <div class="card-body">
           <div class="party-panel__header">
             <h3>
@@ -360,110 +443,182 @@
             </form>
             {% endif %}
           </div>
-          <div class="table-wrap">
-            <table class="data-table">
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Role</th>
-                  <th>Build</th>
-                  <th>Assignment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {% for slot in party_slots %}
-                {% set asgn   = assigned_map.get(slot.id) %}
-                {% set slot_p = slot_participants.get(slot.id, []) %}
-                {% if asgn %}
-                  {% set row_cls = 'row-assigned' %}
-                {% elif slot.priority == 'core' %}
-                  {% set row_cls = 'row-open-core' %}
-                {% elif slot_p %}
-                  {% set row_cls = 'row-open' %}
-                {% else %}
-                  {% set row_cls = 'row-muted' %}
+
+          {# ── Party tactical summary: role tally + tactical gap badges ── #}
+          <div class="party-summary">
+            <span class="role-tally">
+              <span class="role-tally__item{% if psumm.tally.tank == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ psumm.tally.tank }}</strong></span>
+              <span class="role-tally__item{% if psumm.tally.healer == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ psumm.tally.healer }}</strong></span>
+              <span class="role-tally__item{% if psumm.tally.dps == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ psumm.tally.dps }}</strong></span>
+              <span class="role-tally__item{% if psumm.tally.support == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ psumm.tally.support }}</strong></span>
+              <span class="role-tally__item{% if psumm.tally.ranged == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ psumm.tally.ranged }}</strong></span>
+            </span>
+            {% for sev, text in psumm.gaps %}
+            <span class="tac-gap-badge tac-gap-badge--{{ sev }}">{% if sev == 'critical' %}⚠ {% endif %}{{ text }}</span>
+            {% endfor %}
+          </div>
+
+          {# ── Slot card grid: tactical unit layout ───────────── #}
+          <div class="slot-card-grid">
+            {% for slot in party_slots %}
+            {% set asgn   = assigned_map.get(slot.id) %}
+            {% set slot_p = slot_participants.get(slot.id, []) %}
+            {% if asgn %}
+              {% set card_cls = 'slot-card--assigned' %}
+            {% elif slot.priority == 'core' %}
+              {% set card_cls = 'slot-card--open-core' %}
+            {% elif slot_p %}
+              {% set card_cls = 'slot-card--open' %}
+            {% else %}
+              {% set card_cls = 'slot-card--empty' %}
+            {% endif %}
+
+            {# role_family is precomputed by tactical.role_family() in the route handler. #}
+            <div class="slot-card {{ card_cls }}" data-role="{{ slot.role_family }}">
+
+              {# Header: doctrine_role (Phase 5.5) > role > slot index #}
+              <div class="slot-card__header">
+                {% if slot.doctrine_role %}
+                <span class="slot-card__doctrine-role" aria-label="Doctrine: {{ slot.doctrine_role }}">{{ slot.doctrine_role }}</span>
                 {% endif %}
-                <tr class="{{ row_cls }}">
-                  <td>{{ slot.slot_index }}</td>
-                  <td>{{ slot.role }}</td>
-                  <td>{{ slot.build_name }}</td>
-                  <td>
-                    {% if asgn %}
-                    <span class="badge badge-assigned">ASSIGNED</span>
-                    <strong>{{ asgn.display_name }}</strong>
-                    {% if can_mutate and can_mutate_assignments %}
-                    <form method="post"
-                          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/assignments/{{ asgn.assignment_id }}/remove"
-                          class="inline-form">
-                      <button type="submit" class="btn btn-sm btn-danger"
-                              onclick="return confirm('Remove {{ asgn.display_name }} from this slot?')">
-                        Remove
-                      </button>
-                    </form>
-                    {% endif %}
+                <span class="slot-card__role{% if slot.doctrine_role %} slot-card__role--secondary{% endif %}">{{ slot.role }}</span>
+                <span class="slot-card__idx">#{{ slot.slot_index }}{% if slot.priority == 'core' %} ●{% endif %}</span>
+              </div>
 
-                    {% elif can_mutate and slot_p and can_mutate_assignments %}
-                    {# Quick assign is primary when a best candidate exists #}
-                    {% if slot_has_quick_candidates.get(slot.id) %}
-                    <form method="post"
-                          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/quick-assign"
-                          class="inline-form">
-                      <button type="submit" class="btn btn-sm btn-primary"
-                              title="Auto-assign best-ranked non-reserved candidate">
-                        Quick assign
-                      </button>
-                    </form>
-                    {% endif %}
-                    {# Manual assign is secondary — collapsed into a disclosure #}
-                    <details class="slot-manual-assign">
-                      <summary>Manual assign</summary>
-                      <div class="slot-manual-assign__body">
-                        <form method="post"
-                              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/assign"
-                              class="inline-form">
-                          <select name="participant_id">
-                            {% for p in slot_p %}
-                            <option value="{{ p.id }}">
-                              {%- if p.match_label %}{{ p.match_label }} {% endif %}
-                              {%- if p.is_reserve %}[bench] {% endif %}
-                              {{- p.display_name -}}
-                            </option>
-                            {% endfor %}
-                          </select>
-                          <button type="submit" class="btn btn-sm">Assign</button>
-                        </form>
-                      </div>
-                    </details>
+              {# Body: weapon-first build identity + player assignment #}
+              <div class="slot-card__body">
+                {# weapon_name is the primary tactical identifier when set;
+                   fall back to build_name. Show build_name as secondary only
+                   when it differs (e.g. weapon="Nature Staff", build="Main Healer"). #}
+                {% set primary   = slot.weapon_name or slot.build_name %}
+                {% set secondary = slot.build_name if (slot.weapon_name and slot.weapon_name != slot.build_name) else "" %}
+                {% if primary %}
+                <div class="slot-card__weapon" title="{{ primary }}">{{ primary }}</div>
+                {% else %}
+                <div class="slot-card__weapon slot-card__weapon--empty">No build</div>
+                {% endif %}
+                {% if secondary %}
+                <div class="slot-card__build"  title="{{ secondary }}">{{ secondary }}</div>
+                {% endif %}
+                {% if asgn %}
+                <div class="slot-card__player" title="{{ asgn.display_name }}">{{ asgn.display_name }}</div>
+                {% else %}
+                <div class="slot-card__player slot-card__player--empty">Unassigned</div>
+                {% endif %}
+              </div>
 
-                    {% elif slot_p %}
-                    <span class="badge badge-open">OPEN</span>
-                    <em class="text-muted" style="font-size:0.8rem">— assignment changes closed</em>
+              {# ── Slot card footer: assignment actions + inline build edit ── #}
+              <div class="slot-card__footer">
 
-                    {% elif participants %}
-                    <span class="badge badge-open">OPEN</span>
-                    <em class="text-muted" style="font-size:0.8rem">— all signers placed</em>
+                {% if asgn %}
+                {# ── ASSIGNED: Unassign + Swap actions ─────────────────── #}
+                {% if can_mutate and can_mutate_assignments %}
+                <div class="slot-reassign-row">
+                  <form method="post"
+                        action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/assignments/{{ asgn.assignment_id }}/remove"
+                        class="inline-form">
+                    <button type="submit" class="btn btn-sm btn-muted"
+                            aria-label="Unassign {{ asgn.display_name }} from this slot">
+                      Unassign
+                    </button>
+                  </form>
+                  {# Swap: pick replacement from unassigned participants — atomic swap #}
+                  {% if slot_p %}
+                  <details class="slot-swap-details">
+                    <summary class="btn btn-sm" aria-label="Swap {{ asgn.display_name }} for another player">Swap →</summary>
+                    <div class="slot-swap-details__body">
+                      <form method="post"
+                            action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/reassign"
+                            class="slot-assign-form">
+                        <select name="participant_id" class="slot-assign-select"
+                                aria-label="Select replacement for {{ asgn.display_name }}">
+                          {% for p in slot_p %}
+                          <option value="{{ p.id }}">
+                            {%- if p.match_label %}{{ p.match_label }} {% endif %}
+                            {%- if p.is_reserve %}[bench] {% endif %}
+                            {{- p.display_name -}}
+                          </option>
+                          {% endfor %}
+                        </select>
+                        <button type="submit" class="btn btn-sm btn-primary">Swap</button>
+                      </form>
+                    </div>
+                  </details>
+                  {% endif %}
+                </div>
+                {% endif %}
 
-                    {% else %}
-                    <span class="badge badge-open">OPEN</span>
-                    <em class="text-muted" style="font-size:0.8rem">— no signups yet</em>
-                    {% endif %}
-                  </td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
+                {% elif can_mutate and slot_p and can_mutate_assignments %}
+                {# ── OPEN + CANDIDATES: Quick assign + promoted manual assign ── #}
+                <div class="slot-assign-controls">
+                  {% if slot_has_quick_candidates.get(slot.id) %}
+                  <form method="post"
+                        action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/quick-assign"
+                        class="inline-form">
+                    <button type="submit" class="btn btn-sm btn-primary"
+                            aria-label="Auto-assign best candidate to this slot"
+                            title="Auto-assign best-ranked non-reserved candidate">
+                      Quick ★
+                    </button>
+                  </form>
+                  {% endif %}
+                  {# Promoted manual assign — always visible, no <details> wrapper #}
+                  <form method="post"
+                        action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/assign"
+                        class="slot-assign-form">
+                    <select name="participant_id" class="slot-assign-select"
+                            aria-label="Select player to assign to slot #{{ slot.slot_index }}">
+                      <option value="">— pick player —</option>
+                      {% for p in slot_p %}
+                      <option value="{{ p.id }}">
+                        {%- if p.match_label %}{{ p.match_label }} {% endif %}
+                        {%- if p.is_reserve %}[bench] {% endif %}
+                        {{- p.display_name -}}
+                      </option>
+                      {% endfor %}
+                    </select>
+                    <button type="submit" class="btn btn-sm"
+                            aria-label="Assign selected player to slot #{{ slot.slot_index }}">
+                      Assign
+                    </button>
+                  </form>
+                </div>
+
+                {% elif slot_p %}
+                  <span class="slot-card__status">signup open · changes closed</span>
+                {% elif participants %}
+                  <span class="slot-card__status">open · no unassigned signers</span>
+                {% else %}
+                  <span class="slot-card__status">open · no signups yet</span>
+                {% endif %}
+
+                {# ── Inline build editor — see _planner_macros.html ─── #}
+                {% set show_build_edit = can_mutate and can_mutate_assignments %}
+                {{ planner_slot_build_editor(slot, workspace, operation, show_build_edit) }}
+
+              </div>
+
+            </div>
+            {% endfor %}
           </div>
         </div>
       </section>
       {% endfor %}
 
     {% else %}
+    {% if plan %}
     <p class="empty-state">
-      No slots generated yet.
+      No roster slots — the attached composition may not have slot templates yet.
+      <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">Return to Overview →</a>
+    </p>
+    {% else %}
+    <p class="empty-state">
+      No roster slots generated yet.
       <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}">
-        Go to Overview to generate slots →
+        Return to the Operation Overview to attach a composition and generate slots →
       </a>
     </p>
+    {% endif %}
     {% endif %}
 
   </div>{# /planner-col--right #}
@@ -471,7 +626,8 @@
 </div>{# /planner-columns #}
 
 <div class="action-bar" style="margin-top:1rem">
-  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}" class="btn">← Overview</a>
+  <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}" class="btn">← Operation Overview</a>
   <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/signup" class="btn">Signup page</a>
+  <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn btn-ghost">Compositions →</a>
 </div>
 {% endblock %}

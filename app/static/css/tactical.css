@@ -1,0 +1,775 @@
+/* =========================================================
+   IronkeepV2 — Tactical
+   Planner UX, slot card system, role identity, gap badges,
+   comp overview, party summary strips, disclosure forms.
+
+   Tactical summary hierarchy (top-level → granular):
+     1. .comp-overview         — full-comp role distribution + hint (above all party panels)
+     2. .party-summary         — per-party role tally + gap badge strip (below party header)
+     3. .role-tally            — T/H/D/S/R counts coloured by role family
+     4. .tac-gap-badge         — individual missing-role or build-gap token
+     5. .comp-overview__hint   — continuation hint text (ok / warn / neutral)
+
+   Tactical state vocabulary (slot assignment states):
+     assigned   — slot has a confirmed player assignment
+     open-core  — unassigned, marked as core priority
+     open       — open, accepting signups
+     empty      — no state / no relevant signups (default)
+
+   Build content states:
+     slot-card__weapon          — weapon/build name when set
+     slot-card__weapon--empty   — no build_name or weapon_name
+     slot-card__player          — assigned player name
+     slot-card__player--empty   — no player assigned
+
+   Gap severity states:
+     tac-gap-badge--critical    — blocking gap (tank/healer absent)
+     tac-gap-badge--warn        — sub-optimal gap (build missing, not blocking)
+     gap-pill--role             — role slot empty (danger)
+     gap-pill--build            — build missing (warning)
+     gap-pill--ok               — no gaps (success)
+
+   Fill count states:
+     fill-count--full     — all slots assigned
+     fill-count--partial  — some slots assigned
+     fill-count--empty    — no slots assigned
+
+   Comp hint states (hint_state in tactical.py):
+     comp-overview__hint--ok       — comp is viable and ready
+     comp-overview__hint--warn     — gaps detected, action needed
+     comp-overview__hint--neutral  — neutral / early planning state
+
+   Role families (via data-role attribute, set from tactical.py::role_family()):
+     tank | healer | support | dps | ranged | default
+     All use --role-* tokens from tokens.css; no hardcoded colors.
+
+   Planner layout classes (layout / responsive only):
+     .readiness-sticky  .planner-columns  .planner-col--left  .planner-col--right
+     → defined in responsive.css inside @media (min-width: 960px)
+
+   @media breakpoints for all other tactical rules live in responsive.css.
+   ========================================================= */
+
+/* ── Planner UX ────────────────────────────────────────── */
+.readiness-bar {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  margin-bottom: var(--space-3);
+}
+.readiness-bar__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-4);
+  align-items: baseline;
+}
+.readiness-bar__fill  { font-size: 1.1rem; font-weight: 700; color: var(--text); font-variant-numeric: tabular-nums; }
+.readiness-bar__pct   { font-size: 0.9375rem; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--text-muted); }
+.readiness-bar__meta  { font-size: 0.8125rem; color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.readiness-bar__stats { font-size: var(--text-base); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+
+/* Planner readiness instrument — horizontal fill bar (6px, state-coloured) */
+.readiness-fill { width: 100%; }
+.readiness-fill__track {
+  width: 100%;
+  height: 6px;
+  background: var(--surface-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.readiness-fill__bar {
+  height: 100%;
+  border-radius: 999px;
+  min-width: 0;
+}
+.readiness-fill--ready .readiness-fill__bar     { background: var(--success); }
+.readiness-fill--forming .readiness-fill__bar   { background: var(--warning); }
+.readiness-fill--not_ready .readiness-fill__bar { background: var(--danger); }
+
+/* Badge emphasis — planner readiness card only (not global .badge) */
+.readiness-sticky .readiness-bar__badge {
+  padding: 0.28rem 0.7rem;
+  font-size: 0.8125rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  border-width: 1px;
+}
+
+.gap-pills { display: flex; flex-wrap: wrap; gap: var(--space-1); margin-bottom: var(--space-2); }
+.gap-pill {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  border: 1px solid transparent;
+}
+/* gap-pill modifier naming uses operational intent, NOT generic semantic names:
+     --role  : a required role slot is empty (danger severity)
+     --build : a required build is missing (warning severity)
+     --ok    : no gaps detected (success state)
+   --ok rather than --success is intentional — "ok" is the operational
+   readiness language used consistently across the planner surface. */
+.gap-pill--role  { background: var(--danger-bg);  color: var(--danger-text);  border-color: var(--danger-border); }
+.gap-pill--build { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+.gap-pill--ok    { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+
+.fill-count { font-size: 0.8125rem; font-weight: 700; margin-left: 0.4rem; font-variant-numeric: tabular-nums; }
+.fill-count--full    { color: var(--success); }
+.fill-count--partial { color: var(--warning); }
+.fill-count--empty   { color: var(--danger-text); }
+
+/* ── Comp overview strip ───────────────────────────────── */
+
+/* Composition-level overview: full-comp role distribution + continuation hint.
+   Sits above all party panels in the right planner column. */
+.comp-overview {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-4);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+}
+/* hint_state values produced by tactical.py: "ok" | "warn" | "neutral"
+   Base class provides default muted text (serves as --neutral).
+   Explicit --neutral rule added for completeness and CSS discoverability. */
+.comp-overview__hint         { font-size: 0.78rem; color: var(--text-muted); }
+.comp-overview__hint--neutral { color: var(--text-muted); }   /* explicit neutral — same as base */
+.comp-overview__hint--warn   { color: var(--warning-text); }
+.comp-overview__hint--ok     { color: var(--success-text); }
+
+/* ── Party summary strip ───────────────────────────────── */
+
+/* Compact bar between party header and slot grid — role tally + gap badges */
+.party-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-1) var(--space-3);
+  padding: var(--space-1) 0 var(--space-2);
+  margin-bottom: var(--space-2);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Role tally ────────────────────────────────────────── */
+
+/* T:N H:N D:N S:N R:N — coloured per role family, dimmed when zero.
+   All color values use --role-* tokens; no hardcoded hex values. */
+.role-tally {
+  display: flex;
+  gap: var(--space-2);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+.role-tally__item          { color: var(--text-muted); }
+.role-tally__item strong   { font-weight: 700; }
+.role-tally__item--zero    { opacity: 0.35; }
+.role-tally__item[data-role="tank"]    { color: var(--role-tank); }
+.role-tally__item[data-role="healer"]  { color: var(--role-healer); }
+.role-tally__item[data-role="support"] { color: var(--role-support); }
+.role-tally__item[data-role="dps"]     { color: var(--role-dps); }
+.role-tally__item[data-role="ranged"]  { color: var(--role-ranged); }
+
+/* ── Tactical gap badges ───────────────────────────────── */
+
+/* Compact tokens for missing roles or build gaps.
+   Modifier naming uses severity language, not generic semantic tokens:
+     --critical : missing role that blocks party viability (tank/healer absent)
+     --warn     : build gap or sub-optimal slot (not yet blocking)
+   NOTE: --warn (not --warning) is intentional — "warn" is the operational
+   shorthand used in tactical.py and planner templates. Tests assert on
+   tac-gap-badge--warn; do not rename. */
+.tac-gap-badge {
+  font-size: 0.7rem;
+  font-weight: 700;
+  padding: 0.1rem 0.35rem;
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  line-height: 1.4;
+}
+.tac-gap-badge--critical { background: var(--danger-bg);  color: var(--danger-text);  border: 1px solid var(--danger-border); }
+.tac-gap-badge--warn     { background: var(--warning-bg); color: var(--warning-text); border: 1px solid var(--warning-border); }
+
+/* ── Party panel health state ──────────────────────────── */
+/* party-panel--weak: party has critical tactical gaps (no healer or no tank slot).
+   Left-border accent strengthens problem-party scan detection without adding
+   alarms or animation. Applied on both the planner and the composition preview.
+   Deliberately uses --danger color to match tac-gap-badge--critical severity. */
+.party-panel.party-panel--weak { border-left: 3px solid var(--danger); }
+
+/* ── Role colour bar ───────────────────────────────────── */
+/* Compact per-slot role distribution strip rendered above the slot-card-grid.
+   Each segment represents one slot in the party, coloured by role family.
+   Provides instant full-party role distribution scan without reading slot cards.
+   Height is deliberately minimal (4px) to preserve tactical density.
+   Used on the composition detail tactical layout preview.
+
+   Segment data-role values match role_family() return values:
+     tank | healer | support | dps | ranged | default
+   All colour values use --role-* tokens; no hardcoded hex. */
+.role-color-bar {
+  display: flex;
+  gap: 2px;
+  margin-bottom: var(--space-2);
+}
+.role-color-bar__segment {
+  height: 4px;
+  border-radius: 1px;
+  flex: 1;
+  min-width: 8px;
+  background: var(--border-strong);
+}
+.role-color-bar__segment[data-role="tank"]    { background: var(--role-tank); }
+.role-color-bar__segment[data-role="healer"]  { background: var(--role-healer); }
+.role-color-bar__segment[data-role="support"] { background: var(--role-support); }
+.role-color-bar__segment[data-role="dps"]     { background: var(--role-dps); }
+.role-color-bar__segment[data-role="ranged"]  { background: var(--role-ranged); }
+.role-color-bar__segment[data-role="default"] { background: var(--border-strong); }
+
+/* ── Party panel tactical sub-elements ─────────────────── */
+.party-panel__header h3 { display: inline; }
+.unassigned-panel .name-col { font-weight: 600; }
+.unassigned-panel .empty-all-placed {
+  color: var(--success-text);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-base);
+}
+
+/* ── Signup player cards ───────────────────────────────── */
+.signup-cards { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+.signup-card {
+  flex: 1 1 160px;
+  max-width: 220px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-3);
+  background: var(--surface-2);
+  font-size: var(--text-base);
+  line-height: 1.35;
+  transition: border-color .12s;
+}
+.signup-card:hover { border-color: var(--border-strong); }
+.signup-card__name {
+  font-weight: 700;
+  font-size: 0.9rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: var(--space-1);
+  margin-bottom: 0.15rem;
+}
+.signup-card__meta  { color: var(--text-muted); font-size: var(--text-sm); }
+.signup-card__avail { margin-top: 0.2rem; }
+.signup-card__rel   { margin-top: 0.2rem; }
+
+/* ── Slot build-edit disclosure ─────────────────────────── */
+/* Compact inline form for updating build_name / weapon_name on a slot */
+.slot-build-edit { font-size: 0.8125rem; }
+.slot-build-edit > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  list-style: none;
+}
+.slot-build-edit > summary::-webkit-details-marker { display: none; }
+.slot-build-edit > summary::before { content: '▶'; font-size: 0.6rem; transition: transform 0.12s; }
+.slot-build-edit[open] > summary::before { transform: rotate(90deg); }
+.slot-build-edit > .slot-build-edit__body {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+/* Narrow inputs: keep the form compact within a 140 px card footer */
+.slot-build-edit input[type="text"] { width: 7.5rem; font-size: var(--text-sm); }
+
+/* ── Slot manual-assign disclosure ─────────────────────── */
+.slot-manual-assign { margin-top: var(--space-2); font-size: 0.8125rem; }
+.slot-manual-assign > summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3em;
+  list-style: none;
+}
+.slot-manual-assign > summary::-webkit-details-marker { display: none; }
+.slot-manual-assign > summary::before { content: '▶'; font-size: 0.6rem; transition: transform 0.12s; }
+.slot-manual-assign[open] > summary::before { transform: rotate(90deg); }
+.slot-manual-assign > .slot-manual-assign__body {
+  margin-top: var(--space-1);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+  align-items: center;
+}
+
+/* ── Slot card system ──────────────────────────────────────
+
+   .slot-card-grid: auto-fill responsive grid inside a party panel.
+   .slot-card:      one roster slot as a visual tactical unit.
+   Replaces the dense data-table row layout within each party panel.
+   Each card communicates: role (primary), assignment state, build
+   label, slot index, and contextual actions in a compact footer.
+   ──────────────────────────────────────────────────────────── */
+
+/* Party panel: reduce card-body padding so grid card edges align cleanly */
+.party-panel > .card-body { padding: var(--space-3); }
+
+/* Grid: fills available width; 140 px min = fits 5 slots per party row at ~720 px */
+.slot-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+  gap: var(--space-2);
+}
+
+/* Base card */
+.slot-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  transition: border-color .12s;
+}
+.slot-card:hover { border-color: var(--border-strong); }
+
+/* State left-border accents — 4 mutually exclusive states per slot:
+     --assigned  : slot has a confirmed player assignment (green)
+     --open-core : slot is unassigned and marked core priority (amber)
+     --open      : slot is open, accepting signups (blue accent)
+     --empty     : slot has no state / no relevant signups (default dim border)
+   Modifier naming uses operational language, not generic semantic tokens,
+   because these states are specific to the assignment workflow. */
+.slot-card--assigned  { border-left-color: var(--success); }
+.slot-card--open-core { border-left-color: var(--warning); }
+.slot-card--open      { border-left-color: var(--accent); }
+.slot-card--empty     { border-left-color: var(--border); } /* explicit: same as base; confirms intentional no-highlight */
+
+/* Header: compact tactical label strip — role + slot index */
+.slot-card__header {
+  padding: 0.15rem var(--space-2);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  border-radius: var(--radius) var(--radius) 0 0;
+}
+/* Doctrine role — primary orchestration identity tier.
+   Shown above role_family when set.  Accent-colored, slightly smaller,
+   restrained to avoid dominating the card while improving scan speed. */
+.slot-card__doctrine-role {
+  display: block;
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--accent, #9b7ee8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* When doctrine_role is present, step role down to secondary weight */
+.slot-card__role--secondary {
+  font-weight: 500;
+}
+
+.slot-card__role {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text);
+}
+.slot-card__idx {
+  font-size: 0.68rem;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* Body: build label + player state */
+.slot-card__body {
+  padding: var(--space-1) var(--space-2);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 0.1em;
+  min-height: 1.8rem;
+}
+/* Primary build identifier: weapon name when set, else build name */
+.slot-card__weapon {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* No-build indicator: slot has no build_name or weapon_name */
+.slot-card__weapon--empty {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-style: italic;
+}
+/* Secondary build label: shown only when weapon_name differs from build_name */
+.slot-card__build {
+  font-size: 0.7rem;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-card__player {
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.slot-card__player--empty {
+  font-weight: 400;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ── Role identity — header divider + label color per role family ──
+   Each family gets a colored role-name label and a matching header
+   border-bottom. The left-border (state accent) is preserved so
+   assignment state and role identity are independently visible.
+
+   role_family() in tactical.py returns one of:
+     tank | healer | support | dps | ranged | default
+
+   All selectors use --role-* tokens. No hardcoded hex values.
+   ──────────────────────────────────────────────────────────────── */
+.slot-card[data-role="tank"]    .slot-card__role { color: var(--role-tank); }
+.slot-card[data-role="healer"]  .slot-card__role { color: var(--role-healer); }
+.slot-card[data-role="support"] .slot-card__role { color: var(--role-support); }
+.slot-card[data-role="dps"]     .slot-card__role { color: var(--role-dps); }
+.slot-card[data-role="ranged"]  .slot-card__role { color: var(--role-ranged); }
+.slot-card[data-role="default"] .slot-card__role { color: var(--role-default); } /* unclassified role */
+
+.slot-card[data-role="tank"]    .slot-card__header { border-bottom-color: var(--role-tank); }
+.slot-card[data-role="healer"]  .slot-card__header { border-bottom-color: var(--role-healer); }
+.slot-card[data-role="support"] .slot-card__header { border-bottom-color: var(--role-support); }
+.slot-card[data-role="dps"]     .slot-card__header { border-bottom-color: var(--role-dps); }
+.slot-card[data-role="ranged"]  .slot-card__header { border-bottom-color: var(--role-ranged); }
+.slot-card[data-role="default"] .slot-card__header { border-bottom-color: var(--role-default); } /* unclassified role */
+
+/* Footer: slot-level actions — compact and contextual */
+.slot-card__footer {
+  padding: var(--space-1) var(--space-2);
+  border-top: 1px solid var(--border);
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+}
+/* Status text for read-only states */
+.slot-card__status {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  font-style: italic;
+}
+
+/* ── Composition creation page preview elements ─────────── */
+
+/* Quiet placeholder shown on initial composition creation load.
+   Subordinate to the form; signals what happens after save. */
+.comp-creation-placeholder {
+  font-size: var(--text-sm);
+  margin-top: var(--space-4);
+  color: var(--text-faint);
+}
+
+/* Card shown after failed validation when slot data is available.
+   Uses existing .card + .card-body — no extra structural CSS needed.
+   Kept compact; visually subordinate to the form above. */
+.comp-creation-preview h3 {
+  font-size: var(--text-base);
+  font-weight: 600;
+}
+
+/* ── Composition preview supplementary elements ──────────── */
+
+/* One-line muted note below the "Tactical Layout — preview" heading.
+   Communicates template-vs-planner distinction without adding visual weight. */
+.comp-preview-note {
+  font-size: var(--text-sm);
+  margin-top: calc(-1 * var(--space-2));
+  margin-bottom: var(--space-3);
+}
+
+/* Collapsible wrapper for compositions with > 4 parties.
+   Starts closed (no open attribute in HTML) to avoid a long wall of cards.
+   Summary line shows party + slot count so officers can still scan without
+   opening. For ≤ 4 parties the <details> element is not rendered at all. */
+.comp-preview-details > summary {
+  cursor: pointer;
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
+  user-select: none;
+  list-style: none;
+}
+.comp-preview-details > summary::-webkit-details-marker { display: none; }
+.comp-preview-details > summary::before {
+  content: '▶ ';
+  font-size: 0.65rem;
+  vertical-align: middle;
+  transition: transform 0.12s;
+  display: inline-block;
+}
+.comp-preview-details[open] > summary::before { transform: rotate(90deg); }
+.comp-preview-details[open] > summary { margin-bottom: var(--space-3); }
+
+/* ── Phase 6 Slice 2: Assignment workflow ────────────────
+   Slot assignment controls, unassign/swap row, signup card
+   assign-from-participant form.
+   ────────────────────────────────────────────────────────── */
+
+/* Promoted manual assign: always-visible select + button row */
+.slot-assign-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  width: 100%;
+}
+
+.slot-assign-form {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  width: 100%;
+}
+
+.slot-assign-select {
+  flex: 1;
+  font-size: var(--text-xs);
+  min-width: 0;
+  padding: 3px var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: var(--radius-sm, 3px);
+  color: var(--text);
+  min-height: 28px;
+}
+.slot-assign-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+/* Unassign + Swap row for assigned slots */
+.slot-reassign-row {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  flex-wrap: wrap;
+  width: 100%;
+}
+
+/* Swap <details> control */
+.slot-swap-details > summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-block;
+}
+.slot-swap-details > summary::-webkit-details-marker { display: none; }
+.slot-swap-details > summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.slot-swap-details__body {
+  margin-top: var(--space-1);
+  width: 100%;
+}
+
+/* Signup card assign-from-participant form */
+.signup-card__assign-form {
+  display: flex;
+  gap: var(--space-1);
+  align-items: center;
+  margin-top: var(--space-2);
+  padding-top: var(--space-1);
+  border-top: 1px solid var(--border, rgba(255,255,255,0.08));
+}
+
+.signup-assign-select {
+  flex: 1;
+  font-size: var(--text-xs);
+  min-width: 0;
+  padding: 3px var(--space-1);
+  background: var(--surface-2);
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: var(--radius-sm, 3px);
+  color: var(--text);
+  min-height: 26px;
+}
+.signup-assign-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.signup-assign-btn {
+  flex-shrink: 0;
+  padding: 2px var(--space-2);
+  font-size: var(--text-xs);
+}
+
+/* Responsive: collapse assign controls at narrow widths */
+@media (max-width: 480px) {
+  .slot-assign-form {
+    flex-wrap: wrap;
+  }
+  .slot-assign-select {
+    min-width: 120px;
+  }
+  .slot-reassign-row {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .signup-card__assign-form {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 390px) {
+  .signup-assign-select {
+    min-width: 0;
+    width: 100%;
+  }
+}
+
+/* ── Phase 6: Per-slot quick-edit panel ──────────────────
+   Uses native <details> for progressive enhancement.
+   No JS required; builds expand inline below each slot card.
+   Visual goal: subordinate, collapsed by default, fast to use.
+   ────────────────────────────────────────────────────────── */
+
+.slot-card__quick-edit {
+  border-top: 1px solid var(--border, rgba(255,255,255,0.1));
+  margin-top: var(--space-1);
+}
+
+.slot-card__quick-edit-toggle {
+  cursor: pointer;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: var(--space-1) 0 var(--space-1) 0;
+  list-style: none;
+  user-select: none;
+  display: block;
+}
+.slot-card__quick-edit-toggle::-webkit-details-marker { display: none; }
+.slot-card__quick-edit-toggle::before {
+  content: '✏ ';
+  opacity: 0.6;
+}
+.slot-card__quick-edit[open] .slot-card__quick-edit-toggle {
+  color: var(--accent);
+}
+.slot-card__quick-edit-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+.slot-card__quick-edit-form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-2) 0 var(--space-1) 0;
+}
+
+/* Label-input pairs inside the quick-edit form */
+.sqe-label {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+}
+.sqe-label span {
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-faint, var(--text-muted));
+}
+
+.sqe-input,
+.sqe-select {
+  width: 100%;
+  font-size: var(--text-xs);
+  padding: 3px var(--space-2);
+  background: var(--surface-2);
+  border: 1px solid var(--border, rgba(255,255,255,0.12));
+  border-radius: var(--radius-sm, 3px);
+  color: var(--text);
+  min-height: 28px;
+}
+.sqe-input:focus-visible,
+.sqe-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: var(--accent);
+}
+
+.sqe-actions {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex-wrap: wrap;
+  padding-top: var(--space-1);
+}
+
+.sqe-save {
+  padding: 3px var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.sqe-clear {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: 3px var(--space-2);
+  opacity: 0.75;
+}
+.sqe-clear:hover,
+.sqe-clear:focus-visible {
+  color: var(--warning, #e07c30);
+  border-color: var(--warning, #e07c30);
+  opacity: 1;
+}
+
+/* Responsive: quick-edit form is already column-stacked; works well at all widths */
+@media (max-width: 390px) {
+  .sqe-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+  .sqe-save,
+  .sqe-clear {
+    text-align: center;
+  }
+}

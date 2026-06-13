@@ -12,6 +12,10 @@ deleted or updated.
     workspace.member.removed
     albion_composition.created
     albion_composition.deleted
+    albion_composition.slots.updated
+    albion_build.created
+    albion_build.updated
+    albion_build.retired
     albion_identity.claimed
     albion_identity.approved
     albion_identity.rejected
@@ -52,8 +56,12 @@ from app.errors import ValidationError
 WORKSPACE_CREATED = "workspace.created"
 WORKSPACE_DISCORD_CONFIG_UPDATED = "workspace.discord_config.updated"
 WORKSPACE_MEMBER_REMOVED = "workspace.member.removed"
-ALBION_COMPOSITION_CREATED = "albion_composition.created"
-ALBION_COMPOSITION_DELETED = "albion_composition.deleted"
+ALBION_COMPOSITION_CREATED       = "albion_composition.created"
+ALBION_COMPOSITION_DELETED       = "albion_composition.deleted"
+ALBION_COMPOSITION_SLOTS_UPDATED = "albion_composition.slots.updated"
+ALBION_BUILD_CREATED = "albion_build.created"
+ALBION_BUILD_UPDATED = "albion_build.updated"
+ALBION_BUILD_RETIRED = "albion_build.retired"
 GUILD_OPERATION_CREATED    = "guild_operation.created"
 GUILD_OPERATION_PUBLISHED  = "guild_operation.published"
 GUILD_OPERATION_LOCKED     = "guild_operation.locked"

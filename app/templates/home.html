@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% block title %}IronkeepV2 — Workspaces{% endblock %}
+{% block page_class %} page--narrow{% endblock %}
 
 {% block content %}
 {% set title = "Workspaces" %}
@@ -14,7 +15,6 @@
         <thead>
           <tr>
             <th>Name</th>
-            <th>Slug</th>
             <th>Game</th>
             <th></th>
           </tr>
@@ -22,10 +22,12 @@
         <tbody>
           {% for ws in workspaces %}
           <tr>
-            <td><a href="/workspaces/{{ ws.slug }}">{{ ws.name }}</a></td>
-            <td><code>{{ ws.slug }}</code></td>
+            <td>
+              <a href="/workspaces/{{ ws.slug }}">{{ ws.name }}</a>
+              <br><code style="font-size:0.8rem;color:var(--text-faint)">{{ ws.slug }}</code>
+            </td>
             <td>{{ ws.primary_game }}</td>
-            <td><a href="/workspaces/{{ ws.slug }}" class="btn btn-sm">Open</a></td>
+            <td><a href="/workspaces/{{ ws.slug }}" class="btn btn-sm btn-primary">Open</a></td>
           </tr>
           {% endfor %}
         </tbody>
@@ -35,7 +37,7 @@
     <p class="empty-state">No workspaces yet.</p>
     {% endif %}
 
-    <div class="action-bar">
+    <div class="action-bar" style="margin-top:var(--space-3)">
       <a href="/workspaces/new" class="btn btn-primary">+ New Workspace</a>
     </div>
   </div>

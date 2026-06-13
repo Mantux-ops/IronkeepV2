@@ -78,7 +78,28 @@ def test_assignment_blocked_in_draft():
         )
 
 
-def test_assignment_allowed_in_planning_and_locked():
+def test_assignment_allowed_in_planning():
+    ws = make_workspace()
+    op, slots = _planning_with_slots(ws["id"])
+    signup = use_cases.submit_signup_intent(ws["id"], op["id"], "PlayerOne", "Healer")
+    assignment = use_cases.assign_participant_to_operation_slot(
+        ws["id"], op["id"], slots[0]["id"], signup["participant_id"]
+    )
+    assert assignment["operation_slot_id"] == slots[0]["id"]
+
+
+def test_assignment_blocked_when_locked():
+    ws = make_workspace()
+    op, slots = _planning_with_slots(ws["id"])
+    signup = use_cases.submit_signup_intent(ws["id"], op["id"], "PlayerOne", "Healer")
+    use_cases.lock_operation(ws["id"], op["id"])
+    with pytest.raises(ConflictError, match="change assignments"):
+        use_cases.assign_participant_to_operation_slot(
+            ws["id"], op["id"], slots[0]["id"], signup["participant_id"]
+        )
+
+
+def test_unassign_blocked_when_locked():
     ws = make_workspace()
     op, slots = _planning_with_slots(ws["id"])
     signup = use_cases.submit_signup_intent(ws["id"], op["id"], "PlayerOne", "Healer")
@@ -86,10 +107,8 @@ def test_assignment_allowed_in_planning_and_locked():
         ws["id"], op["id"], slots[0]["id"], signup["participant_id"]
     )
     use_cases.lock_operation(ws["id"], op["id"])
-    use_cases.remove_assignment(ws["id"], op["id"], assignment["id"])
-    use_cases.assign_participant_to_operation_slot(
-        ws["id"], op["id"], slots[0]["id"], signup["participant_id"]
-    )
+    with pytest.raises(ConflictError, match="change assignments"):
+        use_cases.remove_assignment(ws["id"], op["id"], assignment["id"])
 
 
 def test_reserve_blocked_in_completed():

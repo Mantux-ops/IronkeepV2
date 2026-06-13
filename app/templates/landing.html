@@ -1,0 +1,454 @@
+{% extends "base_public.html" %}
+{% block title %}IronkeepV2 — Tactical Operations Platform{% endblock %}
+{% block head_extra %}
+<meta name="description" content="IronkeepV2 — Tactical coordination for Albion Online guild officers. Composition planning, slot assignment, readiness tracking, and Discord posting in a single operational surface.">
+{% endblock %}
+
+{% block content %}
+<div class="landing-page">
+
+  {# ── Section 1: Hero ──────────────────────────────────────────────────── #}
+  <section id="section-hero" class="landing-hero" aria-labelledby="hero-heading">
+    <div class="ls-hero-layout">
+
+      <div class="ls-hero-text">
+        <h1 id="hero-heading">Know who's ready before the operation starts.</h1>
+        <p>For Albion Online guild officers running structured operations. Composition planning, slot assignment, readiness tracking, and Discord posting — without stitching together separate tools.</p>
+        <div class="landing-cta">
+          <a href="/login" class="btn btn-primary">Login</a>
+          <a href="#section-showcase" class="btn" aria-label="See the tactical planner">See the planner ↓</a>
+        </div>
+        <p class="ls-trust-strip">Self-hosted &nbsp;·&nbsp; Albion Online-specific &nbsp;·&nbsp; Actively developed</p>
+      </div>
+
+      {# Mini operation status card — one curated 65%-filled ZvZ planning state #}
+      <div class="ls-hero-visual">
+        <div class="ls-status-card" aria-label="Example: operation readiness snapshot">
+          <div class="ls-status-card__header">
+            <span class="ls-status-card__title">Callout ZvZ — Friday</span>
+            <span class="ls-status-badge ls-status-badge--planning">Planning</span>
+          </div>
+          <div class="ls-status-card__body">
+            <div class="ls-status-row">
+              <span class="ls-status-row__label">Composition</span>
+              <span class="ls-status-row__value">20-man ZvZ Callout</span>
+            </div>
+            <div class="ls-status-row">
+              <span class="ls-status-row__label">Slots assigned</span>
+              <span class="ls-status-row__value ls-status-row__value--warn">13 / 20</span>
+            </div>
+            <div class="ls-fill-bar" aria-hidden="true">
+              <div class="ls-fill-bar__fill ls-fill-bar__fill--warn" style="width: 65%"></div>
+            </div>
+            <div class="ls-status-row">
+              <span class="ls-status-row__label">Roles present</span>
+              <span class="ls-tally ls-tally--inline">
+                <span class="ls-tally__item">
+                  <span class="ls-tally__label ls-tally__label--tank">T</span><span class="ls-tally__count">:2</span>
+                </span>
+                <span class="ls-tally__item">
+                  <span class="ls-tally__label ls-tally__label--healer">H</span><span class="ls-tally__count">:3</span>
+                </span>
+                <span class="ls-tally__item">
+                  <span class="ls-tally__label ls-tally__label--dps">D</span><span class="ls-tally__count">:6</span>
+                </span>
+                <span class="ls-tally__item">
+                  <span class="ls-tally__label ls-tally__label--support">S</span><span class="ls-tally__count">:2</span>
+                </span>
+              </span>
+            </div>
+            <div class="ls-status-row">
+              <span class="ls-status-row__label">Gap</span>
+              <span class="ls-gap-badge ls-gap-badge--crit">No tank — Party 3</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </section>
+
+  {# ── Section 2: Tactical Planner Showcase ─────────────────────────────── #}
+  <section id="section-showcase" class="landing-section" aria-labelledby="showcase-heading">
+    <p class="ls-section-eyebrow">Tactical planner</p>
+    <h2 id="showcase-heading">Party by party — role by role</h2>
+    <p class="ls-section-lead">Each slot carries role identity, build assignment, and readiness state. Structural gaps surface at the composition level — before the operation starts.</p>
+    <div class="landing-showcase">
+      {# .ls-showcase-override strips the Phase 2 placeholder frame background/border
+         since .ls-planner provides its own complete visual container.            #}
+      <div class="landing-showcase__visual ls-showcase-override">
+        <div class="ls-planner" aria-label="Example: 20-man ZvZ Callout — mid-planning state, 13/20 slots assigned">
+
+          <div class="ls-comp-header">
+            <div>
+              <span class="ls-comp-header__name">20-man ZvZ Callout</span>
+              <span class="ls-comp-header__meta"> · 3 parties · 13 / 20 slots assigned</span>
+            </div>
+            <span class="ls-status-badge ls-status-badge--planning">Planning</span>
+          </div>
+
+          <div class="ls-parties">
+
+            {# Party 1 — fully built, 4/5 assigned, one open DPS slot #}
+            <div class="ls-party">
+              <div class="ls-party__header">
+                <span>Party 1</span>
+                <span>5 / 5 built · 4 assigned</span>
+              </div>
+              <div class="ls-party__slots">
+                <div class="ls-slot ls-slot--assigned" data-role="tank">
+                  <span class="ls-slot__role">Tank</span>
+                  <span class="ls-slot__build">1H Mace</span>
+                  <span class="ls-slot__player">ironhawk</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="healer">
+                  <span class="ls-slot__role">Healer</span>
+                  <span class="ls-slot__build">Hallowfall</span>
+                  <span class="ls-slot__player">velorn</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Warbow</span>
+                  <span class="ls-slot__player">crylen</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="support">
+                  <span class="ls-slot__role">Support</span>
+                  <span class="ls-slot__build">Locus</span>
+                  <span class="ls-slot__player">orain</span>
+                </div>
+                <div class="ls-slot ls-slot--open" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Battleaxe</span>
+                </div>
+              </div>
+              <div class="ls-party__summary">
+                <div class="ls-tally">
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--tank">T</span><span class="ls-tally__count">:1</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--healer">H</span><span class="ls-tally__count">:1</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--dps">D</span><span class="ls-tally__count">:2</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--support">S</span><span class="ls-tally__count">:1</span></span>
+                </div>
+              </div>
+            </div>
+
+            {# Party 2 — tank slot is open-core (priority warning), 3/5 assigned #}
+            <div class="ls-party">
+              <div class="ls-party__header ls-party__header--warn">
+                <span>Party 2</span>
+                <span>4 / 5 built · 3 assigned</span>
+                <span class="ls-gap-badge ls-gap-badge--warn">Tank open</span>
+              </div>
+              <div class="ls-party__slots">
+                <div class="ls-slot ls-slot--open-core" data-role="tank">
+                  <span class="ls-slot__role">Tank ●</span>
+                  <span class="ls-slot__build">Siege Shield</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="healer">
+                  <span class="ls-slot__role">Healer</span>
+                  <span class="ls-slot__build">Nature Staff</span>
+                  <span class="ls-slot__player">malen</span>
+                </div>
+                <div class="ls-slot ls-slot--open" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Daggers</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="support">
+                  <span class="ls-slot__role">Support</span>
+                  <span class="ls-slot__build">Curse Staff</span>
+                  <span class="ls-slot__player">drevyn</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Bow</span>
+                  <span class="ls-slot__player">zephyl</span>
+                </div>
+              </div>
+              <div class="ls-party__summary">
+                <div class="ls-tally">
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--tank">T</span><span class="ls-tally__count">:0</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--healer">H</span><span class="ls-tally__count">:1</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--dps">D</span><span class="ls-tally__count">:2</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--support">S</span><span class="ls-tally__count">:1</span></span>
+                </div>
+              </div>
+            </div>
+
+            {# Party 3 — critical: no tank build defined, no support build, 2/5 assigned #}
+            <div class="ls-party">
+              <div class="ls-party__header ls-party__header--crit">
+                <span>Party 3</span>
+                <span>3 / 5 built · 2 assigned</span>
+                <span class="ls-gap-badge ls-gap-badge--crit">No tank slot</span>
+              </div>
+              <div class="ls-party__slots">
+                <div class="ls-slot ls-slot--critical" data-role="tank">
+                  <span class="ls-slot__role">Tank</span>
+                  <span class="ls-slot__build">No build</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="healer">
+                  <span class="ls-slot__role">Healer</span>
+                  <span class="ls-slot__build">Hallowfall</span>
+                  <span class="ls-slot__player">sionn</span>
+                </div>
+                <div class="ls-slot ls-slot--open" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Battleaxe</span>
+                </div>
+                <div class="ls-slot ls-slot--critical" data-role="support">
+                  <span class="ls-slot__role">Support</span>
+                  <span class="ls-slot__build">No build</span>
+                </div>
+                <div class="ls-slot ls-slot--assigned" data-role="dps">
+                  <span class="ls-slot__role">DPS</span>
+                  <span class="ls-slot__build">Spear</span>
+                  <span class="ls-slot__player">kael</span>
+                </div>
+              </div>
+              <div class="ls-party__summary">
+                <div class="ls-tally">
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--tank">T</span><span class="ls-tally__count">:0</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--healer">H</span><span class="ls-tally__count">:1</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--dps">D</span><span class="ls-tally__count">:2</span></span>
+                  <span class="ls-tally__item"><span class="ls-tally__label ls-tally__label--support">S</span><span class="ls-tally__count">:0</span></span>
+                </div>
+              </div>
+            </div>
+
+          </div>{# end .ls-parties #}
+
+          <div class="ls-overview">
+            <div>
+              <span class="ls-overview__label">Assigned — </span>
+              <span class="ls-overview__value">T:2 &nbsp;H:3 &nbsp;D:6 &nbsp;S:2</span>
+            </div>
+            <span class="ls-overview__fill">7 slots open · 1 party needs tank</span>
+          </div>
+
+        </div>{# end .ls-planner #}
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 3: Composition Planning ──────────────────────────────────── #}
+  <section id="section-composition" class="landing-section" aria-labelledby="composition-heading">
+    <p class="ls-section-eyebrow">Composition library</p>
+    <h2 id="composition-heading">Build once — reuse across every operation</h2>
+    <div class="landing-feature">
+      <div class="landing-showcase">
+        <div class="landing-showcase__visual ls-showcase-padded">
+          <div class="ls-comp-list" aria-label="Example: composition library">
+            <div class="ls-comp-list__header">Composition Library</div>
+            <div class="ls-comp-list__row ls-comp-list__row--active">
+              <span class="ls-comp-list__name">20-man ZvZ Callout</span>
+              <span class="ls-comp-list__meta">20 slots · 3 ops</span>
+              <span class="ls-badge ls-badge--active">Active</span>
+            </div>
+            <div class="ls-comp-list__row">
+              <span class="ls-comp-list__name">5-man HCE Squad</span>
+              <span class="ls-comp-list__meta">5 slots · 12 ops</span>
+              <span class="ls-badge">Archived</span>
+            </div>
+            <div class="ls-comp-list__row">
+              <span class="ls-comp-list__name">Gank Roaming</span>
+              <span class="ls-comp-list__meta">8 slots · 5 ops</span>
+              <span class="ls-badge">Archived</span>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="landing-feature__text">
+        <p>Role distribution, build assignments, and party structure are defined once at the composition level and carry forward automatically to every operation that uses it. The library shows how often each comp has been used in real operations.</p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 4: Operational Workflow ───────────────────────────────────── #}
+  <section id="section-workflow" class="landing-section" aria-labelledby="workflow-heading">
+    <p class="ls-section-eyebrow">Planning workflow</p>
+    <h2 id="workflow-heading">One coordinated workflow — draft to close</h2>
+    <div class="landing-flow">
+      <div class="landing-flow__step">
+        <span class="ls-flow-step__number">01</span>
+        <span class="ls-flow-step__label">Draft</span>
+        <span class="ls-flow-step__desc">Create the operation, set the date, attach a composition.</span>
+      </div>
+      <div class="landing-flow__step">
+        <span class="ls-flow-step__number">02</span>
+        <span class="ls-flow-step__label">Plan</span>
+        <span class="ls-flow-step__desc">Assign players to slots. Surface role gaps. Confirm readiness.</span>
+      </div>
+      <div class="landing-flow__step">
+        <span class="ls-flow-step__number">03</span>
+        <span class="ls-flow-step__label">Execute</span>
+        <span class="ls-flow-step__desc">Post the roster to Discord. Players check in via Discord button.</span>
+      </div>
+      <div class="landing-flow__step">
+        <span class="ls-flow-step__number">04</span>
+        <span class="ls-flow-step__label">Record</span>
+        <span class="ls-flow-step__desc">Mark attendance, finalize payout, close the operation.</span>
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 5: Discord Integration ───────────────────────────────────── #}
+  <section id="section-discord" class="landing-section" aria-labelledby="discord-heading">
+    <p class="ls-section-eyebrow">Discord integration</p>
+    <h2 id="discord-heading">Discord handles communication. IronkeepV2 handles coordination.</h2>
+    <div class="landing-feature landing-feature--reversed">
+      <div class="landing-showcase">
+        <div class="landing-showcase__visual ls-showcase-padded ls-showcase-centered">
+          {# Static Discord embed mock — tokens from tokens.css --discord-embed-* #}
+          <div class="ls-discord-embed" aria-label="Example: Discord operation announcement embed">
+            <div class="ls-discord-embed__accent" aria-hidden="true"></div>
+            <div class="ls-discord-embed__content">
+              <div class="ls-discord-embed__title">Callout ZvZ — Friday 20:00 UTC</div>
+              <div class="ls-discord-embed__fields">
+                <div class="ls-discord-embed__field">
+                  <span class="ls-discord-embed__field-label">Composition</span>
+                  <span class="ls-discord-embed__field-value">20-man ZvZ Callout</span>
+                </div>
+                <div class="ls-discord-embed__field">
+                  <span class="ls-discord-embed__field-label">Slots open</span>
+                  <span class="ls-discord-embed__field-value">7 remaining</span>
+                </div>
+                <div class="ls-discord-embed__field">
+                  <span class="ls-discord-embed__field-label">Commander</span>
+                  <span class="ls-discord-embed__field-value">ironhawk</span>
+                </div>
+              </div>
+              <div class="ls-discord-embed__footer">Posted from IronkeepV2 · Check in below to confirm attendance</div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="landing-feature__text">
+        <p>Officers post the operation announcement and roster embed to Discord from IronkeepV2. Players confirm via a button on the embed — the confirmation registers in the platform and updates slot readiness directly.</p>
+        <p>Discord is the communication layer. IronkeepV2 holds the operational state.</p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 6: Readiness Visibility ──────────────────────────────────── #}
+  <section id="section-readiness" class="landing-section" aria-labelledby="readiness-heading">
+    <p class="ls-section-eyebrow">Readiness tracking</p>
+    <h2 id="readiness-heading">Slot fill, assignment, and confirmation — tracked separately</h2>
+    <div class="landing-feature">
+      <div class="ls-readiness-panel" aria-label="Example: slot readiness states">
+        <div class="ls-readiness-row ls-readiness-row--ok">
+          <span class="ls-readiness-row__indicator" aria-hidden="true"></span>
+          <span class="ls-readiness-row__label">Slot assigned — player confirmed attendance</span>
+        </div>
+        <div class="ls-readiness-row ls-readiness-row--warn">
+          <span class="ls-readiness-row__indicator" aria-hidden="true"></span>
+          <span class="ls-readiness-row__label">Slot assigned — confirmation pending</span>
+        </div>
+        <div class="ls-readiness-row ls-readiness-row--crit">
+          <span class="ls-readiness-row__indicator" aria-hidden="true"></span>
+          <span class="ls-readiness-row__label">Slot unfilled — role gap open</span>
+        </div>
+        <div class="ls-readiness-row ls-readiness-row--empty">
+          <span class="ls-readiness-row__indicator" aria-hidden="true"></span>
+          <span class="ls-readiness-row__label">Slot exists — no player assigned yet</span>
+        </div>
+      </div>
+      <div class="landing-feature__text">
+        <p>Role gaps surface at the party level before the operation starts — not at game time when there's no fix. Officers see exact slot state without reconciling Discord reactions against a spreadsheet.</p>
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 7: Tactical Differentiation ──────────────────────────────── #}
+  <section id="section-differentiation" class="landing-section" aria-labelledby="differentiation-heading">
+    <p class="ls-section-eyebrow">Why IronkeepV2</p>
+    <h2 id="differentiation-heading">Albion-specific, from the ground up</h2>
+    <div class="ls-diff-grid">
+      <div class="ls-diff-item">
+        <span class="ls-diff-item__label">Composition-first</span>
+        <span class="ls-diff-item__text">Role distribution is computed from slot templates — not manually maintained in a spreadsheet column.</span>
+      </div>
+      <div class="ls-diff-item">
+        <span class="ls-diff-item__label">Role-aware gap detection</span>
+        <span class="ls-diff-item__text">Missing tanks or healers surface as structural warnings at composition time — not at op start when it's too late.</span>
+      </div>
+      <div class="ls-diff-item">
+        <span class="ls-diff-item__label">Single operational state</span>
+        <span class="ls-diff-item__text">Composition, slot assignment, Discord posting, and attendance share one source of truth. No cross-tool reconciliation.</span>
+      </div>
+      <div class="ls-diff-item">
+        <span class="ls-diff-item__label">Albion-specific domain</span>
+        <span class="ls-diff-item__text">Party sizes, role families, weapon-based builds, and CTA attendance workflows are first-class domain concepts — not adapted from generic team management.</span>
+      </div>
+    </div>
+  </section>
+
+  {# ── Section 8: FAQ ───────────────────────────────────────────────────── #}
+  <section id="section-faq" class="landing-section" aria-labelledby="faq-heading">
+    <p class="ls-section-eyebrow">Questions</p>
+    <h2 id="faq-heading">Common questions</h2>
+    <div class="landing-faq">
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">Is IronkeepV2 specific to Albion Online?</summary>
+        <div class="ls-faq__answer">
+          <p>Yes. IronkeepV2 is built around Albion Online CTA coordination — fixed party sizes, role families (tank, healer, DPS, support), weapon-based builds, and structured signups. It is not a generic guild management tool.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">How does the Discord integration work?</summary>
+        <div class="ls-faq__answer">
+          <p>Officers post operation announcements and roster embeds to a Discord channel from within IronkeepV2. Players confirm attendance using a button on the Discord embed — the confirmation registers in the platform and updates the slot's readiness state. Discord handles communication; IronkeepV2 tracks coordination state.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">Is it self-hosted?</summary>
+        <div class="ls-faq__answer">
+          <p>Yes. You run IronkeepV2 on your own infrastructure. Your guild's operational data — compositions, slot assignments, attendance records — stays on your server. There is no hosted cloud version.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">What kind of guild is this built for?</summary>
+        <div class="ls-faq__answer">
+          <p>Guilds running structured CTA operations — ZvZ, HCE, faction warfare, hellgates — where composition planning and attendance are part of the officer workflow. If coordination currently lives in Discord threads and spreadsheets, IronkeepV2 is built for that situation.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">Can multiple officers manage operations?</summary>
+        <div class="ls-faq__answer">
+          <p>Yes. Officers share a workspace. Multiple officers can manage operations, update compositions, assign players, and post to Discord simultaneously.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">Is there a mobile app?</summary>
+        <div class="ls-faq__answer">
+          <p>Not currently. IronkeepV2 is a web-based tool built for desktop use. The interface is accessible from mobile browsers but is not optimized for mobile planning workflows.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">Is IronkeepV2 actively maintained?</summary>
+        <div class="ls-faq__answer">
+          <p>Yes. IronkeepV2 is in active development. The roadmap is prioritized around real coordination workflows used in actual guild operations.</p>
+        </div>
+      </details>
+
+      <details class="landing-faq__item">
+        <summary class="ls-faq__summary">How does player check-in work?</summary>
+        <div class="ls-faq__answer">
+          <p>Officers post a roster embed to Discord with a check-in button attached. Players click the button in Discord — the check-in registers in IronkeepV2 and updates the slot's readiness state on the planner. No separate form, no manual tracking.</p>
+        </div>
+      </details>
+
+    </div>
+  </section>
+
+  {# ── Section 9: Footer ────────────────────────────────────────────────── #}
+  {# Footer is rendered by base_public.html outside .landing-page with id="section-footer".
+     This comment preserves the 9-section structure reference. #}
+
+</div>
+{% endblock %}

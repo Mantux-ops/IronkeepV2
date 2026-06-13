@@ -32,7 +32,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.templating import Jinja2Templates
 
-from app import backup, database, diagnostics as diag, repositories
+from app import backup, database, diagnostics as diag, repositories, tactical
 from app.application import use_cases
 from app.auth import session as auth_session
 from app.auth.current_user import get_current_user, require_current_user
@@ -89,17 +89,29 @@ def _redirect(url: str) -> RedirectResponse:
 
 
 def _safe_next(path: str | None) -> str:
-    """
-    Validate an internal redirect path.  Only allows safe relative paths that
-    start with exactly one "/" and are not protocol-relative ("//...").
-    Falls back to "/" if the value is absent or invalid.
+    """Validate and return a safe internal redirect path.
+
+    Accepts only paths that start with exactly one "/" (relative internal paths).
+
+    Rejected inputs — all fall back to "/workspaces":
+      - None / empty string
+      - Whitespace-only strings
+      - Protocol-relative URLs  ("//evil.com")
+      - Absolute URLs           ("https://evil.com", "http://...", "ftp://...")
+      - Non-http scheme payloads ("javascript:alert(1)")
+
+    The fallback "/workspaces" is the authenticated default destination.
+    This is intentionally NOT "/" — rejected redirects send authenticated
+    users to their dashboard, not the public landing page.
     """
     if not path:
-        return "/"
+        return "/workspaces"
     path = path.strip()
+    if not path:                                       # whitespace-only
+        return "/workspaces"
     if path.startswith("/") and not path.startswith("//"):
         return path
-    return "/"
+    return "/workspaces"
 
 
 def _err_redirect(base_url: str, error: str) -> RedirectResponse:
@@ -110,6 +122,20 @@ def _ok_redirect(base_url: str, msg: str = "") -> RedirectResponse:
     if msg:
         return _redirect(f"{base_url}?success={quote_plus(msg)}")
     return _redirect(base_url)
+
+
+def _planner_redirect(planner_url: str, party_anchor: str, msg: str = "") -> RedirectResponse:
+    """Redirect to the planner with an optional #party-N anchor placed correctly
+    after the query string: /planner?success=msg#party-N (not /planner#party-N?success=msg).
+    """
+    if msg:
+        return _redirect(f"{planner_url}?success={quote_plus(msg)}{party_anchor}")
+    return _redirect(f"{planner_url}{party_anchor}")
+
+
+def _planner_err_redirect(planner_url: str, party_anchor: str, error: str) -> RedirectResponse:
+    """Error redirect to the planner with anchor after query string."""
+    return _redirect(f"{planner_url}?error={quote_plus(error)}{party_anchor}")
 
 
 def _tomorrow_2000() -> str:
@@ -155,6 +181,13 @@ def _enrich_readiness(r: dict | None) -> dict | None:
         "missing_roles": _gap_counts_from_json(r.get("missing_roles_json")),
         "missing_builds": _gap_counts_from_json(r.get("missing_builds_json")),
     }
+
+
+# ---------------------------------------------------------------------------
+# Tactical helpers — canonical logic lives in app/tactical.py
+# ---------------------------------------------------------------------------
+# role_family() and derive_tactical_summaries() are imported from tactical.
+# Do not duplicate classification or tally logic here.
 
 
 # ---------------------------------------------------------------------------
@@ -241,7 +274,7 @@ def get_auth_discord(request: Request):
             {
                 "workspace": None,
                 "users": [],
-                "next_path": "/",
+                "next_path": "/workspaces",
                 "error": (
                     "Discord OAuth is not configured on this server. "
                     "Contact the server administrator."
@@ -579,10 +612,19 @@ async def get_auth_discord_link_callback(request: Request):
 
 
 # ---------------------------------------------------------------------------
-# Home — workspace list
+# Landing page — public, no authentication required
 # ---------------------------------------------------------------------------
 
 @router.get("/")
+def landing(request: Request):
+    return templates.TemplateResponse(request, "landing.html", {})
+
+
+# ---------------------------------------------------------------------------
+# Home — workspace list (authenticated)
+# ---------------------------------------------------------------------------
+
+@router.get("/workspaces")
 def home(request: Request):
     try:
         with database.transaction() as db:
@@ -675,6 +717,53 @@ def _friendly_dt(iso: str | None) -> str:
         return iso[:16].replace("T", " ")
 
 
+def _relative_time(iso: str | None) -> str:
+    """
+    Return a compact relative time string for the recent-activity widget.
+    Cross-platform: avoids %-d strftime on Windows.
+    Examples: "just now", "5m ago", "2h ago", "yesterday", "3d ago", "17 May".
+    """
+    if not iso:
+        return ""
+    try:
+        dt = datetime.fromisoformat(iso.replace("Z", "+00:00"))
+        if dt.tzinfo is None:
+            from datetime import timezone as _tz
+            dt = dt.replace(tzinfo=_tz.utc)
+        from datetime import timezone
+        diff = int((datetime.now(timezone.utc) - dt).total_seconds())
+        if diff < 120:
+            return "just now"
+        if diff < 3600:
+            return f"{diff // 60}m ago"
+        if diff < 86400:
+            return f"{diff // 3600}h ago"
+        days = diff // 86400
+        if days == 1:
+            return "yesterday"
+        if days < 7:
+            return f"{days}d ago"
+        return f"{dt.day} {dt.strftime('%b')}"  # e.g. "17 May"
+    except Exception:
+        return ""
+
+
+# Human-readable labels for each event type shown in the activity widget.
+_ACTIVITY_LABELS: dict[str, str] = {
+    "guild_operation.created":      "Operation created",
+    "guild_operation.published":    "Published for planning",
+    "guild_operation.locked":       "Roster locked",
+    "guild_operation.completed":    "Operation completed",
+    "guild_operation.archived":     "Operation archived",
+    "payout_ledger.entry.approved": "Payout entry approved",
+    "payout_ledger.entry.paid":     "Payout recorded",
+    "discord_announcement.posted":  "Announced on Discord",
+    "discord_announcement.updated": "Announcement updated",
+    "discord_roster.posted":        "Roster posted",
+    "discord_roster.updated":       "Roster updated",
+}
+
+
 @router.get("/workspaces/{slug}")
 def get_workspace_dashboard(request: Request, slug: str):
     show_archived = request.query_params.get("show_archived") == "1"
@@ -688,6 +777,69 @@ def get_workspace_dashboard(request: Request, slug: str):
             readiness_by_op = repositories.get_latest_readiness_snapshots_for_workspace(
                 db, ws["id"]
             )
+
+            # ── Operational summary data ───────────────────────────────────
+            _active_statuses = {"draft", "planning", "locked"}
+            active_op_count = sum(
+                1 for o in operations if o["status"] in _active_statuses
+            )
+            ready_op_count = sum(
+                1 for o in operations
+                if readiness_by_op.get(o["id"], {}).get("readiness_state") == "ready"
+            )
+            total_unassigned_signups = sum(
+                rs.get("unassigned_signup_count", 0)
+                for rs in readiness_by_op.values()
+            )
+
+            # Operations that are planning/locked but not ready — split by severity.
+            # danger = not_ready (critical — op cannot proceed as planned)
+            # warning = forming (amber — slots partially filled, time may resolve it)
+            # Each list is sorted by scheduled_start_at ascending so the most
+            # imminent operation appears first.
+            def _sched_key(op: dict) -> str:
+                return op.get("scheduled_start_at") or ""
+
+            attention_ops_danger = sorted(
+                [
+                    op for op in operations
+                    if op["status"] in {"planning", "locked"}
+                    and readiness_by_op.get(op["id"], {}).get("readiness_state") == "not_ready"
+                ],
+                key=_sched_key,
+            )
+            attention_ops_warning = sorted(
+                [
+                    op for op in operations
+                    if op["status"] in {"planning", "locked"}
+                    and readiness_by_op.get(op["id"], {}).get("readiness_state") == "forming"
+                ],
+                key=_sched_key,
+            )
+            # Combined list still exposed for backward-compat template conditionals
+            attention_ops = attention_ops_danger + attention_ops_warning
+
+            # Officer/owner attention data — scheduler + payout
+            pending_retry_count = 0
+            pending_ledger_count = 0
+            scheduler_stale = False
+            if access.get("can_mutate"):
+                pending_retry_count = repositories.get_global_pending_retry_count(db)
+                pending_ledger_count = (
+                    repositories.count_pending_ledger_entries_for_workspace(db, ws["id"])
+                )
+                last_run = repositories.get_last_scheduler_run_at(db)
+                scheduler_stale = diag.is_stale(last_run, diag.SCHEDULER_STALE_MINUTES)
+
+            # Recent activity widget — last 5 notable events, enriched with
+            # human-readable labels and relative timestamps for the template.
+            recent_activity = repositories.get_recent_workspace_activity(
+                db, ws["id"], limit=5
+            )
+            for ev in recent_activity:
+                ev["label"] = _ACTIVITY_LABELS.get(ev["event_type"], ev["event_type"])
+                ev["relative_time"] = _relative_time(ev["occurred_at"])
+
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -703,6 +855,19 @@ def get_workspace_dashboard(request: Request, slug: str):
             "readiness_by_op": readiness_by_op,
             "friendly_dt": _friendly_dt,
             "current_user": user,
+            # Operational summary
+            "active_op_count": active_op_count,
+            "ready_op_count": ready_op_count,
+            "total_unassigned_signups": total_unassigned_signups,
+            # Attention items — severity-sorted, split by tier
+            "attention_ops": attention_ops,
+            "attention_ops_danger": attention_ops_danger,
+            "attention_ops_warning": attention_ops_warning,
+            "pending_retry_count": pending_retry_count,
+            "pending_ledger_count": pending_ledger_count,
+            "scheduler_stale": scheduler_stale,
+            # Recent activity widget
+            "recent_activity": recent_activity,
             **access,
         },
     )
@@ -1359,12 +1524,590 @@ def get_scheduler_status(request: Request, slug: str):
 
 
 # ---------------------------------------------------------------------------
+# Build routes  (reusable doctrine entities — Phase 3)
+# ---------------------------------------------------------------------------
+
+@router.get("/workspaces/{slug}/builds")
+def get_builds_list(request: Request, slug: str):
+    """List all builds in a workspace (active + optionally retired)."""
+    show_retired = request.query_params.get("show_retired") == "1"
+    role_filter  = (request.query_params.get("role") or "").strip().lower()
+    success      = request.query_params.get("success")
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            all_builds = repositories.get_builds_with_usage_counts(
+                db, ws["id"], include_retired=show_retired
+            )
+            retired_count = (
+                len(repositories.get_albion_builds(db, ws["id"], include_retired=True))
+                - len(repositories.get_albion_builds(db, ws["id"]))
+                if not show_retired else 0
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    # Collect distinct roles from all active builds for the filter pill row.
+    active_builds    = [b for b in all_builds if not b.get("retired_at")]
+    available_roles  = sorted({b["role"] for b in active_builds if b.get("role")})
+
+    # Apply optional role filter after fetching (server-side, no extra query).
+    builds = (
+        [b for b in all_builds if (b.get("role") or "").lower() == role_filter]
+        if role_filter else all_builds
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "builds_list.html",
+        {
+            "workspace":       ws,
+            "current_user":    user,
+            "builds":          builds,
+            "show_retired":    show_retired,
+            "retired_count":   retired_count,
+            "success":         success,
+            "role_filter":     role_filter,
+            "available_roles": available_roles,
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/builds/new")
+def get_new_build(request: Request, slug: str):
+    """Render the create-build form."""
+    next_url = _safe_next(request.query_params.get("next"))
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    return templates.TemplateResponse(
+        request,
+        "builds_new.html",
+        {
+            "workspace":        ws,
+            "current_user":     user,
+            "error":            None,
+            "next_url":         next_url,
+            "prev":             {},
+            "forked_from_name": None,
+            "forked_from_id":   None,
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/builds/{build_id}/fork")
+def get_fork_build(request: Request, slug: str, build_id: str):
+    """Render the create-build form pre-filled from an existing build.
+
+    The fork is a completely independent entity — no FK to the source.
+    Snapshot invariants are unaffected; this is a read + GET prefill only.
+    The officer POSTs to the standard /builds create route.
+    """
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+            source = repositories.get_albion_build(db, build_id, ws["id"])
+            if not source or source.get("retired_at"):
+                raise HTTPException(status_code=404, detail="Build not found.")
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    prev = {
+        "name":         f"Copy of {source['name']}",
+        "role":         source["role"],
+        "weapon_name":  source["weapon_name"],
+        "offhand_name": source.get("offhand_name") or "",
+        "head_name":    source.get("head_name") or "",
+        "armor_name":   source.get("armor_name") or "",
+        "shoes_name":   source.get("shoes_name") or "",
+        "cape_name":    source.get("cape_name") or "",
+        "food_name":    source.get("food_name") or "",
+        "potion_name":  source.get("potion_name") or "",
+        "notes":        source.get("notes") or "",
+        "doctrine_role": source.get("doctrine_role") or "",
+    }
+    return templates.TemplateResponse(
+        request,
+        "builds_new.html",
+        {
+            "workspace":        ws,
+            "current_user":     user,
+            "error":            None,
+            "next_url":         f"/workspaces/{slug}/builds",
+            "prev":             prev,
+            "forked_from_name": source["name"],
+            "forked_from_id":   source["id"],
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/builds")
+async def post_create_build(request: Request, slug: str):
+    """Create a new reusable build entity."""
+    form = await request.form()
+    fields = _build_fields_from_form(form)
+    next_url = _safe_next(form.get("next_url", ""))
+    if not next_url or next_url == "/workspaces":
+        next_url = f"/workspaces/{slug}/builds"
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        build = use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=user["id"],
+            **fields,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        try:
+            with database.transaction() as db:
+                _, ws2, access2 = authz.resolve_workspace_view(db, request, slug)
+        except Exception:
+            raise HTTPException(status_code=500)
+        return templates.TemplateResponse(
+            request,
+            "builds_new.html",
+            {
+                "workspace":        ws2,
+                "current_user":     user,
+                "error":            str(exc),
+                "next_url":         next_url,
+                "prev":             fields,
+                "forked_from_name": None,
+                "forked_from_id":   None,
+                **access2,
+            },
+        )
+    return _redirect(f"/workspaces/{slug}/builds/{build['id']}?success=created")
+
+
+# ---------------------------------------------------------------------------
+# Build import routes
+# ---------------------------------------------------------------------------
+
+@router.get("/workspaces/{slug}/builds/import")
+def get_import_builds(request: Request, slug: str):
+    """Render the CSV/paste import form (blank state)."""
+    error = request.query_params.get("error")
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    return templates.TemplateResponse(
+        request,
+        "builds_import.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
+            "error":        error,
+            "raw_text":     "",
+            "preview_rows": None,
+            "has_errors":   False,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/builds/import/preview")
+async def post_import_builds_preview(request: Request, slug: str):
+    """Parse and validate the pasted CSV; render the preview table without saving."""
+    form = await request.form()
+    raw_text = (form.get("raw_text") or "").strip()
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    def _re_render(error: str | None = None, rows=None, errs: bool = False):
+        return templates.TemplateResponse(
+            request,
+            "builds_import.html",
+            {
+                "workspace":    ws,
+                "current_user": user,
+                "error":        error,
+                "raw_text":     raw_text,
+                "preview_rows": rows,
+                "has_errors":   errs,
+                **access,
+            },
+        )
+
+    if not raw_text:
+        return _re_render(error="Paste some CSV or tab-separated rows first.")
+
+    parsed = _parse_build_import_csv(raw_text)
+    if not parsed:
+        return _re_render(error="No data rows found. Check delimiter and format.")
+
+    from app.domain import albion_builds as _abd  # noqa: PLC0415
+    from app.errors import ValidationError         # noqa: PLC0415
+
+    preview_rows: list[dict] = []
+    has_errors = False
+    for i, row in enumerate(parsed, start=1):
+        try:
+            _abd.validate_build(row)
+            preview_rows.append({**row, "_row_num": i, "_error": None})
+        except ValidationError as exc:
+            preview_rows.append({**row, "_row_num": i, "_error": str(exc)})
+            has_errors = True
+
+    return _re_render(rows=preview_rows, errs=has_errors)
+
+
+@router.post("/workspaces/{slug}/builds/import/confirm")
+async def post_import_builds_confirm(request: Request, slug: str):
+    """Re-validate the pasted CSV and bulk-insert all builds atomically."""
+    form = await request.form()
+    raw_text = (form.get("raw_text") or "").strip()
+    import_url = f"/workspaces/{slug}/builds/import"
+
+    if not raw_text:
+        return _err_redirect(import_url, "No data to import.")
+
+    try:
+        with database.transaction() as db:
+            user, ws, _ = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    parsed = _parse_build_import_csv(raw_text)
+    if not parsed:
+        return _err_redirect(import_url, "No data rows found.")
+
+    try:
+        builds = use_cases.bulk_import_albion_builds(
+            guild_workspace_id=ws["id"],
+            actor_user_id=user["id"],
+            rows=parsed,
+        )
+    except IronkeepError as exc:
+        return _err_redirect(import_url, str(exc))
+
+    n = len(builds)
+    msg = f"Imported {n} build{'s' if n != 1 else ''}."
+    return _redirect(f"/workspaces/{slug}/builds?success={quote_plus(msg)}")
+
+
+@router.get("/workspaces/{slug}/builds/{build_id}")
+def get_build_detail(request: Request, slug: str, build_id: str):
+    """View a single build's doctrine details."""
+    success = request.query_params.get("success")
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            build = repositories.get_albion_build(db, build_id, ws["id"])
+            if not build:
+                raise HTTPException(status_code=404, detail="Build not found.")
+            used_in = repositories.get_build_usage_compositions(
+                db, build_id, ws["id"]
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    return templates.TemplateResponse(
+        request,
+        "builds_detail.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
+            "build":        build,
+            "used_in":      used_in,
+            "success":      success,
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/builds/{build_id}/edit")
+def get_edit_build(request: Request, slug: str, build_id: str):
+    """Render the edit-build form."""
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+            build = repositories.get_albion_build(db, build_id, ws["id"])
+            if not build:
+                raise HTTPException(status_code=404, detail="Build not found.")
+            if build.get("retired_at"):
+                raise HTTPException(status_code=403, detail="Retired builds cannot be edited.")
+            usage_count = len(
+                repositories.get_build_usage_compositions(db, build_id, ws["id"])
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    return templates.TemplateResponse(
+        request,
+        "builds_edit.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
+            "build":        build,
+            "usage_count":  usage_count,
+            "error":        None,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/builds/{build_id}")
+async def post_update_build(request: Request, slug: str, build_id: str):
+    """Update a build's doctrine fields."""
+    form = await request.form()
+    fields = _build_fields_from_form(form)
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.update_albion_build(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+            **fields,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        try:
+            with database.transaction() as db:
+                _, ws2, access2 = authz.resolve_workspace_view(db, request, slug)
+                build = repositories.get_albion_build(db, build_id, ws2["id"]) or {}
+        except Exception:
+            raise HTTPException(status_code=500)
+        return templates.TemplateResponse(
+            request,
+            "builds_edit.html",
+            {
+                "workspace":    ws2,
+                "current_user": user,
+                "build":        {**build, **fields},
+                "error":        str(exc),
+                **access2,
+            },
+        )
+    return _redirect(f"/workspaces/{slug}/builds/{build_id}?success=updated")
+
+
+@router.post("/workspaces/{slug}/builds/{build_id}/retire")
+async def post_retire_build(request: Request, slug: str, build_id: str):
+    """Soft-delete a build."""
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.retire_albion_build(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}?error={exc}"
+        )
+    return _redirect(f"/workspaces/{slug}/builds?success=retired")
+
+
+def _build_fields_from_form(form) -> dict:
+    """Extract build field values from a POST form."""
+    return {
+        "name":          form.get("name", "").strip(),
+        "role":          form.get("role", "").strip(),
+        "weapon_name":   form.get("weapon_name", "").strip(),
+        "offhand_name":  form.get("offhand_name", "").strip() or None,
+        "head_name":     form.get("head_name", "").strip() or None,
+        "armor_name":    form.get("armor_name", "").strip() or None,
+        "shoes_name":    form.get("shoes_name", "").strip() or None,
+        "cape_name":     form.get("cape_name", "").strip() or None,
+        "food_name":     form.get("food_name", "").strip() or None,
+        "potion_name":   form.get("potion_name", "").strip() or None,
+        "notes":         form.get("notes", "").strip() or None,
+        "doctrine_role": form.get("doctrine_role", "").strip() or None,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Build import — CSV/paste helpers
+# ---------------------------------------------------------------------------
+
+# Maps lowercased column header strings to canonical build field names.
+_IMPORT_COL_ALIASES: dict[str, str] = {
+    # Canonical names
+    "name":          "name",
+    "role":          "role",
+    "weapon_name":   "weapon_name",
+    "offhand_name":  "offhand_name",
+    "head_name":     "head_name",
+    "armor_name":    "armor_name",
+    "shoes_name":    "shoes_name",
+    "cape_name":     "cape_name",
+    "food_name":     "food_name",
+    "potion_name":   "potion_name",
+    "doctrine_role": "doctrine_role",
+    "notes":         "notes",
+    # Short aliases
+    "weapon":        "weapon_name",
+    "offhand":       "offhand_name",
+    "head":          "head_name",
+    "armor":         "armor_name",
+    "armour":        "armor_name",
+    "shoes":         "shoes_name",
+    "shoe":          "shoes_name",
+    "cape":          "cape_name",
+    "food":          "food_name",
+    "potion":        "potion_name",
+    "doctrine":      "doctrine_role",
+}
+
+_IMPORT_REQUIRED = ("name", "role", "weapon_name")
+_IMPORT_OPTIONAL = (
+    "offhand_name", "head_name", "armor_name", "shoes_name",
+    "cape_name", "food_name", "potion_name", "doctrine_role", "notes",
+)
+_IMPORT_ALL_FIELDS = _IMPORT_REQUIRED + _IMPORT_OPTIONAL
+
+# Positional column order used when no header row is detected.
+_POSITIONAL_COLS = ["name", "role", "weapon_name"]
+
+
+def _is_header_row(cells: list[str]) -> bool:
+    """Return True if any cell in the row matches a known column alias."""
+    return any(c.strip().lower() in _IMPORT_COL_ALIASES for c in cells)
+
+
+def _parse_build_import_csv(raw_text: str) -> list[dict]:
+    """Parse CSV or TSV paste text into a list of build field dicts.
+
+    Auto-detects the delimiter (tab beats comma).  If the first non-empty row
+    looks like a header (any cell matches a known column name/alias) it is
+    consumed as a header; otherwise positional mapping is used for the three
+    required columns (name, role, weapon_name) — extra columns are ignored.
+
+    Returns a list of dicts keyed by canonical field names.  Optional fields
+    are None when the column is absent or the cell is blank.  Does not validate
+    — callers must call ``albion_builds_domain.validate_build`` per row.
+    """
+    if not raw_text or not raw_text.strip():
+        return []
+
+    lines = raw_text.strip().splitlines()
+    if not lines:
+        return []
+
+    first_line = lines[0]
+    delimiter = "\t" if "\t" in first_line else ","
+
+    reader = csv.reader(io.StringIO(raw_text.strip()), delimiter=delimiter)
+    all_rows = [row for row in reader if any(c.strip() for c in row)]
+    if not all_rows:
+        return []
+
+    first_cells = [c.strip().lower() for c in all_rows[0]]
+    if _is_header_row(first_cells):
+        col_map: list[str | None] = [
+            _IMPORT_COL_ALIASES.get(c) for c in first_cells
+        ]
+        data_rows = all_rows[1:]
+    else:
+        col_map = list(_POSITIONAL_COLS) + [None] * max(0, len(all_rows[0]) - 3)
+        data_rows = all_rows
+
+    result: list[dict] = []
+    for raw_row in data_rows:
+        if not any(c.strip() for c in raw_row):
+            continue
+        row_dict: dict = {f: "" for f in _IMPORT_ALL_FIELDS}
+        for i, cell in enumerate(raw_row):
+            if i < len(col_map) and col_map[i]:
+                row_dict[col_map[i]] = cell.strip()
+        # Blank optional fields become None so validation sees them as absent.
+        for field in _IMPORT_OPTIONAL:
+            if row_dict[field] == "":
+                row_dict[field] = None
+        result.append(row_dict)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Composition routes
 # ---------------------------------------------------------------------------
 
 @router.get("/workspaces/{slug}/compositions")
 def get_compositions_list(request: Request, slug: str):
     show_deleted = request.query_params.get("show_deleted") == "1"
+    q       = request.query_params.get("q", "").strip()
     error   = request.query_params.get("error")
     success = request.query_params.get("success")
     try:
@@ -1374,28 +2117,54 @@ def get_compositions_list(request: Request, slug: str):
                 db, ws["id"], include_deleted=show_deleted
             )
             deleted_count = repositories.count_deleted_albion_compositions(db, ws["id"])
+
+            # Apply name search filter before issuing per-composition slot queries.
+            if q:
+                q_lower = q.lower()
+                compositions = [c for c in compositions if q_lower in (c["name"] or "").lower()]
+
             slot_counts = {
                 c["id"]: len(
                     repositories.get_composition_slot_templates(db, c["id"], ws["id"])
                 )
                 for c in compositions
             }
+
+            # Phase 6 — reuse context: role tallies (one batch query) and op counts.
+            all_slot_roles = repositories.get_all_composition_slot_roles_for_workspace(
+                db, ws["id"]
+            )
+            comp_op_counts = repositories.count_active_operations_per_composition(
+                db, ws["id"]
+            )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
         raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    # Derive per-composition role tallies via the canonical tactical module.
+    comp_role_tallies: dict[str, dict] = {}
+    for row in all_slot_roles:
+        cid = row["albion_composition_id"]
+        if cid not in comp_role_tallies:
+            comp_role_tallies[cid] = {r: 0 for r in tactical.ROLE_FAMILIES}
+        comp_role_tallies[cid][tactical.role_family(row["role"])] += 1
+
     return templates.TemplateResponse(
         request,
         "compositions_list.html",
         {
-            "workspace": ws,
-            "current_user": user,
-            "compositions": compositions,
-            "slot_counts": slot_counts,
-            "deleted_count": deleted_count,
-            "show_deleted": show_deleted,
-            "error": error,
-            "success": success,
+            "workspace":          ws,
+            "current_user":       user,
+            "compositions":       compositions,
+            "slot_counts":        slot_counts,
+            "deleted_count":      deleted_count,
+            "show_deleted":       show_deleted,
+            "comp_role_tallies":  comp_role_tallies,
+            "comp_op_counts":     comp_op_counts,
+            "q":                  q,
+            "error":              error,
+            "success":            success,
             **access,
         },
     )
@@ -1432,6 +2201,8 @@ def get_new_composition(request: Request, slug: str):
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
             if not access["can_mutate"]:
                 raise PermissionDenied("You do not have permission for this action.")
+            workspace_builds    = repositories.get_albion_builds(db, ws["id"])
+            build_suggestions   = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1442,14 +2213,416 @@ def get_new_composition(request: Request, slug: str):
         request,
         "compositions_new.html",
         {
-            "workspace": ws,
-            "current_user": user,
-            "error": None,
-            "prev_name": "",
-            "prev_description": "",
+            "workspace":               ws,
+            "current_user":            user,
+            "workspace_builds":        workspace_builds,
+            "build_name_suggestions":  build_suggestions["build_names"],
+            "weapon_name_suggestions": build_suggestions["weapon_names"],
+            "error":                   None,
+            "prev_name":               "",
+            "prev_description":        "",
+            "prev_slots":              [],
+            "prev_parties":            {},
+            "prev_party_summaries":    {},
+            "prev_party_count":        0,
+            "prev_comp_summary":       None,
+            "prev_integrity_warnings": [],
+            "cloned_from_name":        None,
             **access,
         },
     )
+
+
+@router.get("/workspaces/{slug}/compositions/{comp_id}")
+def get_composition_detail(request: Request, slug: str, comp_id: str):
+    """Tactical composition detail: read-only formation preview with party layout,
+    role distribution, health signals, and continuation-to-operation flow."""
+    error        = request.query_params.get("error")
+    success      = request.query_params.get("success")
+    compact_mode = request.query_params.get("compact", "") == "1"
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            comp = repositories.get_albion_composition(db, comp_id, ws["id"])
+            if not comp:
+                raise HTTPException(status_code=404, detail="Composition not found.")
+            slot_templates   = repositories.get_composition_slot_templates(
+                db, comp_id, ws["id"]
+            )
+            active_operations = repositories.get_operations_using_composition(
+                db, comp_id, ws["id"]
+            )
+            # Workspace builds passed to detail page for quick-edit build selector.
+            workspace_builds = (
+                repositories.get_albion_builds(db, ws["id"])
+                if access.get("can_mutate")
+                else []
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    # Group slot templates by party via the shared canonical helper.
+    # Uses the same path as the planner so grouping logic cannot diverge.
+    parties = tactical.build_parties(slot_templates)
+
+    # Derive tactical summaries. No player assignments in a composition template.
+    # track_assignments=False suppresses "N players unassigned" from the hint.
+    party_summaries, comp_summary = tactical.derive_tactical_summaries(
+        parties, assigned_map={}, track_assignments=False
+    )
+
+    # Composition-level integrity warnings — surfaced above the tactical preview.
+    integrity_warnings = tactical.derive_composition_integrity(
+        parties, comp_summary, party_summaries
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "compositions_detail.html",
+        {
+            "workspace":          ws,
+            "current_user":       user,
+            "comp":               comp,
+            "parties":            parties,
+            "party_summaries":    party_summaries,
+            "comp_summary":       comp_summary,
+            "integrity_warnings": integrity_warnings,
+            "active_operations":  active_operations,
+            "workspace_builds":   workspace_builds,
+            "compact_mode":       compact_mode,
+            "error":              error,
+            "success":            success,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/compositions/{comp_id}/slot/quick")
+async def post_quick_update_slot(request: Request, slug: str, comp_id: str):
+    """Quick-update a single composition slot template from the detail page.
+
+    Accepts only the mutable doctrine fields (build, weapon, doctrine_role).
+    Role, priority, party number, and slot index are preserved.
+
+    The ``slot_id`` hidden field identifies the specific template row; the
+    composition_id and workspace_id in the WHERE clause prevent cross-workspace
+    writes even if slot_id is guessed.
+
+    Does NOT mutate operation_slots — frozen snapshot invariant is preserved.
+    """
+    form    = await request.form()
+    next_ok = f"/workspaces/{slug}/compositions/{comp_id}"
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+        if not access.get("can_mutate"):
+            raise PermissionDenied("Only owners and officers can edit slots.")
+
+        slot_id        = (form.get("slot_id") or "").strip()
+        build_name     = (form.get("build_name") or "").strip()
+        weapon_name    = (form.get("weapon_name") or "").strip() or None
+        doctrine_role  = (form.get("doctrine_role") or "").strip() or None
+        albion_build_id = (form.get("albion_build_id") or "").strip() or None
+        role           = (form.get("role") or "").strip()
+
+        if not slot_id:
+            return _redirect(f"{next_ok}?error=missing+slot_id")
+
+        use_cases.quick_update_composition_slot(
+            guild_workspace_id=ws["id"],
+            composition_id=comp_id,
+            actor_user_id=user["id"],
+            slot_id=slot_id,
+            build_name=build_name,
+            weapon_name=weapon_name,
+            doctrine_role=doctrine_role,
+            albion_build_id=albion_build_id,
+            role=role,
+        )
+        return _redirect(f"{next_ok}?success=slot+updated")
+
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError as exc:
+        return _redirect(f"{next_ok}?error={str(exc)[:120]}")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except (ValidationError, ConflictError) as exc:
+        return _redirect(f"{next_ok}?error={str(exc)[:120]}")
+
+
+@router.post("/workspaces/{slug}/compositions/{comp_id}/slots/{slot_id}/promote-to-build")
+async def post_promote_slot_to_build(
+    request: Request, slug: str, comp_id: str, slot_id: str
+):
+    """Create a new library build from a free-typed composition slot and
+    immediately link that slot to the new build.
+
+    This is an explicit, per-slot, officer-initiated action — no bulk
+    promotion, no operation_slots writes, no snapshot invariant impact.
+    Delegates all logic to promote_composition_slot_to_build which runs
+    both writes atomically in one transaction.
+    """
+    next_ok  = f"/workspaces/{slug}/compositions/{comp_id}"
+    next_err = next_ok
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+        if not access.get("can_mutate"):
+            raise PermissionDenied("Only owners and officers can promote slots.")
+
+        use_cases.promote_composition_slot_to_build(
+            guild_workspace_id=ws["id"],
+            composition_id=comp_id,
+            slot_id=slot_id,
+            actor_user_id=user["id"],
+        )
+        return _redirect(f"{next_ok}?success=Promoted+to+library+build.")
+
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Slot or composition not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        return _redirect(f"{next_err}?error={str(exc)[:180]}")
+
+
+@router.get("/workspaces/{slug}/compositions/{comp_id}/clone")
+def get_clone_composition(request: Request, slug: str, comp_id: str):
+    """Clone composition: render the creation form pre-filled from an existing
+    composition's slot templates so officers can revise without destructive edits.
+
+    GET only — nothing is created on this request.  The officer submits the
+    pre-filled form to the existing POST /compositions route to save a new
+    composition.  The original composition and any operation slots generated
+    from it are never touched.
+    """
+    variant = (request.query_params.get("variant") or "").strip()
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+            comp = repositories.get_albion_composition(db, comp_id, ws["id"])
+            if not comp:
+                raise HTTPException(status_code=404, detail="Composition not found.")
+            slot_templates = repositories.get_composition_slot_templates(
+                db, comp_id, ws["id"]
+            )
+            workspace_builds  = repositories.get_albion_builds(db, ws["id"])
+            build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    # Build prev_slots from template rows — same shape the creation form expects.
+    # albion_build_id is preserved so the clone pre-selects the same build in
+    # the library dropdown.  The new composition gets fresh slot IDs on save.
+    prev_slots = [
+        {
+            "party_number":   t["party_number"],
+            "slot_index":     t["slot_index"],
+            "role":           t["role"],
+            "build_name":     t["build_name"],
+            "weapon_name":    t["weapon_name"],
+            "albion_build_id": t.get("albion_build_id"),
+            "doctrine_role":  t.get("doctrine_role"),
+            "priority":       t["priority"],
+        }
+        for t in slot_templates
+    ]
+
+    # Build structural preview using the same helpers as the failed-validation path.
+    _prev_parties = tactical.build_parties(prev_slots) if prev_slots else {}
+    if _prev_parties:
+        _prev_psumm, _prev_csumm = tactical.derive_tactical_summaries(
+            _prev_parties, assigned_map={}, track_assignments=False
+        )
+        _prev_warnings = tactical.derive_composition_integrity(
+            _prev_parties, _prev_csumm, _prev_psumm
+        )
+    else:
+        _prev_psumm    = {}
+        _prev_csumm    = None
+        _prev_warnings = []
+
+    prev_name = (
+        f"{comp['name']} — {variant}" if variant else f"Copy of {comp['name']}"
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "compositions_new.html",
+        {
+            "workspace":               ws,
+            "current_user":            user,
+            "workspace_builds":        workspace_builds,
+            "build_name_suggestions":  build_suggestions["build_names"],
+            "weapon_name_suggestions": build_suggestions["weapon_names"],
+            "error":                   None,
+            "prev_name":               prev_name,
+            "prev_description":        comp["description"] or "",
+            "prev_slots":              prev_slots,
+            "prev_parties":            _prev_parties,
+            "prev_party_summaries":    _prev_psumm,
+            "prev_party_count":        len(_prev_parties),
+            "prev_comp_summary":       _prev_csumm,
+            "prev_integrity_warnings": _prev_warnings,
+            "cloned_from_name":        comp["name"],
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/compositions/{comp_id}/edit")
+def get_edit_composition(request: Request, slug: str, comp_id: str):
+    """Edit composition slot templates.
+
+    Renders the slot table form pre-filled with the composition's current slot
+    templates.  Retired compositions cannot be edited.  A notice is shown when
+    active operations reference this composition so the officer understands that
+    their frozen operation_slots will not change.
+    """
+    error   = request.query_params.get("error")
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_mutate"]:
+                raise PermissionDenied("You do not have permission for this action.")
+            comp = repositories.get_albion_composition(db, comp_id, ws["id"])
+            if not comp:
+                raise HTTPException(status_code=404, detail="Composition not found.")
+            if comp.get("deleted_at"):
+                raise HTTPException(status_code=403, detail="Retired compositions cannot be edited.")
+            slot_templates   = repositories.get_composition_slot_templates(
+                db, comp_id, ws["id"]
+            )
+            active_operations = repositories.get_operations_using_composition(
+                db, comp_id, ws["id"]
+            )
+            workspace_builds  = repositories.get_albion_builds(db, ws["id"])
+            build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    # Group slot templates by party for the card-based editor layout.
+    # Uses the same canonical build_parties() path as the detail page so
+    # grouping and role_family annotation cannot diverge between surfaces.
+    parties = tactical.build_parties(slot_templates)
+    if parties:
+        party_summaries, edit_comp_summary = tactical.derive_tactical_summaries(
+            parties, assigned_map={}, track_assignments=False
+        )
+        edit_integrity = tactical.derive_composition_integrity(
+            parties, edit_comp_summary, party_summaries
+        )
+    else:
+        party_summaries   = {}
+        edit_comp_summary = None
+        edit_integrity    = []
+
+    return templates.TemplateResponse(
+        request,
+        "compositions_edit.html",
+        {
+            "workspace":           ws,
+            "current_user":        user,
+            "comp":                comp,
+            "slot_templates":      slot_templates,
+            "parties":             parties,
+            "party_summaries":     party_summaries,
+            "edit_comp_summary":   edit_comp_summary,
+            "edit_integrity":          edit_integrity,
+            "workspace_builds":        workspace_builds,
+            "build_name_suggestions":  build_suggestions["build_names"],
+            "weapon_name_suggestions": build_suggestions["weapon_names"],
+            "active_operations":       active_operations,
+            "error":                   error,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/compositions/{comp_id}/slots")
+async def post_update_composition_slots(request: Request, slug: str, comp_id: str):
+    """Replace all slot templates for an existing composition.
+
+    Parses the same slot-table form as composition creation.  Validates and
+    atomically replaces the full slot template set.  Operation slots generated
+    from this composition are NOT affected — they remain frozen snapshots.
+    """
+    comp_url = f"/workspaces/{slug}/compositions/{comp_id}"
+    edit_url = f"/workspaces/{slug}/compositions/{comp_id}/edit"
+
+    form = await request.form()
+    party_numbers     = form.getlist("party_number")
+    slot_indices      = form.getlist("slot_index")
+    roles             = form.getlist("role")
+    build_names       = form.getlist("build_name")
+    weapon_names      = form.getlist("weapon_name")
+    doctrine_roles    = form.getlist("doctrine_role")
+    priorities        = form.getlist("priority")
+    albion_build_ids  = form.getlist("albion_build_id")
+
+    slots: list[dict] = []
+    for i in range(len(roles)):
+        role     = roles[i].strip()           if i < len(roles)           else ""
+        build    = build_names[i].strip()     if i < len(build_names)     else ""
+        build_id = albion_build_ids[i].strip() if i < len(albion_build_ids) else ""
+        # Skip cards where role is empty.
+        # Skip cards where both the text build name and the build FK are absent
+        # (the use case will resolve the FK and populate build_name if FK valid).
+        if not role or (not build and not build_id):
+            continue
+        try:
+            pn = int(party_numbers[i]) if i < len(party_numbers) else 1
+            si = int(slot_indices[i])  if i < len(slot_indices)  else i + 1
+        except (ValueError, TypeError):
+            continue
+        slots.append({
+            "party_number":   pn,
+            "slot_index":     si,
+            "role":           role,
+            "build_name":     build,
+            "weapon_name":    weapon_names[i].strip() or None if i < len(weapon_names) else None,
+            "doctrine_role":  doctrine_roles[i].strip() or None if i < len(doctrine_roles) else None,
+            "albion_build_id": build_id or None,
+            "priority":       priorities[i] if i < len(priorities) else "normal",
+        })
+
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.update_composition_slots(
+            guild_workspace_id=ws["id"],
+            composition_id=comp_id,
+            actor_user_id=user["id"],
+            slots=slots,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        return _err_redirect(edit_url, str(exc))
+    except IronkeepError as exc:
+        return _err_redirect(edit_url, str(exc))
+    return _ok_redirect(comp_url, "Composition slots updated.")
 
 
 @router.post("/workspaces/{slug}/compositions")
@@ -1458,18 +2631,21 @@ async def post_create_composition(request: Request, slug: str):
     name        = form.get("name", "").strip()
     description = form.get("description", "").strip() or None
 
-    party_numbers = form.getlist("party_number")
-    slot_indices  = form.getlist("slot_index")
-    roles         = form.getlist("role")
-    build_names   = form.getlist("build_name")
-    weapon_names  = form.getlist("weapon_name")
-    priorities    = form.getlist("priority")
+    party_numbers    = form.getlist("party_number")
+    slot_indices     = form.getlist("slot_index")
+    roles            = form.getlist("role")
+    build_names      = form.getlist("build_name")
+    weapon_names     = form.getlist("weapon_name")
+    doctrine_roles   = form.getlist("doctrine_role")
+    priorities       = form.getlist("priority")
+    albion_build_ids = form.getlist("albion_build_id")
 
     slots: list[dict] = []
     for i in range(len(roles)):
-        role  = roles[i].strip()       if i < len(roles)       else ""
-        build = build_names[i].strip() if i < len(build_names) else ""
-        if not role or not build:
+        role     = roles[i].strip()            if i < len(roles)            else ""
+        build    = build_names[i].strip()      if i < len(build_names)      else ""
+        build_id = albion_build_ids[i].strip() if i < len(albion_build_ids) else ""
+        if not role or (not build and not build_id):
             continue
         try:
             pn = int(party_numbers[i]) if i < len(party_numbers) else 1
@@ -1477,12 +2653,14 @@ async def post_create_composition(request: Request, slug: str):
         except (ValueError, TypeError):
             continue
         slots.append({
-            "party_number": pn,
-            "slot_index":   si,
-            "role":         role,
-            "build_name":   build,
-            "weapon_name":  weapon_names[i].strip() or None if i < len(weapon_names) else None,
-            "priority":     priorities[i] if i < len(priorities) else "normal",
+            "party_number":   pn,
+            "slot_index":     si,
+            "role":           role,
+            "build_name":     build,
+            "weapon_name":    weapon_names[i].strip() or None if i < len(weapon_names) else None,
+            "doctrine_role":  doctrine_roles[i].strip() or None if i < len(doctrine_roles) else None,
+            "albion_build_id": build_id or None,
+            "priority":       priorities[i] if i < len(priorities) else "normal",
         })
 
     try:
@@ -1503,15 +2681,46 @@ async def post_create_composition(request: Request, slug: str):
     except PermissionDenied as exc:
         return _err_redirect(f"/workspaces/{slug}/compositions/new", str(exc))
     except IronkeepError as exc:
+        # Build structural preview from submitted slot data so officers can see
+        # what they entered without re-keying after a validation failure.
+        _prev_parties = tactical.build_parties(slots) if slots else {}
+        if _prev_parties:
+            _prev_psumm, _prev_csumm = tactical.derive_tactical_summaries(
+                _prev_parties, assigned_map={}, track_assignments=False
+            )
+            _prev_warnings = tactical.derive_composition_integrity(
+                _prev_parties, _prev_csumm, _prev_psumm
+            )
+        else:
+            _prev_psumm    = {}
+            _prev_csumm    = None
+            _prev_warnings = []
+        try:
+            with database.transaction() as db:
+                _wb  = repositories.get_albion_builds(db, ws["id"])
+                _bsg = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+        except Exception:
+            _wb  = []
+            _bsg = {"build_names": [], "weapon_names": []}
         return templates.TemplateResponse(
             request,
             "compositions_new.html",
             {
-                "workspace": ws,
-                "current_user": user,
-                "error": str(exc),
-                "prev_name": name,
-                "prev_description": description or "",
+                "workspace":               ws,
+                "current_user":            user,
+                "workspace_builds":        _wb,
+                "build_name_suggestions":  _bsg["build_names"],
+                "weapon_name_suggestions": _bsg["weapon_names"],
+                "error":                   str(exc),
+                "prev_name":               name,
+                "prev_description":        description or "",
+                "prev_slots":              slots,
+                "prev_parties":            _prev_parties,
+                "prev_party_summaries":    _prev_psumm,
+                "prev_party_count":        len(_prev_parties),
+                "prev_comp_summary":       _prev_csumm,
+                "prev_integrity_warnings": _prev_warnings,
+                "cloned_from_name":        None,
                 **access,
             },
         )
@@ -1524,11 +2733,20 @@ async def post_create_composition(request: Request, slug: str):
 
 @router.get("/workspaces/{slug}/operations/new")
 def get_new_operation(request: Request, slug: str):
+    preset_comp_id = request.query_params.get("composition_id", "").strip()
     try:
         with database.transaction() as db:
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
             if not access["can_mutate"]:
                 raise PermissionDenied("You do not have permission for this action.")
+            # Prefill composition when arriving from the composition detail page.
+            # Accept only if the composition exists in this workspace and is not retired.
+            # Silently discard invalid/retired/missing IDs — the form renders normally.
+            preset_comp = None
+            if preset_comp_id:
+                _comp = repositories.get_albion_composition(db, preset_comp_id, ws["id"])
+                if _comp and not _comp.get("deleted_at"):
+                    preset_comp = _comp
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1539,12 +2757,13 @@ def get_new_operation(request: Request, slug: str):
         request,
         "operation_new.html",
         {
-            "workspace": ws,
+            "workspace":    ws,
             "current_user": user,
             "default_start": _tomorrow_2000(),
-            "error": None,
-            "prev_title": "",
-            "prev_type": "zvz",
+            "preset_comp":  preset_comp,
+            "error":        None,
+            "prev_title":   "",
+            "prev_type":    "zvz",
             **access,
         },
     )
@@ -1556,6 +2775,7 @@ async def post_create_operation(request: Request, slug: str):
     title              = form.get("title", "").strip()
     operation_type     = form.get("operation_type", "zvz")
     scheduled_start_at = form.get("scheduled_start_at", "").strip()
+    composition_id     = form.get("composition_id", "").strip()
 
     new_url = f"/workspaces/{slug}/operations/new"
     try:
@@ -1581,16 +2801,43 @@ async def post_create_operation(request: Request, slug: str):
             request,
             "operation_new.html",
             {
-                "workspace": ws,
+                "workspace":    ws,
                 "current_user": user,
                 "default_start": scheduled_start_at or _tomorrow_2000(),
-                "error": str(exc),
-                "prev_title": title,
-                "prev_type": operation_type,
+                "preset_comp":  None,
+                "error":        str(exc),
+                "prev_title":   title,
+                "prev_type":    operation_type,
                 **access_ctx,
             },
         )
-    return _redirect(f"/workspaces/{slug}/operations/{op['id']}")
+
+    detail_url = f"/workspaces/{slug}/operations/{op['id']}"
+
+    # Auto-attach the pre-selected composition if one was passed from the
+    # composition detail shortcut.  This is a best-effort second step: if it
+    # fails the operation already exists and the officer is redirected to the
+    # detail page where the standard attach form is visible.
+    if composition_id:
+        # Guard: verify the composition still exists and is not retired before
+        # attaching.  attach_operation_plan() itself does not enforce retirement,
+        # so we enforce it here to match the operation-detail dropdown contract
+        # (active-only compositions may be attached).
+        with database.transaction() as db:
+            _comp = repositories.get_albion_composition(db, composition_id, ws["id"])
+        if _comp and not _comp.get("deleted_at"):
+            try:
+                use_cases.attach_operation_plan(ws["id"], op["id"], composition_id)
+                return _ok_redirect(detail_url, "Operation created. Composition attached.")
+            except IronkeepError:
+                pass
+        return _err_redirect(
+            detail_url,
+            "Operation created but the composition could not be attached "
+            "automatically. Attach it from this page.",
+        )
+
+    return _redirect(detail_url)
 
 
 @router.get("/workspaces/{slug}/operations/{op_id}")
@@ -1615,12 +2862,21 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
             compositions = repositories.get_albion_compositions(db, ws["id"], include_deleted=False)
 
             composition = None
+            composition_slot_count = 0
             if plan:
                 # Single-row lookup intentionally bypasses the deleted filter so
                 # retired compositions still display correctly on the detail page.
                 composition = repositories.get_albion_composition(
                     db, plan["albion_composition_id"], ws["id"]
                 )
+                # Count slot templates so the template can warn when the attached
+                # composition has no slots (informational only — no blocking).
+                if composition and not composition.get("deleted_at"):
+                    composition_slot_count = len(
+                        repositories.get_composition_slot_templates(
+                            db, composition["id"], ws["id"]
+                        )
+                    )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1637,7 +2893,13 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
         elif not ws.get("discord_announcement_channel_id"):
             discord_config_gap = "no_channel"
         else:
-            raw_payload = format_operation_announcement(op, readiness)
+            base = str(request.base_url).rstrip("/")
+            preview_signup_url = (
+                f"{base}/workspaces/{ws['slug']}/operations/{op['id']}/signup"
+            )
+            raw_payload = format_operation_announcement(
+                op, readiness, signup_url=preview_signup_url
+            )
             embed = raw_payload["embeds"][0]
             discord_preview = {
                 **embed,
@@ -1663,6 +2925,7 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
             "plan":                     plan,
             "composition":              composition,
             "slot_count":               slot_count,
+            "composition_slot_count":   composition_slot_count,
             "signup_count":             len(signups),
             "readiness":                readiness,
             "compositions":             compositions,
@@ -1692,10 +2955,13 @@ async def post_discord_announce(request: Request, slug: str, op_id: str):
             user, ws, _mem = authz.authorize_workspace_action(
                 db, request, slug, require_mutator=True
             )
+        base = str(request.base_url).rstrip("/")
+        signup_url = f"{base}/workspaces/{slug}/operations/{op_id}/signup"
         result = use_cases.post_discord_announcement(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
             actor_id=user["id"],
+            signup_url=signup_url,
         )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -1805,6 +3071,12 @@ async def post_generate_slots(request: Request, slug: str, op_id: str):
         return _err_redirect(detail_url, str(exc))
     except IronkeepError as exc:
         return _err_redirect(detail_url, str(exc))
+    if len(slots) == 0:
+        return _ok_redirect(
+            detail_url,
+            "0 slots generated — the attached composition currently has no slot templates. "
+            "Add slots to the composition, then generate again.",
+        )
     return _ok_redirect(detail_url, f"{len(slots)} slots generated.")
 
 
@@ -1847,7 +3119,9 @@ def get_signup(request: Request, slug: str, op_id: str):
 
     try:
         with database.transaction() as db:
-            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            # Open to any authenticated user — alliance players don't need
+            # workspace membership to view the signup page or submit.
+            user, ws, access = authz.resolve_workspace_for_signup(db, request, slug)
             op = repositories.get_guild_operation(db, op_id, ws["id"])
             if not op:
                 raise HTTPException(status_code=404, detail="Operation not found.")
@@ -1893,9 +3167,8 @@ async def post_signup(request: Request, slug: str, op_id: str):
     signup_url = f"/workspaces/{slug}/operations/{op_id}/signup"
     try:
         with database.transaction() as db:
-            _user, ws, _mem = authz.authorize_workspace_action(
-                db, request, slug, require_mutator=False, allow_signup=True
-            )
+            # Open to any authenticated user — membership not required.
+            _user, ws, _access = authz.resolve_workspace_for_signup(db, request, slug)
         use_cases.submit_signup_intent(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
@@ -1904,6 +3177,7 @@ async def post_signup(request: Request, slug: str, op_id: str):
             preferred_build_name=preferred_build,
             willingness=willingness,
             availability=availability,
+            actor_user_id=_user["id"],
         )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -1921,9 +3195,9 @@ async def post_withdraw_signup(request: Request, slug: str, op_id: str, signup_i
     signup_url = f"/workspaces/{slug}/operations/{op_id}/signup"
     try:
         with database.transaction() as db:
-            user, ws, _mem = authz.resolve_workspace_view(db, request, slug)
-            if not user:
-                raise AuthenticationRequired()
+            # Non-members may withdraw their own signups — use the same
+            # resolver as the signup page rather than the membership-gated view.
+            user, ws, _access = authz.resolve_workspace_for_signup(db, request, slug)
         use_cases.withdraw_signup_intent(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
@@ -1967,6 +3241,14 @@ def get_planner(request: Request, slug: str, op_id: str):
             readiness    = _enrich_readiness(
                 repositories.get_latest_readiness_snapshot(db, op_id, ws["id"])
             )
+            # Composition reference — displayed in the planner header for tactical context.
+            plan = repositories.get_operation_plan(db, op_id, ws["id"])
+            composition = None
+            if plan:
+                composition = repositories.get_albion_composition(
+                    db, plan["albion_composition_id"], ws["id"]
+                )
+
             # Roster Discord message row — owner/officer only.
             discord_roster_msg = None
             if access.get("can_mutate"):
@@ -1979,6 +3261,8 @@ def get_planner(request: Request, slug: str, op_id: str):
                 reliability_scores = repositories.get_player_reliability_scores(
                     db, ws["id"]
                 )
+            # Build-name suggestions for slot build edit forms in the planner.
+            build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -2004,10 +3288,14 @@ def get_planner(request: Request, slug: str, op_id: str):
                 "color_hex": "#{:06x}".format(embed.get("color", 0x95A5A6)),
             }
 
-    # Group slots by party number for template iteration.
-    parties: dict[int, list] = {}
-    for slot in slots:
-        parties.setdefault(slot["party_number"], []).append(slot)
+    # Group slots by party via the shared canonical helper.
+    # Uses the same path as the composition preview so grouping cannot diverge.
+    parties = tactical.build_parties(slots)
+
+    # Derive tactical summaries via the canonical tactical module.
+    party_summaries, comp_summary = tactical.derive_tactical_summaries(
+        parties, assigned_map
+    )
 
     # Participants who are not yet assigned to any slot in this operation.
     # An open slot is shown only by the absence of an active assignment row.
@@ -2053,6 +3341,22 @@ def get_planner(request: Request, slug: str, op_id: str):
         p for p in unassigned_participants if p["id"] not in reserve_ids
     ]
 
+    # Open slots list — used by the "assign from participant card" left-panel form.
+    # Each entry exposes id + a compact human-readable label for the dropdown.
+    # Only slots without an active assignment are included.
+    open_slots = [
+        {
+            "id":    slot["id"],
+            "label": (
+                f"P{slot['party_number']}#{slot['slot_index']} "
+                f"{slot.get('doctrine_role') or slot.get('role') or ''}"
+                f" — {slot.get('weapon_name') or slot.get('build_name') or 'Open'}"
+            ).strip(" —"),
+        }
+        for slot in slots
+        if slot["id"] not in assigned_map
+    ]
+
     with database.transaction() as db:
         discord_meta = _enrich_discord_meta(
             repositories.get_discord_metadata_map(db, ws["id"])
@@ -2064,13 +3368,18 @@ def get_planner(request: Request, slug: str, op_id: str):
         {
             "workspace":                  ws,
             "operation":                  op,
+            "plan":                       plan,
+            "composition":                composition,
             "parties":                    parties,
+            "party_summaries":            party_summaries,
+            "comp_summary":               comp_summary,
             "assigned_map":               assigned_map,
             "participants":               participants,
             "unassigned_participants":    unassigned_participants,
             "signup_prefs":               signup_prefs,
             "slot_participants":          slot_participants,
             "slot_has_quick_candidates":  slot_has_quick_candidates,
+            "open_slots":                 open_slots,
             "reserves":                   reserves,
             "eligible_for_reserve":       eligible_for_reserve,
             "readiness":                  readiness,
@@ -2079,6 +3388,8 @@ def get_planner(request: Request, slug: str, op_id: str):
             "discord_roster_msg":         discord_roster_msg,
             "discord_meta":               discord_meta,
             "reliability_scores":         reliability_scores,
+            "build_name_suggestions":     build_suggestions["build_names"],
+            "weapon_name_suggestions":    build_suggestions["weapon_names"],
             "active_tab":                 "planner",
             "error":                      error,
             "success":                    success,
@@ -2099,11 +3410,15 @@ async def post_assign(request: Request, slug: str, op_id: str, slot_id: str):
     participant_id = form.get("participant_id", "").strip()
 
     planner_url = f"/workspaces/{slug}/operations/{op_id}/planner"
+    party_anchor = ""
     try:
         with database.transaction() as db:
             _user, ws, _mem = authz.authorize_workspace_action(
                 db, request, slug, require_mutator=True
             )
+            _slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if _slot and _slot.get("party_number") is not None:
+                party_anchor = f"#party-{_slot['party_number']}"
         use_cases.assign_participant_to_operation_slot(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
@@ -2117,8 +3432,95 @@ async def post_assign(request: Request, slug: str, op_id: str, slot_id: str):
     except PermissionDenied as exc:
         return _err_redirect(planner_url, str(exc))
     except IronkeepError as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor)
+
+
+# ---------------------------------------------------------------------------
+# Reassign slot — atomic swap (Phase 6 fast mutation)
+# ---------------------------------------------------------------------------
+
+@router.post("/workspaces/{slug}/operations/{op_id}/slots/{slot_id}/reassign")
+async def post_reassign_slot(request: Request, slug: str, op_id: str, slot_id: str):
+    """Atomic swap: replace the existing assignment on a slot with a new participant.
+
+    Equivalent to remove + assign in a single transaction.  If the slot has
+    no active assignment this degrades to a plain assign.
+    """
+    form               = await request.form()
+    new_participant_id = (form.get("participant_id") or "").strip()
+    planner_url        = f"/workspaces/{slug}/operations/{op_id}/planner"
+    if not new_participant_id:
+        return _err_redirect(planner_url, "No participant selected for reassignment.")
+    party_anchor = ""
+    try:
+        with database.transaction() as db:
+            _user, ws, _mem = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+            _slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if _slot and _slot.get("party_number") is not None:
+                party_anchor = f"#party-{_slot['party_number']}"
+        use_cases.reassign_slot(
+            guild_workspace_id=ws["id"],
+            guild_operation_id=op_id,
+            operation_slot_id=slot_id,
+            new_participant_id=new_participant_id,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
         return _err_redirect(planner_url, str(exc))
-    return _ok_redirect(planner_url)
+    except IronkeepError as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor, "Slot reassigned.")
+
+
+# ---------------------------------------------------------------------------
+# Assign from participant card — operation-level assign route (Phase 6)
+# ---------------------------------------------------------------------------
+
+@router.post("/workspaces/{slug}/operations/{op_id}/assign")
+async def post_assign_participant(request: Request, slug: str, op_id: str):
+    """Assign a participant to a slot; both slot_id and participant_id come
+    from the form body.  This route supports the 'assign from left panel'
+    workflow where the officer picks a slot from the unassigned signup card.
+
+    Delegates to assign_participant_to_operation_slot — identical semantics to
+    the slot-scoped POST .../slots/{slot_id}/assign.
+    """
+    form           = await request.form()
+    slot_id        = (form.get("slot_id")        or "").strip()
+    participant_id = (form.get("participant_id") or "").strip()
+    planner_url    = f"/workspaces/{slug}/operations/{op_id}/planner"
+    if not slot_id or not participant_id:
+        return _err_redirect(planner_url, "Slot and participant are required.")
+    party_anchor = ""
+    try:
+        with database.transaction() as db:
+            _user, ws, _mem = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+            _slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if _slot and _slot.get("party_number") is not None:
+                party_anchor = f"#party-{_slot['party_number']}"
+        use_cases.assign_participant_to_operation_slot(
+            guild_workspace_id=ws["id"],
+            guild_operation_id=op_id,
+            operation_slot_id=slot_id,
+            participant_id=participant_id,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        return _err_redirect(planner_url, str(exc))
+    except IronkeepError as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor)
 
 
 # ---------------------------------------------------------------------------
@@ -2130,11 +3532,19 @@ async def post_remove_assignment(
     request: Request, slug: str, op_id: str, assignment_id: str
 ):
     planner_url = f"/workspaces/{slug}/operations/{op_id}/planner"
+    party_anchor = ""
     try:
         with database.transaction() as db:
             _user, ws, _mem = authz.authorize_workspace_action(
                 db, request, slug, require_mutator=True
             )
+            _asgn = repositories.get_assignment_by_id(db, assignment_id, ws["id"])
+            if _asgn:
+                _slot = repositories.get_operation_slot(
+                    db, _asgn["operation_slot_id"], ws["id"]
+                )
+                if _slot and _slot.get("party_number") is not None:
+                    party_anchor = f"#party-{_slot['party_number']}"
         use_cases.remove_assignment(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
@@ -2147,8 +3557,124 @@ async def post_remove_assignment(
     except PermissionDenied as exc:
         return _err_redirect(planner_url, str(exc))
     except IronkeepError as exc:
-        return _err_redirect(planner_url, str(exc))
-    return _ok_redirect(planner_url, "Assignment removed.")
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor, "Assignment removed.")
+
+
+# ---------------------------------------------------------------------------
+# Update slot build — inline build edit from the tactical planner
+# ---------------------------------------------------------------------------
+
+@router.post("/workspaces/{slug}/operations/{op_id}/slots/{slot_id}/build")
+async def post_update_slot_build(
+    request: Request, slug: str, op_id: str, slot_id: str
+):
+    form        = await request.form()
+    build_name  = (form.get("build_name") or "").strip()
+    weapon_name = (form.get("weapon_name") or "").strip() or None
+
+    planner_url = f"/workspaces/{slug}/operations/{op_id}/planner"
+    # Early guard fires before slot fetch — no anchor available yet.
+    if not build_name:
+        return _err_redirect(planner_url, "Build name is required.")
+
+    party_anchor = ""
+    try:
+        with database.transaction() as db:
+            _user, ws, _mem = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+            slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if not slot or slot["guild_operation_id"] != op_id:
+                raise HTTPException(status_code=404, detail="Slot not found.")
+            if slot.get("party_number") is not None:
+                party_anchor = f"#party-{slot['party_number']}"
+            op = repositories.get_guild_operation(db, op_id, ws["id"])
+            if op:
+                guild_operations.validate_assignment_mutation_allowed(op["status"])
+            repositories.update_operation_slot_build(
+                db, slot_id, ws["id"], build_name, weapon_name
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    except IronkeepError as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor, "Build updated.")
+
+
+# ---------------------------------------------------------------------------
+# Apply operation slot build back to composition slot template (promote)
+# ---------------------------------------------------------------------------
+
+@router.post("/workspaces/{slug}/operations/{op_id}/slots/{slot_id}/apply-to-template")
+async def post_apply_slot_to_template(
+    request: Request, slug: str, op_id: str, slot_id: str
+):
+    """Promote build_name and weapon_name from one operation slot back to its
+    source composition slot template.
+
+    This is an explicit, per-slot, officer-initiated action — NOT auto-sync.
+    Only build_name and weapon_name are promoted (matching the planner editor).
+    No operation_slots are touched (snapshot invariant preserved).
+    Other operations sharing the same source composition are unaffected.
+    """
+    planner_url  = f"/workspaces/{slug}/operations/{op_id}/planner"
+    party_anchor = ""
+
+    try:
+        with database.transaction() as db:
+            user, ws, _mem = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+
+            slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if not slot or slot["guild_operation_id"] != op_id:
+                raise HTTPException(status_code=404, detail="Slot not found.")
+
+            if slot.get("party_number") is not None:
+                party_anchor = f"#party-{slot['party_number']}"
+
+            src_template_id = slot.get("source_composition_slot_template_id")
+            if not src_template_id:
+                return _planner_err_redirect(planner_url, party_anchor, "This slot has no traceable source template — cannot apply to composition.")
+
+            src_template = repositories.get_composition_slot_template_by_id(
+                db, src_template_id, ws["id"]
+            )
+            if not src_template:
+                return _planner_err_redirect(
+                    planner_url, party_anchor,
+                    "The source composition slot template no longer exists "
+                    "(the composition may have been re-slotted since this operation was generated).",
+                )
+
+            comp = repositories.get_albion_composition(
+                db, src_template["albion_composition_id"], ws["id"]
+            )
+            if not comp or comp.get("deleted_at"):
+                return _planner_err_redirect(planner_url, party_anchor, "Cannot apply to a retired composition.")
+
+        use_cases.quick_update_composition_slot(
+            guild_workspace_id=ws["id"],
+            composition_id=comp["id"],
+            actor_user_id=user["id"],
+            slot_id=src_template_id,
+            build_name=slot["build_name"],
+            weapon_name=slot.get("weapon_name"),
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    except IronkeepError as exc:
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor, "Applied to composition template.")
 
 
 # ---------------------------------------------------------------------------
@@ -2158,11 +3684,15 @@ async def post_remove_assignment(
 @router.post("/workspaces/{slug}/operations/{op_id}/slots/{slot_id}/quick-assign")
 async def post_quick_assign(request: Request, slug: str, op_id: str, slot_id: str):
     planner_url = f"/workspaces/{slug}/operations/{op_id}/planner"
+    party_anchor = ""
     try:
         with database.transaction() as db:
             _user, ws, _mem = authz.authorize_workspace_action(
                 db, request, slug, require_mutator=True
             )
+            _slot = repositories.get_operation_slot(db, slot_id, ws["id"])
+            if _slot and _slot.get("party_number") is not None:
+                party_anchor = f"#party-{_slot['party_number']}"
         use_cases.quick_assign_slot(
             guild_workspace_id=ws["id"],
             guild_operation_id=op_id,
@@ -2175,8 +3705,8 @@ async def post_quick_assign(request: Request, slug: str, op_id: str, slot_id: st
     except PermissionDenied as exc:
         return _err_redirect(planner_url, str(exc))
     except IronkeepError as exc:
-        return _err_redirect(planner_url, str(exc))
-    return _ok_redirect(planner_url, f"Quick assigned: slot filled.")
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
+    return _planner_redirect(planner_url, party_anchor, "Quick assigned: slot filled.")
 
 
 # ---------------------------------------------------------------------------
@@ -2187,7 +3717,8 @@ async def post_quick_assign(request: Request, slug: str, op_id: str, slot_id: st
 async def post_quick_fill_party(
     request: Request, slug: str, op_id: str, party_number: int
 ):
-    planner_url = f"/workspaces/{slug}/operations/{op_id}/planner"
+    planner_url  = f"/workspaces/{slug}/operations/{op_id}/planner"
+    party_anchor = f"#party-{party_number}"
     try:
         with database.transaction() as db:
             _user, ws, _mem = authz.authorize_workspace_action(
@@ -2205,7 +3736,7 @@ async def post_quick_fill_party(
     except PermissionDenied as exc:
         return _err_redirect(planner_url, str(exc))
     except IronkeepError as exc:
-        return _err_redirect(planner_url, str(exc))
+        return _planner_err_redirect(planner_url, party_anchor, str(exc))
 
     n = result["filled_count"]
     total = result["total_open"]
@@ -2213,7 +3744,7 @@ async def post_quick_fill_party(
         msg = f"0 slots filled — no eligible candidates for Party {party_number}."
     else:
         msg = f"Filled {n}/{total} open slots in Party {party_number}."
-    return _ok_redirect(planner_url, msg)
+    return _planner_redirect(planner_url, party_anchor, msg)
 
 
 # ---------------------------------------------------------------------------

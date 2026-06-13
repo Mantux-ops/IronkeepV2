@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Ironkeep{% endblock %}</title>
+  {# Public CSS pipeline — subset of the canonical stack from UI Architecture Phase 2.
+     landing.css is additive: it layers on top of the shared component foundations.
+     App-only files (dashboard.css, tactical.css, tables.css, forms.css) are
+     intentionally excluded — they carry no primitives used on the public shell.
+     Order: tokens → base → layout → components → landing → utilities → responsive #}
+  <link rel="stylesheet" href="/static/css/tokens.css">
+  <link rel="stylesheet" href="/static/css/base.css">
+  <link rel="stylesheet" href="/static/css/layout.css">
+  <link rel="stylesheet" href="/static/css/components.css">
+  <link rel="stylesheet" href="/static/css/landing.css">
+  <link rel="stylesheet" href="/static/css/utilities.css">
+  <link rel="stylesheet" href="/static/css/responsive.css">
+  {% block head_extra %}{% endblock %}
+</head>
+<body>
+
+<a class="skip-link" href="#main-content">Skip to main content</a>
+
+{# Public navigation: brand + login link only.
+   No workspace switcher. No operation navigation. No authenticated sidebar.
+   No workspace-aware context. No planner controls. #}
+<header>
+  <nav class="landing-nav" aria-label="Primary navigation">
+    {% block public_nav %}
+    <a class="brand" href="/">{% include "_brand_mark.html" %}Ironkeep</a>
+    <div>
+      <a href="/login">Login</a>
+    </div>
+    {% endblock %}
+  </nav>
+</header>
+
+{% if ironkeep_env != "production" %}
+<div class="dev-banner">
+  &#9888; Dev mode active — display-name login only. Not for production use.
+</div>
+{% endif %}
+
+{% block flash %}{% endblock %}
+
+<main id="main-content">
+  {% block content %}{% endblock %}
+</main>
+
+<footer id="section-footer">
+  {% block footer %}
+  <div class="landing-footer">
+    <a class="brand" href="/">{% include "_brand_mark.html" %}Ironkeep</a>
+    <span class="ls-footer-sub">Tactical coordination for Albion Online</span>
+  </div>
+  {% endblock %}
+</footer>
+
+{% block scripts %}{% endblock %}
+
+</body>
+</html>

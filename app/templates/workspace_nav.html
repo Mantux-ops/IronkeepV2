@@ -4,6 +4,8 @@
      class="{% if workspace_nav_active == 'dashboard' %}active{% endif %}">Dashboard</a>
   <a href="/workspaces/{{ workspace.slug }}/compositions"
      class="{% if workspace_nav_active == 'compositions' %}active{% endif %}">Compositions</a>
+  <a href="/workspaces/{{ workspace.slug }}/builds"
+     class="{% if workspace_nav_active == 'builds' %}active{% endif %}">Builds</a>
   {% if can_manage_members %}
   <a href="/workspaces/{{ workspace.slug }}/members"
      class="{% if workspace_nav_active == 'members' %}active{% endif %}">Members</a>

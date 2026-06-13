@@ -51,6 +51,23 @@ def _make_locked_op_with_signup(owner_name: str, slug: str, player_name: str = "
     return owner, ws, op
 
 
+def _make_planning_op_with_signup(owner_name: str, slug: str, player_name: str = "TestPlayer"):
+    """Full chain: workspace → comp → op → slots → signup (not assigned), stays PLANNING.
+
+    Use this helper for tests that exercise assignment mutation controls,
+    which are only visible/allowed in planning status (not locked).
+    """
+    owner = make_user(owner_name)
+    ws = make_workspace(owner_user_id=owner["id"], slug=slug)
+    comp = make_composition(ws["id"], name=f"ErgComp-{slug}")
+    op = make_operation(ws["id"])
+    use_cases.attach_operation_plan(ws["id"], op["id"], comp["id"])
+    use_cases.generate_operation_slots(ws["id"], op["id"])
+    use_cases.publish_operation(ws["id"], op["id"])
+    use_cases.submit_signup_intent(ws["id"], op["id"], player_name, "Tank")
+    return owner, ws, op
+
+
 def _planner_url(ws_slug: str, op_id: str) -> str:
     return f"/workspaces/{ws_slug}/operations/{op_id}/planner"
 
@@ -90,29 +107,38 @@ def test_no_unassigned_table_in_signup_panel():
 
 
 def test_quick_assign_has_btn_primary():
-    """Quick assign button must have btn-primary when candidates are available."""
-    owner, ws, op = _make_locked_op_with_signup("ErgOwner3", "erg-qprimary", "QuickPlayer")
+    """Quick ★ button must have btn-primary when candidates are available."""
+    owner, ws, op = _make_planning_op_with_signup("ErgOwner3", "erg-qprimary", "QuickPlayer")
 
     client = TestClient(app)
     _login(client, "ErgOwner3")
 
     resp = _get_planner(client, ws["slug"], op["id"])
     assert resp.status_code == 200
-    # btn-primary appears on the quick-assign button
+    # btn-primary appears on the quick-assign button and assign controls
     assert "btn-primary" in resp.text
-    assert "Quick assign" in resp.text
+    # Button now labelled "Quick ★" (Phase 6 S2: promoted manual assign replaces details)
+    assert "Quick" in resp.text
 
 
-def test_manual_assign_in_details_with_correct_summary():
-    owner, ws, op = _make_locked_op_with_signup("ErgOwner4", "erg-manual-det", "ManualPlayer")
+def test_manual_assign_promoted_not_in_details():
+    """Manual assign is now promoted (no <details> wrapper) — Phase 6 S2 UX change.
+
+    The old behaviour had manual assign hidden in a <details> disclosure.
+    After the assignment workflow upgrade the selector is always visible so
+    officers can assign in a single click.
+    """
+    owner, ws, op = _make_planning_op_with_signup("ErgOwner4", "erg-manual-det", "ManualPlayer")
 
     client = TestClient(app)
     _login(client, "ErgOwner4")
 
     resp = _get_planner(client, ws["slug"], op["id"])
     assert resp.status_code == 200
-    assert "<details" in resp.text
-    assert "Manual assign" in resp.text
+    # The assign form is present and uses the promoted class
+    assert "slot-assign-form" in resp.text
+    # The promoted select is visible without needing to open a <details>
+    assert 'name="participant_id"' in resp.text
 
 
 def test_reserve_panel_wrapped_in_details():
@@ -146,7 +172,7 @@ def test_readiness_sticky_class_present():
 
 
 def test_quick_fill_party_retains_btn_primary():
-    owner, ws, op = _make_locked_op_with_signup("ErgOwner7", "erg-qfill", "FillPlayer")
+    owner, ws, op = _make_planning_op_with_signup("ErgOwner7", "erg-qfill", "FillPlayer")
 
     client = TestClient(app)
     _login(client, "ErgOwner7")
@@ -218,7 +244,7 @@ def test_signup_card_shows_preferred_role():
 
 def test_manual_assign_form_post_target_preserved():
     """The manual assign form must still POST to the correct /slots/{id}/assign route."""
-    owner, ws, op = _make_locked_op_with_signup("ErgOwner11", "erg-post-target", "PostPlayer")
+    owner, ws, op = _make_planning_op_with_signup("ErgOwner11", "erg-post-target", "PostPlayer")
 
     client = TestClient(app)
     _login(client, "ErgOwner11")
@@ -230,7 +256,7 @@ def test_manual_assign_form_post_target_preserved():
 
 def test_quick_assign_form_post_target_preserved():
     """The quick-assign form must still POST to the correct /slots/{id}/quick-assign route."""
-    owner, ws, op = _make_locked_op_with_signup("ErgOwner12", "erg-qa-target", "QAPlayer")
+    owner, ws, op = _make_planning_op_with_signup("ErgOwner12", "erg-qa-target", "QAPlayer")
 
     client = TestClient(app)
     _login(client, "ErgOwner12")

@@ -1,0 +1,123 @@
+/* =========================================================
+   IronkeepV2 — Responsive
+   All @media overrides consolidated here.
+   Source @media blocks are preserved exactly from base.html;
+   no breakpoint behavior redesigned.
+
+   Breakpoints (desktop-first):
+     900px  — layout-two-col collapses
+     960px  — dashboard-grid collapses
+     960px+ — planner two-column grid (min-width)
+     768px  — tablet / compact laptop
+     480px  — phone / very narrow
+   ========================================================= */
+
+/* ─ Two-column content layout collapses (≤ 900px) ───────── */
+@media (max-width: 900px) {
+  .layout-two-col { grid-template-columns: 1fr; }
+}
+
+/* ─ Dashboard grid collapses (≤ 960px) ──────────────────── */
+@media (max-width: 960px) {
+  .dashboard-grid { grid-template-columns: 1fr; }
+}
+
+/* ─ Planner two-column layout activates (≥ 960px) ───────── */
+@media (min-width: 960px) {
+  .readiness-sticky { position: sticky; top: 3.5rem; z-index: 10; }
+  .planner-columns {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: var(--space-4);
+    align-items: start;
+  }
+  .planner-col--left,
+  .planner-col--right { max-height: 72vh; overflow-y: auto; }
+}
+
+/* ─ Tablet / compact laptop (≤ 768px) ───────────────────── */
+@media (max-width: 768px) {
+  /* Narrow page horizontal padding */
+  .page { padding: 0 var(--space-3); }
+
+  /* Card content padding — gains content space on narrower viewports */
+  .card-body   { padding: var(--space-3); }
+  .card-header { padding: var(--space-2) var(--space-3); }
+  .card--compact .card-body,
+  .card--compact .card-header { padding: var(--space-2); }
+
+  /* Summary metrics strip — tighter minimum tile width */
+  .summary-metrics {
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: var(--space-2);
+  }
+  .metric-card { padding: var(--space-2) var(--space-3); }
+  .metric-card__value { font-size: 1.25rem; }
+
+  /* Attention items: allow flex wrap at narrow widths */
+  .attention-item {
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    align-items: flex-start;
+  }
+  .attention-item__count { padding-top: 0.15em; }
+  .attention-item .btn {
+    margin-left: calc(2rem + var(--space-2));
+    flex-shrink: 0;
+  }
+
+  /* All-clear state: allow text wrap on narrow screens */
+  .all-clear-state { flex-wrap: wrap; gap: var(--space-1) var(--space-2); }
+
+  /* Workspace nav: reduce per-tab padding */
+  .workspace-nav a { padding: 0.5rem 0.75rem; }
+
+  /* Operations table: enforce a minimum width for the table-wrap overflow scroll */
+  .data-table { min-width: 540px; }
+
+  /* Long text protection */
+  .op-title-cell,
+  .attention-item__body strong {
+    overflow-wrap: break-word;
+    word-break: break-word;
+  }
+
+  /* Touch targets: raise minimum interactive height */
+  .btn       { min-height: 38px; }
+  .btn-sm    { min-height: 34px; }
+  .btn-ghost { min-height: 34px; }
+
+  /* Slot card grid: tighter min-width at tablet width */
+  .slot-card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  }
+}
+
+/* ─ Phone / very narrow (≤ 480px) ───────────────────────── */
+@media (max-width: 480px) {
+  /* Further-reduced page padding and top margin */
+  .page { padding: 0 var(--space-2); margin-top: var(--space-4); }
+
+  /* Page title: reduce at phone width */
+  h1 { font-size: 1.2rem; }
+
+  /* Summary metrics: single column at phone width */
+  .summary-metrics { grid-template-columns: 1fr; }
+  .metric-card { padding: var(--space-3); }
+  .metric-card__value { font-size: 1.5rem; }
+
+  /* Slot card grid: 2-column fixed layout at phone width */
+  .slot-card-grid { grid-template-columns: repeat(2, 1fr); gap: var(--space-2); }
+
+  /* Workspace nav: minimal tab footprint on phone */
+  .workspace-nav { padding: 0 var(--space-2); }
+  .workspace-nav a { padding: 0.4rem 0.5rem; font-size: 0.8rem; }
+
+  /* Sidebar: tighter inter-card and inter-button gaps */
+  .sidebar-panel { gap: var(--space-3); }
+  .action-group  { gap: var(--space-1); }
+
+  /* Continuation hints: slightly smaller to avoid dominating narrow rows */
+  .op-next-step { font-size: 0.7rem; }
+}

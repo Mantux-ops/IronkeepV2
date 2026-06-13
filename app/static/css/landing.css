@@ -1,0 +1,1213 @@
+/* =========================================================
+   IronkeepV2 — Landing Page
+   Phase 1: structural layout primitives.
+   Phase 2: visual foundation — surfaces, section rhythm,
+            nav/footer chrome, typography scale, showcase
+            placeholder frames, responsive overrides.
+   Phase 3: tactical showcase composition — hero grid,
+            planner slot cards, composition list, workflow
+            step content, Discord embed mock, readiness
+            panel, differentiation grid, FAQ accordion.
+   ========================================================= */
+
+/* ── Full-width public shell containers ───────────────────
+   These element-level selectors are safe to use broadly:
+   landing.css is loaded exclusively by base_public.html.
+   No authenticated app pages load this file, so the rules
+   cannot bleed into the operational shell.           ──── */
+
+body > header {
+  background: var(--nav-bg);
+  border-bottom: 1px solid var(--nav-border);
+  width: 100%;
+}
+
+body > footer {
+  background: var(--nav-bg);
+  border-top: 1px solid var(--nav-border);
+  width: 100%;
+}
+
+/* ── Landing section margin reset ─────────────────────────
+   base.css applies section { margin-bottom: var(--space-5) }
+   globally. Landing sections control their own vertical rhythm
+   via padding-block and border-top separators.        ──── */
+
+.landing-page section {
+  margin-bottom: 0;
+}
+
+/* ── Page wrapper ─────────────────────────────────────── */
+/* Phase 8.8 Slice 2 — Public surface ambient layer.
+   landing.css is loaded exclusively by base_public.html, so this
+   ambient gradient is completely isolated from authenticated surfaces.
+   The top-centre glow is stronger than the body layer (6% vs 4%) —
+   public surfaces can breathe more than operational admin pages.
+   The gradient does NOT scroll (position: fixed via background-attachment)
+   on body, but here it scrolls with the content, so it concentrates
+   the warmth in the hero/top section as the user first arrives.       */
+
+.landing-page {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  width: 100%;
+  background-image:
+    radial-gradient(ellipse 90% 55% at 50% 0%, rgba(88, 166, 255, 0.06) 0%, transparent 65%);
+}
+
+/* ── Minimal public navigation ────────────────────────── */
+
+.landing-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  max-width: var(--max-width-wide);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+  padding-block: var(--space-3);
+}
+
+/* Override base.css link colour inside the public nav */
+.landing-nav a {
+  color: var(--nav-muted);
+  font-size: var(--text-base);
+  text-decoration: none;
+}
+
+.landing-nav a:hover { color: var(--nav-text); text-decoration: none; }
+
+.landing-nav a:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.landing-nav .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-weight: 700;
+  font-size: var(--text-md);
+  color: var(--nav-text);
+  letter-spacing: -0.01em;
+}
+.landing-nav .brand-mark { flex-shrink: 0; }
+
+.landing-nav .brand:hover { color: var(--nav-text); }
+
+/* ── Standard section container ───────────────────────── */
+
+.landing-section {
+  width: 100%;
+  max-width: var(--max-width);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+  padding-block: var(--space-6);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Hero section ─────────────────────────────────────── */
+/* Phase 8.8 Slice 2: hero section has a secondary bottom-diffuse
+   gradient that fades the ambient glow into the section below it.
+   This creates a soft "beacon" from the top rather than an abrupt
+   colour boundary between hero and content sections.              */
+
+.landing-hero {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-5);
+  width: 100%;
+  max-width: var(--max-width-wide);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+  padding-block: calc(var(--space-6) * 2);
+  background-image:
+    radial-gradient(ellipse 70% 80% at 50% 50%, rgba(88, 166, 255, 0.03) 0%, transparent 75%);
+}
+
+/* Hero headline — uses the existing --text-2xl token (2rem / 32px).
+   tokens.css describes it as "reserved for large KPI displays";
+   the hero headline qualifies: it is the largest display element
+   on the public page. No new token required.          ──── */
+.landing-hero h1 {
+  font-size: var(--text-2xl);
+  line-height: 1.15;
+  font-weight: 700;
+  max-width: 40ch;
+}
+
+/* Hero subheadline — muted, comfortable reading width */
+.landing-hero > p {
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  max-width: 56ch;
+}
+
+/* ── Call-to-action block ─────────────────────────────── */
+
+.landing-cta {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-4);
+  padding-block: var(--space-5) 0;
+  text-align: left;
+  width: 100%;
+}
+
+/* ── Tactical showcase container ──────────────────────── */
+
+.landing-showcase {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: 100%;
+}
+
+/* Placeholder frame — establishes visible height so the section
+   reads as a content-ready zone before showcase data is added.
+   min-height will grow with real content in Phase 3.   ──── */
+.landing-showcase__visual {
+  position: relative;
+  width: 100%;
+  min-height: 300px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.landing-showcase__annotation {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ── Two-column feature layout ────────────────────────── */
+
+.landing-feature {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-6);
+  align-items: start;
+  width: 100%;
+}
+
+/* Reversed: visual-right / text-left */
+.landing-feature--reversed > :first-child { order: 2; }
+.landing-feature--reversed > :last-child  { order: 1; }
+
+/* Text column structural container */
+.landing-feature__text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+/* ── Operational workflow flow diagram ────────────────── */
+
+.landing-flow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  align-items: flex-start;
+  width: 100%;
+}
+
+/* Individual step frame — placeholder surface until Phase 3 adds copy */
+.landing-flow__step {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  flex: 1;
+  min-width: 120px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ── FAQ accordion ────────────────────────────────────── */
+
+.landing-faq {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  width: 100%;
+}
+
+/* Item border pre-defined so Phase 4 <details> items inherit
+   the correct frame without template changes.         ──── */
+.landing-faq__item {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+/* ── Footer inner layout ──────────────────────────────── */
+
+.landing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  width: 100%;
+  max-width: var(--max-width-wide);
+  margin-inline: auto;
+  padding-inline: var(--space-5);
+  padding-block: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+}
+
+.landing-footer .brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  font-weight: 700;
+  color: var(--nav-text);
+  font-size: var(--text-base);
+  letter-spacing: -0.01em;
+  text-decoration: none;
+}
+.landing-footer .brand-mark { flex-shrink: 0; opacity: 0.8; }
+
+.landing-footer .brand:hover { color: var(--nav-text); text-decoration: none; }
+
+/* ── Responsive overrides ─────────────────────────────── */
+/* Landing-page-specific breakpoints. Global breakpoints
+   for shared components remain in responsive.css.     ──── */
+
+@media (max-width: 1024px) {
+  .landing-hero {
+    padding-block: var(--space-6);
+  }
+}
+
+@media (max-width: 768px) {
+  /* Feature columns stack on mobile */
+  .landing-feature {
+    grid-template-columns: 1fr;
+  }
+  .landing-feature--reversed > :first-child { order: unset; }
+  .landing-feature--reversed > :last-child  { order: unset; }
+
+  .landing-hero {
+    padding-inline: var(--space-4);
+    padding-block: var(--space-5);
+  }
+
+  .landing-section {
+    padding-inline: var(--space-4);
+    padding-block: var(--space-5);
+  }
+
+  .landing-nav {
+    padding-inline: var(--space-4);
+  }
+
+  .landing-footer {
+    padding-inline: var(--space-4);
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Reduce hero headline at smallest viewports */
+  .landing-hero h1 {
+    font-size: var(--text-xl);
+  }
+}
+
+/* =========================================================
+   Phase 3 — Tactical Showcase Composition
+   ========================================================= */
+
+/* ── Hero: 2-column grid layout ──────────────────────────── */
+
+.ls-hero-layout {
+  display: grid;
+  grid-template-columns: 1.1fr 0.9fr;
+  gap: var(--space-6);
+  align-items: center;
+  width: 100%;
+}
+
+.ls-hero-text {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+/* Subheadline is now inside .ls-hero-text rather than a direct child of
+   .landing-hero — override the Phase 2 direct-child rule. */
+.ls-hero-text p {
+  color: var(--text-muted);
+  font-size: var(--text-lg);
+  max-width: 56ch;
+}
+
+/* CTA block now holds real buttons — switch to row layout */
+.landing-cta {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  padding-block: var(--space-4) 0;
+}
+
+.ls-hero-visual {
+  display: flex;
+  justify-content: flex-start;
+}
+
+/* ── Section lead paragraph ───────────────────────────────── */
+
+.ls-section-lead {
+  color: var(--text-muted);
+  font-size: var(--text-md);
+  max-width: 72ch;
+  margin-bottom: var(--space-4);
+}
+
+/* ── Hero status card (mini operation overview) ──────────── */
+
+.ls-status-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  width: 100%;
+}
+
+.ls-status-card__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.ls-status-card__title {
+  font-weight: 600;
+  font-size: var(--text-base);
+  color: var(--text);
+}
+
+.ls-status-badge {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  padding: 2px var(--space-2);
+  border-radius: var(--radius-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.ls-status-badge--planning {
+  background: var(--plan-bg);
+  color: var(--plan-text);
+  border: 1px solid var(--plan-border);
+}
+
+.ls-status-card__body {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.ls-status-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  font-size: var(--text-sm);
+}
+
+.ls-status-row__label {
+  color: var(--text-muted);
+}
+
+.ls-status-row__value {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ls-status-row__value--warn {
+  color: var(--warning);
+}
+
+/* Slot fill progress bar */
+.ls-fill-bar {
+  height: 4px;
+  background: var(--surface-3);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.ls-fill-bar__fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+}
+
+.ls-fill-bar__fill--warn {
+  background: var(--warning);
+}
+
+/* ── Role tally strip ────────────────────────────────────── */
+
+.ls-tally {
+  display: flex;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+}
+
+.ls-tally--inline {
+  gap: var(--space-2);
+}
+
+.ls-tally__item {
+  display: flex;
+  align-items: baseline;
+  gap: 1px;
+}
+
+.ls-tally__label {
+  font-weight: 800;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.ls-tally__label--tank    { color: var(--role-tank); }
+.ls-tally__label--healer  { color: var(--role-healer); }
+.ls-tally__label--dps     { color: var(--role-dps); }
+.ls-tally__label--support { color: var(--role-support); }
+
+.ls-tally__count {
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* ── Gap / warning badges ────────────────────────────────── */
+
+.ls-gap-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid;
+  white-space: nowrap;
+}
+
+.ls-gap-badge--warn {
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border-color: var(--warning-border);
+}
+
+.ls-gap-badge--crit {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+/* ── Tactical planner showcase surface ───────────────────── */
+
+/* Strip the Phase 2 placeholder frame when real planner content fills it */
+.ls-showcase-override {
+  min-height: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+}
+
+.ls-planner {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.ls-comp-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.ls-comp-header__name {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.ls-comp-header__meta {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.ls-parties {
+  display: flex;
+  flex-direction: column;
+}
+
+.ls-party {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+
+.ls-party:last-child {
+  border-bottom: none;
+}
+
+.ls-party__header {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  flex-wrap: wrap;
+}
+
+.ls-party__header--warn { color: var(--warning); }
+.ls-party__header--crit { color: var(--danger); }
+
+.ls-party__slots {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: var(--space-1);
+}
+
+/* Base slot card */
+.ls-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-1) var(--space-2);
+  border: 1px solid var(--border);
+  border-top: 2px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  min-height: 56px;
+}
+
+/* Role-colored top border */
+.ls-slot[data-role="tank"]    { border-top-color: var(--role-tank); }
+.ls-slot[data-role="healer"]  { border-top-color: var(--role-healer); }
+.ls-slot[data-role="dps"]     { border-top-color: var(--role-dps); }
+.ls-slot[data-role="support"] { border-top-color: var(--role-support); }
+
+/* Unfilled slot — role defined, no player */
+.ls-slot--open {
+  opacity: 0.6;
+}
+
+/* Priority slot unfilled — officer attention required */
+.ls-slot--open-core {
+  background: var(--warning-bg);
+  border-color: var(--warning-border);
+  border-top-color: var(--warning) !important;
+  opacity: 1;
+}
+
+/* Critical gap — no build defined at all */
+.ls-slot--critical {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+  border-top-color: var(--danger) !important;
+}
+
+.ls-slot__role {
+  font-size: 0.65rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+.ls-slot__build {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ls-slot--open .ls-slot__build,
+.ls-slot--open-core .ls-slot__build,
+.ls-slot--critical .ls-slot__build {
+  color: var(--text-faint);
+  font-style: italic;
+  font-weight: 400;
+}
+
+.ls-slot__player {
+  font-size: 0.7rem;
+  color: var(--success);
+  font-weight: 500;
+}
+
+.ls-party__summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  margin-top: var(--space-2);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+/* Composition overview bar at the bottom of the planner surface */
+.ls-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border-top: 1px solid var(--border);
+  font-size: var(--text-xs);
+}
+
+.ls-overview__label {
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.ls-overview__value {
+  color: var(--text);
+}
+
+.ls-overview__fill {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+/* ── Composition library mini list ───────────────────────── */
+
+.ls-comp-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  font-size: var(--text-sm);
+}
+
+.ls-comp-list__header {
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+}
+
+.ls-comp-list__row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.ls-comp-list__row:last-child {
+  border-bottom: none;
+}
+
+.ls-comp-list__row--active {
+  background: var(--surface-2);
+}
+
+.ls-comp-list__name {
+  font-weight: 600;
+  color: var(--text);
+  flex: 1;
+}
+
+.ls-comp-list__meta {
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+}
+
+.ls-badge {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  padding: 1px var(--space-2);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  background: var(--surface-3);
+}
+
+.ls-badge--active {
+  background: var(--success-bg);
+  color: var(--success-text);
+  border-color: var(--success-border);
+}
+
+/* ── Workflow flow step content ───────────────────────────── */
+
+.ls-flow-step__number {
+  font-size: var(--text-xs);
+  font-weight: 800;
+  color: var(--accent);
+  letter-spacing: 0.1em;
+}
+
+.ls-flow-step__label {
+  font-size: var(--text-md);
+  font-weight: 700;
+  color: var(--text);
+}
+
+.ls-flow-step__desc {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  line-height: 1.55;
+}
+
+/* ── Discord embed mock ──────────────────────────────────── */
+
+.ls-discord-embed {
+  display: flex;
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--discord-embed-bg);
+  border: 1px solid var(--discord-embed-border);
+  font-size: var(--text-sm);
+}
+
+.ls-discord-embed__accent {
+  /* Discord brand blurple — intentional, not mapped to IronkeepV2 tokens */
+  width: 4px;
+  background: #5865f2;
+  flex-shrink: 0;
+}
+
+.ls-discord-embed__content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-3) var(--space-4);
+  color: var(--discord-embed-text);
+}
+
+.ls-discord-embed__title {
+  font-weight: 700;
+  color: var(--discord-embed-text);
+  font-size: var(--text-base);
+}
+
+.ls-discord-embed__field {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.ls-discord-embed__field-label {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  color: var(--discord-embed-text);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.ls-discord-embed__field-value {
+  color: var(--discord-embed-muted);
+  font-size: var(--text-sm);
+}
+
+.ls-discord-embed__fields {
+  display: grid;
+  grid-template-columns: repeat(3, auto);
+  gap: var(--space-3) var(--space-4);
+}
+
+.ls-discord-embed__footer {
+  font-size: var(--text-xs);
+  color: var(--discord-embed-footer);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--discord-embed-sep);
+  margin-top: var(--space-1);
+}
+
+/* ── Readiness state rows ────────────────────────────────── */
+
+.ls-readiness-panel {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.ls-readiness-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  font-size: var(--text-sm);
+}
+
+.ls-readiness-row__indicator {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.ls-readiness-row--ok    .ls-readiness-row__indicator { background: var(--success); }
+.ls-readiness-row--warn  .ls-readiness-row__indicator { background: var(--warning); }
+.ls-readiness-row--crit  .ls-readiness-row__indicator { background: var(--danger); }
+.ls-readiness-row--empty .ls-readiness-row__indicator { background: var(--text-faint); }
+
+.ls-readiness-row--ok    { border-left: 3px solid var(--success-border); }
+.ls-readiness-row--warn  { border-left: 3px solid var(--warning-border); }
+.ls-readiness-row--crit  { border-left: 3px solid var(--danger-border); }
+.ls-readiness-row--empty { border-left: 3px solid var(--border-strong); }
+
+.ls-readiness-row__label {
+  color: var(--text);
+}
+
+/* ── Tactical differentiation grid ───────────────────────── */
+
+.ls-diff-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--space-4);
+  width: 100%;
+}
+
+.ls-diff-item {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+  padding: var(--space-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+}
+
+.ls-diff-item__label {
+  font-weight: 700;
+  color: var(--text);
+  font-size: var(--text-base);
+}
+
+.ls-diff-item__text {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.6;
+}
+
+/* ── FAQ accordion ───────────────────────────────────────── */
+
+.ls-faq__summary {
+  display: block;
+  padding: var(--space-3) var(--space-4);
+  font-weight: 600;
+  color: var(--text);
+  font-size: var(--text-base);
+  cursor: pointer;
+  list-style: none;
+}
+
+.ls-faq__summary::-webkit-details-marker { display: none; }
+
+.ls-faq__summary::before {
+  content: "▶";
+  font-size: 0.6rem;
+  color: var(--text-faint);
+  margin-right: var(--space-2);
+  display: inline-block;
+}
+
+details[open] > .ls-faq__summary::before {
+  content: "▼";
+}
+
+.ls-faq__answer {
+  padding: var(--space-3) var(--space-4) var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+.ls-faq__answer p {
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  line-height: 1.7;
+  margin: 0;
+}
+
+/* =========================================================
+   Phase 4 — Content Refinement & Information Hierarchy
+   ========================================================= */
+
+/* ── Section h2 visual hierarchy ─────────────────────────── */
+/* Establish a consistent typographic anchor for every section heading.
+   base.css sets h2 globally; this override is scoped to .landing-section
+   so it cannot affect the authenticated app shell.                     */
+
+.landing-section h2 {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  max-width: 48ch;
+  margin-bottom: var(--space-3);
+}
+
+/* ── Eyebrow label — page scanability ────────────────────── */
+/* A small uppercase category label above each h2 lets visitors scan
+   the full page structure in ~2 seconds without reading body copy. */
+
+.ls-section-eyebrow {
+  font-size: var(--text-xs);
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  margin-bottom: var(--space-2);
+}
+
+/* ── Trust strip — restrained credibility signals ─────────── */
+
+.ls-trust-strip {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+  letter-spacing: 0.02em;
+  margin-top: var(--space-2);
+  padding-top: var(--space-1);
+}
+
+/* ── Hover states — restrained interactivity ─────────────── */
+
+.ls-diff-item {
+  transition: background-color 0.12s, border-color 0.12s;
+}
+
+.ls-diff-item:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+}
+
+.ls-faq__summary {
+  transition: background-color 0.1s;
+}
+
+.ls-faq__summary:hover {
+  background: var(--surface-2);
+}
+
+/* =========================================================
+   Phase 5 — Polish, Accessibility & Production Readiness
+   ========================================================= */
+
+/* ── Skip link — keyboard bypass navigation ──────────────── */
+/* Rendered by base_public.html. Visually hidden off-screen until
+   focused, then slides into view. This is the most critical
+   accessibility fix: without it, keyboard users cannot bypass nav. */
+
+.skip-link {
+  position: absolute;
+  top: var(--space-2);
+  left: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--surface-2);
+  color: var(--accent);
+  font-weight: 700;
+  font-size: var(--text-sm);
+  border: 2px solid var(--accent);
+  border-radius: var(--radius);
+  text-decoration: none;
+  z-index: 1000;
+  /* Off-screen until focused — transform avoids display:none so
+     :focus-visible transitions work and the element stays in tab order. */
+  transform: translateY(-300%);
+  transition: transform 0.1s;
+}
+
+.skip-link:focus-visible {
+  transform: translateY(0);
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+/* ── Trust strip specificity fix ─────────────────────────── */
+/* Phase 3's .ls-hero-text p (specificity 0,1,1) inadvertently
+   overrides .ls-trust-strip (0,1,0). This more-specific selector
+   restores the intended xs/faint presentation for the trust strip. */
+
+.ls-hero-text > .ls-trust-strip {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* ── FAQ summary: touch target hardening ─────────────────── */
+/* WCAG 2.5.5 — min 44px touch target. Current padding+font yields
+   ~38px; min-height + flex centering closes the gap.
+   display: flex is safe here since native marker is already hidden
+   via list-style: none and ::-webkit-details-marker.             */
+
+.ls-faq__summary {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+}
+
+/* ── FAQ item: border-radius clip ────────────────────────── */
+/* Ensures the rounded corners clip the expanded answer content. */
+
+.landing-faq__item {
+  overflow: hidden;
+}
+
+/* ── Showcase visual padding/centering utilities ─────────── */
+/* Replaces inline style="" attributes on landing.html's visual
+   containers for Sections 3 and 5 — production cleanliness.   */
+
+.ls-showcase-padded {
+  padding: var(--space-4);
+}
+
+.ls-showcase-centered {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+/* ── Footer sub-label ─────────────────────────────────────── */
+
+.ls-footer-sub {
+  font-size: var(--text-xs);
+  color: var(--text-faint);
+}
+
+/* ── Smooth scroll (respects prefers-reduced-motion) ─────── */
+
+@media (prefers-reduced-motion: no-preference) {
+  html {
+    scroll-behavior: smooth;
+  }
+}
+
+/* ── Reduced motion: disable all landing transitions ─────── */
+/* WCAG 2.3.3 Animation from Interactions.
+   Every transition on this public shell must be suppressible.  */
+
+@media (prefers-reduced-motion: reduce) {
+  .skip-link,
+  .ls-diff-item,
+  .ls-faq__summary {
+    transition: none;
+  }
+  html {
+    scroll-behavior: auto;
+  }
+  /* Skip link must still appear on focus even without animation */
+  .skip-link:focus-visible {
+    transform: translateY(0);
+  }
+}
+
+/* ── Phase 5 responsive overrides ────────────────────────── */
+
+/* Fix hero visual stacking order: text must appear before the status
+   card when the hero collapses to a single column at ≤1024px.
+   Phase 3 set order: -1 (card first); Phase 5 resets it.        */
+@media (max-width: 1024px) {
+  .ls-hero-visual {
+    order: 0;
+  }
+}
+
+/* 390px — narrowest supported mobile viewport (iPhone SE / compact Android).
+   Tighten padding, reduce typographic scale one step, keep showcase legible. */
+@media (max-width: 390px) {
+  .landing-hero {
+    padding-block: var(--space-5) var(--space-4);
+  }
+  .landing-hero h1 {
+    font-size: var(--text-xl);
+  }
+  /* Subheadline text readable at narrow widths */
+  .ls-hero-text p {
+    font-size: var(--text-md);
+  }
+  /* Trust strip keeps xs (protected by more-specific .ls-hero-text > .ls-trust-strip) */
+  .landing-section {
+    padding-inline: var(--space-3);
+    padding-block: var(--space-4);
+  }
+  .landing-nav {
+    padding-inline: var(--space-3);
+  }
+  .landing-footer {
+    padding-inline: var(--space-3);
+  }
+}
+
+/* ── Phase 3 responsive overrides ────────────────────────── */
+
+@media (max-width: 1024px) {
+  .ls-hero-layout {
+    grid-template-columns: 1fr;
+  }
+  /* Phase 5 overrides .ls-hero-visual { order: -1 } set here — see above. */
+}
+
+@media (max-width: 768px) {
+  .ls-hero-layout {
+    gap: var(--space-4);
+  }
+  .ls-party__slots {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .ls-diff-grid {
+    grid-template-columns: 1fr;
+  }
+  .landing-cta {
+    flex-wrap: wrap;
+  }
+  .ls-discord-embed__fields {
+    grid-template-columns: repeat(2, auto);
+  }
+}
+
+@media (max-width: 480px) {
+  .ls-party__slots {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .ls-status-card__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+  .ls-discord-embed__fields {
+    grid-template-columns: 1fr;
+  }
+}

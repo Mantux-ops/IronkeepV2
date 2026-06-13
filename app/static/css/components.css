@@ -1,0 +1,471 @@
+/* =========================================================
+   IronkeepV2 — Components
+   Cards, alerts, badges, buttons, timeline, Discord embed,
+   operation tabs, account components, auth card.
+   ========================================================= */
+
+/* ── Cards and panels ──────────────────────────────────── */
+/* Phase 8.8 Slice 2: --radius-card (8px) and --shadow-card add slight depth
+   over the previous --radius (6px) / --shadow. The difference is intentionally
+   subtle — 2px of radius and a richer shadow. This does cascade to planner
+   structural panels (readiness sticky, party panels), where the change is
+   visually imperceptible but architecturally consistent.                   */
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--space-4);
+}
+.card-header {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  border-radius: var(--radius-card) var(--radius-card) 0 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+.card-header h2, .card-header h3 { margin: 0; }
+.card-body { padding: var(--space-4); }
+
+.panel-muted {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-3);
+}
+.party-panel { margin-bottom: var(--space-4); }
+.party-panel__header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+/* ── Alerts ────────────────────────────────────────────── */
+.alert {
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-base);
+  border: 1px solid transparent;
+  line-height: 1.5;
+}
+.alert-error   { background: var(--danger-bg);  border-color: var(--danger-border);  color: var(--danger-text); }
+.alert-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+.alert-info    { background: var(--info-bg);    border-color: var(--info-border);    color: var(--info-text); }
+.alert-warning { background: var(--warning-bg); border-color: var(--warning-border); color: var(--warning-text); }
+
+/* ── Empty state ───────────────────────────────────────── */
+/* Consistent treatment for "nothing here yet" across all surfaces.
+   Used as <p class="empty-state"> or <div class="empty-state">.
+   Deliberately understated — operational empty states are anomalies
+   to be resolved, not moments to decorate.                     */
+.empty-state {
+  padding: var(--space-4) var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  text-align: center;
+}
+.empty-state a { color: var(--accent); }
+
+/* Inline hint line rendered below an alert's main message.
+   Inherits the alert's color; slightly muted opacity for visual hierarchy. */
+.comp-integrity-hint {
+  display: block;
+  font-size: var(--text-sm);
+  opacity: 0.8;
+  margin-top: 0.15rem;
+}
+
+/* Continuation link below the integrity warning block.
+   Low-prominence secondary action — never competes with primary CTAs. */
+.comp-integrity-action {
+  font-size: var(--text-sm);
+  margin: var(--space-1) 0 0;
+}
+
+/* Wrapper for the integrity warning block — controls bottom spacing. */
+.comp-integrity-warnings {
+  margin-bottom: var(--space-3);
+}
+
+/* ── Badges ────────────────────────────────────────────── */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.7rem;      /* deliberate: badge micro-density, not on --text-* scale */
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  border: 1px solid transparent;
+  white-space: nowrap;
+}
+
+/* Operation / readiness status */
+.badge-ready     { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.badge-forming   { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+.badge-not_ready { background: var(--danger-bg);  color: var(--danger-text);  border-color: var(--danger-border); }
+
+/* Operation lifecycle */
+.badge-draft     { background: var(--surface-2); color: var(--text-muted);  border-color: var(--border); }
+.badge-planning  { background: var(--info-bg);   color: var(--info-text);   border-color: var(--info-border); }
+.badge-locked    { background: var(--info-bg); color: var(--info-text); border-color: var(--info-border); }
+.badge-completed { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.badge-archived  { background: var(--surface-2); color: var(--text-faint);  border-color: var(--border); }
+
+/* Signup / slot states */
+.badge-open     { background: var(--info-bg);    color: var(--info-text);    border-color: var(--info-border); }
+.badge-closed   { background: var(--surface-2);  color: var(--text-muted);   border-color: var(--border); }
+.badge-assigned { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.badge-core     { background: var(--core-bg);    color: var(--core-text);    border-color: var(--core-border); }
+.badge-normal   { background: var(--surface-2);  color: var(--text-muted);   border-color: var(--border); }
+
+/* Attendance */
+.badge-present { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.badge-late    { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+.badge-absent  { background: var(--danger-bg);  color: var(--danger-text);  border-color: var(--danger-border); }
+.badge-no_show { background: var(--surface-2);  color: var(--text-muted);   border-color: var(--border); }
+.badge-excused { background: var(--info-bg);    color: var(--info-text);    border-color: var(--info-border); }
+
+/* Auth provider */
+.badge-dev     { background: var(--surface-2);           color: var(--text-muted);         border-color: var(--border); }
+.badge-discord { background: var(--discord-badge-bg);    color: var(--discord-badge-text);  border-color: var(--discord-badge-border); }
+
+/* Specialty role */
+.badge-scout   { background: var(--info-bg);         color: var(--info-text);    border-color: var(--info-border); }
+.badge-support { background: var(--teal-support-bg); color: var(--teal-text);    border-color: var(--teal-border); }
+
+/* Timeline group */
+.badge-lifecycle   { background: var(--info-bg);        color: var(--info-text);    border-color: var(--info-border); }
+.badge-plan        { background: var(--plan-bg);         color: var(--plan-text);    border-color: var(--plan-border); }
+.badge-signups     { background: var(--teal-signups-bg); color: var(--teal-text);    border-color: var(--teal-border); }
+.badge-assignments { background: var(--warning-bg);      color: var(--warning-text); border-color: var(--warning-border); }
+.badge-readiness   { background: var(--success-bg);      color: var(--success-text); border-color: var(--success-border); }
+.badge-attendance  { background: var(--attend-bg);       color: var(--attend-text);  border-color: var(--attend-border); }
+.badge-other       { background: var(--surface-2);       color: var(--text-muted);   border-color: var(--border); }
+
+/* Scheduler run status */
+.badge-success { background: var(--success-bg); color: var(--success-text); border-color: var(--success-border); }
+.badge-error   { background: var(--danger-bg);  color: var(--danger-text);  border-color: var(--danger-border); }
+.badge-running { background: var(--info-bg);    color: var(--info-text);    border-color: var(--info-border); }
+.badge-stuck   { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); font-style: italic; }
+.badge-warning { background: var(--warning-bg); color: var(--warning-text); border-color: var(--warning-border); }
+
+/* ── Buttons ───────────────────────────────────────────── */
+button, .btn, input[type="submit"] {
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-3);
+  cursor: pointer;
+  font-size: var(--text-base);
+  font-weight: 500;
+  text-decoration: none;
+  color: var(--text);
+  display: inline-block;
+  transition: background .12s, border-color .12s, color .12s;
+  line-height: 1.4;
+}
+button:hover, .btn:hover, input[type="submit"]:hover {
+  background: var(--surface-2);
+  border-color: var(--border-strong);
+  text-decoration: none;
+}
+button:focus-visible, .btn:focus-visible, input[type="submit"]:focus-visible {
+  outline: none;
+  box-shadow: var(--shadow-focus);
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);           /* #0d1117 === --bg */
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn-primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--bg); }
+
+.btn-danger { background: var(--danger-bg); color: var(--danger-text); border-color: var(--danger-border); }
+.btn-danger:hover { background: var(--danger); color: #fff; border-color: var(--danger); }
+
+.btn-sm { padding: 0.22rem 0.6rem; font-size: 0.8125rem; } /* deliberate: slightly smaller than --text-base */
+
+/* Lifecycle action buttons */
+.btn-publish  { background: var(--accent-dim); color: var(--accent); border-color: #1c3a68; } /* deliberate: accent-dim border, one-off shade */
+.btn-publish:hover  { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+.btn-lock     { background: var(--warning-bg); color: var(--warning); border-color: var(--warning-border); }
+.btn-lock:hover     { background: var(--warning); color: var(--bg); border-color: var(--warning); }
+.btn-complete { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+.btn-complete:hover { background: var(--success); color: var(--bg); border-color: var(--success); }
+.btn-archive  { background: var(--surface-2); color: var(--text-muted); border-color: var(--border); }
+.btn-archive:hover  { background: var(--surface-3); color: var(--text); }
+
+/* btn-secondary: secondary interactive action — accent-tinted outline style */
+.btn-secondary {
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-color: var(--info-border);
+}
+.btn-secondary:hover { background: var(--accent); color: var(--bg); border-color: var(--accent); }
+
+/* btn-muted: lowest-priority action — recedes but stays clickable */
+.btn-muted {
+  background: var(--surface-2);
+  color: var(--text-muted);
+  border-color: var(--border);
+}
+.btn-muted:hover { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
+
+/* btn-discord: Discord OAuth entry point — sized for auth page prominence */
+.btn-discord {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  font-size: var(--text-md);
+  padding: 0.6rem 1.4rem;
+  background: var(--accent);
+  color: var(--bg);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.btn-discord:hover { background: var(--accent-hover); border-color: var(--accent-hover); color: var(--bg); text-decoration: none; }
+
+/* btn-discord--sm: secondary Discord OAuth button (dev mode) */
+.btn-discord--sm {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+/* btn-ghost: sidebar admin actions that visually recede */
+.btn-ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-muted);
+  font-size: 0.8125rem;  /* deliberate: slightly smaller than --text-base */
+  padding: 0.25rem 0.5rem;
+}
+.btn-ghost:hover,
+.btn-ghost:focus-visible {
+  background: var(--surface-2);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+/* ── Flash messages ────────────────────────────────────── */
+/* .flash / .flash-* is a secondary message API used on account and auth
+   pages. It is visually identical to .alert / .alert-* but kept as a
+   separate class name because those templates predate flash_messages.html. */
+.flash         { padding: 0.6rem 0.9rem; border-radius: var(--radius); margin-bottom: var(--space-3); font-size: var(--text-base); border: 1px solid transparent; line-height: 1.5; }
+.flash-error   { background: var(--danger-bg);  border-color: var(--danger-border);  color: var(--danger-text); }
+.flash-success { background: var(--success-bg); border-color: var(--success-border); color: var(--success-text); }
+
+/* ── Card section ──────────────────────────────────────── */
+/* card-section: a visual sub-section inside a .card-body, separated from
+   the content above by a top border. Used for secondary/contextual info
+   blocks that belong in the same card but need a clear visual break. */
+.card-section {
+  margin-top: var(--space-5);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border);
+}
+
+/* ── Detail list ───────────────────────────────────────── */
+/* detail-list: labelled metadata dl, similar to kv-list but used for
+   configuration/settings context where keys have slightly more weight. */
+.detail-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0; }
+.detail-list dt { color: var(--text-muted); font-size: var(--text-sm); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; }
+.detail-list dd { margin: 0; }
+
+/* ── Auth card ─────────────────────────────────────────── */
+/* Phase 8.8 Slice 2: auth card centred with top margin for login
+   on the public shell. Shadow lifted so it reads as elevated above
+   the ambient background rather than sitting flat on it.          */
+.auth-card {
+  max-width: 480px;
+  margin: var(--space-6) auto;
+  box-shadow: var(--shadow-md);
+}
+.auth-card h1 { margin-bottom: var(--space-2); }
+.auth-card .page-meta { margin-bottom: var(--space-4); }
+
+/* ── Discord embed mock ────────────────────────────────── */
+.discord-embed {
+  border-left: 4px solid var(--discord-embed-border);
+  background: var(--discord-embed-bg);
+  color: var(--discord-embed-text);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-3);
+  font-size: var(--text-base);
+  max-width: 520px;
+}
+.discord-embed__title { font-weight: 700; font-size: var(--text-md); color: #fff; margin-bottom: var(--space-1); }
+.discord-embed__description { color: var(--discord-embed-muted); font-size: var(--text-base); margin-bottom: var(--space-2); }
+.discord-embed__fields { display: flex; flex-wrap: wrap; gap: var(--space-2); margin-bottom: var(--space-2); }
+.discord-embed__field { min-width: 120px; }
+.discord-embed__field--block { flex-basis: 100%; }
+.discord-embed__field-name  { font-size: 0.78rem; font-weight: 700; color: #fff; margin-bottom: 2px; } /* deliberate: Discord density */
+.discord-embed__field-value { font-size: var(--text-base); color: var(--discord-embed-text); }
+.discord-embed__footer { font-size: 0.78rem; color: var(--discord-embed-footer); border-top: 1px solid var(--discord-embed-sep); padding-top: var(--space-1); margin-top: var(--space-2); } /* deliberate: Discord density */
+.discord-preview-target { font-size: 0.8125rem; color: var(--text-muted); margin-top: var(--space-1); } /* deliberate: slightly smaller than base */
+
+/* ── Operation tabs ────────────────────────────────────── */
+.op-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0 0 var(--space-4);
+  border-bottom: 2px solid var(--border);
+  flex-wrap: wrap;
+}
+.op-tabs a {
+  padding: 0.5rem 1rem;
+  text-decoration: none;
+  color: var(--text-muted);
+  font-size: var(--text-base);
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  transition: color .12s, border-color .12s;
+}
+.op-tabs a.active {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+  font-weight: 600;
+}
+.op-tabs a:hover:not(.active) { color: var(--text); text-decoration: none; }
+.op-tabs a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* ── Disclosure / details focus ────────────────────────── */
+/* summary:focus-visible: keyboard focus ring for all <details> disclosures.
+   Desktop-app density is intentional; the ring matches button focus. */
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* ── Timeline ──────────────────────────────────────────── */
+.timeline-list { list-style: none; margin: 0; padding: 0; }
+.timeline-entry {
+  display: grid;
+  grid-template-columns: 8.5rem 1fr;
+  gap: 0 var(--space-3);
+  padding: var(--space-2) 0;
+  border-bottom: 1px solid var(--border);
+  align-items: start;
+}
+.timeline-entry:last-child { border-bottom: none; }
+.timeline-time  { font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; padding-top: 0.15em; font-variant-numeric: tabular-nums; }
+.timeline-body  { min-width: 0; }
+.timeline-label { font-size: var(--text-md); font-weight: 500; display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.timeline-meta  { font-size: var(--text-sm); color: var(--text-muted); margin-top: 0.15rem; }
+.timeline-payload { margin-top: var(--space-1); font-size: 0.78rem; } /* deliberate: timeline density */
+.timeline-payload summary { cursor: pointer; color: var(--text-muted); user-select: none; }
+.timeline-payload pre {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2);
+  margin: var(--space-1) 0 0;
+  overflow-x: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 0.78rem;   /* deliberate: pre-block density */
+  color: var(--text-muted);
+}
+
+/* ── Collapsible Discord preview panels ─────────────────── */
+details.discord-preview-details {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin-bottom: var(--space-4);
+}
+details.discord-preview-details > summary {
+  list-style: none;
+  cursor: pointer;
+  user-select: none;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface-2);
+  border-radius: var(--radius) var(--radius) 0 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+details.discord-preview-details > summary::-webkit-details-marker { display: none; }
+details.discord-preview-details > summary::marker { display: none; }
+details.discord-preview-details > summary::before {
+  content: '▶';
+  font-size: 0.6rem;  /* deliberate: structural chevron, not body text */
+  color: var(--text-muted);
+  transition: transform 0.15s;
+  flex-shrink: 0;
+}
+details.discord-preview-details[open] > summary::before { transform: rotate(90deg); }
+details.discord-preview-details[open] > summary { border-bottom: 1px solid var(--border); }
+details.discord-preview-details > summary h2 { margin: 0; font-size: var(--text-lg); display: inline; }
+
+/* ── Operation status accent ───────────────────────────── */
+main { --op-status-accent: transparent; }
+main[data-op-status="draft"]     { --op-status-accent: var(--border-strong); }
+main[data-op-status="planning"]  { --op-status-accent: var(--accent); }
+main[data-op-status="locked"]    { --op-status-accent: var(--info); }
+main[data-op-status="completed"] { --op-status-accent: var(--success); }
+main[data-op-status="archived"]  { --op-status-accent: var(--border); }
+.operation-tabs { border-top: 3px solid var(--op-status-accent); }
+
+/* ── Account page components ───────────────────────────── */
+.kv-list { display: grid; grid-template-columns: max-content 1fr; gap: 0.3rem 1rem; margin: 0 0 0.5rem; }
+.kv-list dt { color: var(--text-muted); font-size: 0.85rem; }  /* deliberate: between --text-xs and --text-base */
+.kv-list dd { margin: 0; }
+
+.identity-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.5rem; }
+.identity-row  { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 0; border-bottom: 1px solid var(--border); }
+.identity-row:last-child { border-bottom: none; }
+.identity-pid  { font-family: ui-monospace, monospace; font-size: var(--text-sm); color: var(--text-muted); }
+
+/* Discord name display */
+.discord-name       { display: inline; }
+.discord-name__id   { font-family: ui-monospace, monospace; font-size: 0.85em; color: var(--text-muted); }  /* em: relative to parent */
+.discord-name__stale{ font-size: 0.75em; color: var(--text-faint); }  /* em: relative to parent */
+
+/* ── Signup share block ────────────────────────────────── */
+/* Read-only URL input + copy button used on the operation detail page. */
+.signup-share-block {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  margin-top: var(--space-3);
+}
+.signup-share-label {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+.signup-share-url {
+  font-family: ui-monospace, "Cascadia Code", "Fira Code", monospace;
+  font-size: var(--text-sm);
+  flex: 1;
+  min-width: 0;
+  padding: 0.25rem var(--space-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  cursor: text;
+}
+
+/* ── Reliability score indicators ─────────────────────── */
+.rel-score        { font-size: var(--text-xs); font-weight: 700; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.rel-score.rel-green { color: var(--success); }
+.rel-score.rel-amber { color: var(--warning); }
+.rel-score.rel-red   { color: var(--danger-text); }

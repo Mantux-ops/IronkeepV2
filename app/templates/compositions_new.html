@@ -20,7 +20,36 @@
 
 <div class="card">
   <div class="card-body">
+    {% if cloned_from_name %}
+    <p class="form-hint hint-neutral" style="margin-bottom:var(--space-4)">
+      Starting from <strong>{{ cloned_from_name }}</strong> — edit the name, adjust the slots, then save to create a new composition.
+    </p>
+    {% else %}
+    <p class="form-hint" style="margin-bottom:var(--space-4)">
+      A composition defines the parties, roles, and builds for an operation.
+      Once created, attach it to an operation to generate roster slots and begin
+      assigning players in the Tactical Planner.
+    </p>
+    {% endif %}
     <form method="post" action="/workspaces/{{ workspace.slug }}/compositions" class="wide-form">
+
+      {# Build-name and weapon-name datalists — sourced from previously used slot template values.
+         Placed once here; referenced by list= on all build_name / weapon_name inputs on this page,
+         including JS-generated slot cards. #}
+      <datalist id="build-name-list">
+        {% for n in build_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
+      </datalist>
+      <datalist id="weapon-name-list">
+        {% for n in weapon_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
+      </datalist>
+      {# Role family suggestions — Tank, Healer, DPS, Support are the four Ironkeep doctrine families.
+         Healer is a distinct family from Support; do not use "Support" for healer builds. #}
+      <datalist id="role-list">
+        <option value="Tank">
+        <option value="Healer">
+        <option value="DPS">
+        <option value="Support">
+      </datalist>
 
       <div class="form-group" style="max-width:560px">
         <label for="name">Composition name</label>
@@ -34,86 +63,589 @@
                   placeholder="Standard 5-man ZvZ comp">{{ prev_description }}</textarea>
       </div>
 
-      <h2>Slot templates</h2>
+      <h2>Tactical roles</h2>
       <p class="form-hint">
-        Each row is a slot template. Party number groups slots into parties.
-        Role and Build name are required. Empty rows are skipped.
+        Each card defines one tactical slot. Group cards into parties using Party # — Role and Build name are required per card.
+        <span style="display:block;margin-top:0.25rem;color:var(--text-faint)">
+          After saving, each card becomes one slot in the tactical layout preview, ordered by Party # then Slot #.
+          Role determines the tactical family (tank, healer, dps…); Build name appears on the card.
+          Weapon is optional. Both can be updated after creation.
+        </span>
+        <span style="display:block;margin-top:0.4rem;color:var(--text-faint)">
+          Slots can be added after saving. A card is only saved when both role and build name are filled in.
+        </span>
       </p>
 
-      <div class="table-wrap">
-        <table class="slot-table data-table">
-          <thead>
-            <tr>
-              <th>Party #</th>
-              <th>Slot #</th>
-              <th>Role <em>*</em></th>
-              <th>Build name <em>*</em></th>
-              <th>Weapon <em>(opt)</em></th>
-              <th>Priority</th>
-              <th></th>
-            </tr>
-          </thead>
-          <tbody id="slots-body">
-            {% for i in range(1, 6) %}
-            <tr class="slot-row">
-              <td><input type="number" name="party_number" value="1" min="1"></td>
-              <td><input type="number" name="slot_index" value="{{ i }}" min="1"></td>
-              <td><input type="text" name="role" placeholder="e.g. Healer"></td>
-              <td><input type="text" name="build_name" placeholder="e.g. Hallowfall"></td>
-              <td><input type="text" name="weapon_name" placeholder="e.g. Hallowfall"></td>
-              <td>
-                <select name="priority">
-                  <option value="normal">normal</option>
-                  <option value="core">core</option>
-                </select>
-              </td>
-              <td>
-                <button type="button" class="btn btn-sm btn-danger"
-                        onclick="this.closest('tr').remove()">✕</button>
-              </td>
-            </tr>
-            {% endfor %}
-          </tbody>
-        </table>
-      </div>
+      {# ── Slot card editor ────────────────────────────────────────────────── #}
+      <div class="cb-composition-editor" id="cb-composition-editor">
 
-      <div class="action-bar">
-        <button type="button" class="btn" onclick="addSlotRow()">+ Add Slot</button>
-      </div>
+        <div class="cb-parties-grid" id="cb-parties-grid">
 
-      <div class="action-bar" style="margin-top:1rem">
+          {# Error re-render: show pre-filled party groups from prev_parties #}
+          {% if prev_parties %}
+
+          {% for party_num in prev_parties | sort %}
+          {% set party_slots = prev_parties[party_num] %}
+          {% set ps = prev_party_summaries[party_num] if prev_party_summaries and party_num in prev_party_summaries else none %}
+
+          <section class="cb-party-group" data-party="{{ party_num }}" aria-label="Party {{ party_num }}">
+            <div class="cb-party-header">
+              <h3 class="cb-party-header__title">Party {{ party_num }}</h3>
+              {% if ps %}
+              <span class="cb-party-header__tally" id="party-{{ party_num }}-tally">
+                {%- set ns = namespace(first=true) -%}
+                {%- for fam, label in [('tank','T'),('healer','H'),('dps','D'),('support','S'),('ranged','R')] -%}
+                {%- if ps.tally[fam] > 0 -%}
+                {%- if not ns.first %}<span class="cb-tally-sep">·</span>{% endif -%}
+                <span class="cb-tally-item" data-role="{{ fam }}">{{ ps.tally[fam] }}{{ label }}</span>
+                {%- set ns.first = false -%}
+                {%- endif -%}
+                {%- endfor -%}
+              </span>
+              {% else %}
+              <span class="cb-party-header__tally" id="party-{{ party_num }}-tally"></span>
+              {% endif %}
+              <span class="cb-party-header__count" id="party-{{ party_num }}-count">
+                {{ party_slots | length }} slot{{ 's' if party_slots | length != 1 }}
+              </span>
+            </div>
+
+            <div class="cb-slot-cards" id="party-{{ party_num }}-cards">
+              {% for slot in party_slots %}
+              {%- set has_build = (slot.build_name | trim | length > 0) if slot.build_name else false -%}
+              {%- set has_role  = (slot.role | trim | length > 0) if slot.role else false -%}
+              {%- if not has_role -%}
+                {%- set card_state = 'critical' -%}
+              {%- elif not has_build -%}
+                {%- set card_state = 'open' -%}
+              {%- elif slot.priority == 'core' -%}
+                {%- set card_state = 'core' -%}
+              {%- else -%}
+                {%- set card_state = 'assigned' -%}
+              {%- endif -%}
+              <div class="cb-slot-card cb-slot-card--{{ card_state }}"
+                   data-role="{{ slot.role_family if slot.role_family else 'default' }}"
+                   data-priority="{{ slot.priority if slot.priority else 'normal' }}">
+                <div class="cb-slot-card__header">
+                  <input type="text" name="doctrine_role" value="{{ slot.doctrine_role or '' }}"
+                         class="cb-slot-doctrine-role-input"
+                         placeholder="Doctrine (e.g. Main Caller)"
+                         autocomplete="off"
+                         aria-label="Doctrine role for slot {{ loop.index }} in party {{ party_num }}">
+                  <input type="text" name="role" value="{{ slot.role or '' }}"
+                         class="cb-slot-role-input"
+                         placeholder="Role (e.g. Healer)"
+                         list="role-list"
+                         autocomplete="off"
+                         aria-label="Role for slot {{ loop.index }} in party {{ party_num }}">
+                  <div class="cb-slot-card__badges" aria-hidden="true">
+                    {% if slot.priority == 'core' %}
+                    <span class="cb-badge cb-badge--core">CORE</span>
+                    {% endif %}
+                    {% if not has_build %}
+                    <span class="cb-badge cb-badge--open">OPEN</span>
+                    {% endif %}
+                  </div>
+                </div>
+                <div class="cb-slot-card__body">
+                  {# Build library selector — Phase 3 inline build attachment #}
+                  {% if workspace_builds %}
+                  <select name="albion_build_id"
+                          class="cb-slot-build-select"
+                          aria-label="Select from build library">
+                    <option value="">— Select from library —</option>
+                    {% for b in workspace_builds %}
+                    <option value="{{ b.id }}"
+                            data-name="{{ b.name }}"
+                            data-weapon="{{ b.weapon_name or '' }}"
+                            {% if slot.albion_build_id == b.id %}selected{% endif %}>
+                      {{ b.name }}{% if b.role %} · {{ b.role }}{% endif %}
+                    </option>
+                    {% endfor %}
+                  </select>
+                  {% else %}
+                  <input type="hidden" name="albion_build_id" value="">
+                  {% endif %}
+                  <input type="text" name="build_name" value="{{ slot.build_name or '' }}"
+                         class="cb-slot-build-input"
+                         placeholder="Build name"
+                         list="build-name-list"
+                         autocomplete="off"
+                         aria-label="Build name">
+                  <input type="text" name="weapon_name" value="{{ slot.weapon_name or '' }}"
+                         class="cb-slot-weapon-input"
+                         placeholder="Weapon (optional)"
+                         list="weapon-name-list"
+                         autocomplete="off"
+                         aria-label="Weapon">
+                </div>
+                <div class="cb-slot-card__footer">
+                  <span class="cb-slot-card__meta">
+                    <label class="cb-meta-label">P<input type="number" name="party_number"
+                             value="{{ slot.party_number }}" min="1"
+                             class="cb-slot-num-input"
+                             aria-label="Party number"></label>
+                    <label class="cb-meta-label">#<input type="number" name="slot_index"
+                             value="{{ slot.slot_index }}" min="1"
+                             class="cb-slot-num-input"
+                             aria-label="Slot index"></label>
+                    <select name="priority" class="cb-slot-priority-select" aria-label="Priority">
+                      <option value="normal"{% if slot.priority != 'core' %} selected{% endif %}>normal</option>
+                      <option value="core"{% if slot.priority == 'core' %} selected{% endif %}>core</option>
+                    </select>
+                  </span>
+                  <span class="cb-slot-quick-actions">
+                    <button type="button" class="btn btn-sm cb-slot-dup-btn"
+                            onclick="duplicateSlotCard(this)"
+                            aria-label="Duplicate this slot">⧉ Dup</button>
+                    <button type="button" class="btn btn-sm cb-slot-clear-btn"
+                            onclick="clearSlotBuild(this)"
+                            aria-label="Clear build from this slot">Clear</button>
+                    <button type="button" class="btn btn-sm btn-danger cb-slot-remove"
+                            onclick="removeSlotCard(this)"
+                            aria-label="Remove this slot">✕</button>
+                  </span>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <div class="cb-party-actions">
+              <button type="button" class="btn btn-sm"
+                      onclick="addSlotToParty({{ party_num }})">+ Add slot</button>
+            </div>
+          </section>
+          {% endfor %}
+
+          {% else %}
+
+          {# Initial load: default Party 1 with 5 blank cards — no-JS fallback #}
+          <section class="cb-party-group" data-party="1" aria-label="Party 1">
+            <div class="cb-party-header">
+              <h3 class="cb-party-header__title">Party 1</h3>
+              <span class="cb-party-header__tally" id="party-1-tally"></span>
+              <span class="cb-party-header__count" id="party-1-count">5 slots</span>
+            </div>
+
+            <div class="cb-slot-cards" id="party-1-cards">
+              {% for i in range(1, 6) %}
+              <div class="cb-slot-card cb-slot-card--open" data-role="default" data-priority="normal">
+                <div class="cb-slot-card__header">
+                  <input type="text" name="doctrine_role" value=""
+                         class="cb-slot-doctrine-role-input"
+                         placeholder="Doctrine (e.g. Main Caller)"
+                         autocomplete="off"
+                         aria-label="Doctrine role for slot {{ i }} in party 1">
+                  <input type="text" name="role" value=""
+                         class="cb-slot-role-input"
+                         placeholder="Role (e.g. Healer)"
+                         autocomplete="off"
+                         aria-label="Role for slot {{ i }} in party 1">
+                  <div class="cb-slot-card__badges" aria-hidden="true">
+                    <span class="cb-badge cb-badge--open">OPEN</span>
+                  </div>
+                </div>
+                <div class="cb-slot-card__body">
+                  {# Build library selector — blank initial card #}
+                  {% if workspace_builds %}
+                  <select name="albion_build_id"
+                          class="cb-slot-build-select"
+                          aria-label="Select from build library">
+                    <option value="">— Select from library —</option>
+                    {% for b in workspace_builds %}
+                    <option value="{{ b.id }}"
+                            data-name="{{ b.name }}"
+                            data-weapon="{{ b.weapon_name or '' }}">
+                      {{ b.name }}{% if b.role %} · {{ b.role }}{% endif %}
+                    </option>
+                    {% endfor %}
+                  </select>
+                  {% else %}
+                  <input type="hidden" name="albion_build_id" value="">
+                  {% endif %}
+                  <input type="text" name="build_name" value=""
+                         class="cb-slot-build-input"
+                         placeholder="Build name"
+                         list="build-name-list"
+                         autocomplete="off"
+                         aria-label="Build name">
+                  <input type="text" name="weapon_name" value=""
+                         class="cb-slot-weapon-input"
+                         placeholder="Weapon (optional)"
+                         list="weapon-name-list"
+                         autocomplete="off"
+                         aria-label="Weapon">
+                </div>
+                <div class="cb-slot-card__footer">
+                  <span class="cb-slot-card__meta">
+                    <label class="cb-meta-label">P<input type="number" name="party_number"
+                             value="1" min="1"
+                             class="cb-slot-num-input"
+                             aria-label="Party number"></label>
+                    <label class="cb-meta-label">#<input type="number" name="slot_index"
+                             value="{{ i }}" min="1"
+                             class="cb-slot-num-input"
+                             aria-label="Slot index"></label>
+                    <select name="priority" class="cb-slot-priority-select" aria-label="Priority">
+                      <option value="normal" selected>normal</option>
+                      <option value="core">core</option>
+                    </select>
+                  </span>
+                  <span class="cb-slot-quick-actions">
+                    <button type="button" class="btn btn-sm cb-slot-dup-btn"
+                            onclick="duplicateSlotCard(this)"
+                            aria-label="Duplicate this slot">⧉ Dup</button>
+                    <button type="button" class="btn btn-sm cb-slot-clear-btn"
+                            onclick="clearSlotBuild(this)"
+                            aria-label="Clear build from this slot">Clear</button>
+                    <button type="button" class="btn btn-sm btn-danger cb-slot-remove"
+                            onclick="removeSlotCard(this)"
+                            aria-label="Remove this slot">✕</button>
+                  </span>
+                </div>
+              </div>
+              {% endfor %}
+            </div>
+
+            <div class="cb-party-actions">
+              <button type="button" class="btn btn-sm"
+                      onclick="addSlotToParty(1)">+ Add slot</button>
+            </div>
+          </section>
+
+          {% endif %}
+
+        </div>{# /.cb-parties-grid #}
+
+        <div class="cb-editor-actions">
+          <button type="button" class="btn" id="cb-add-party-btn"
+                  onclick="addNewParty()">+ New party</button>
+        </div>
+
+      </div>{# /.cb-composition-editor #}
+
+      <div class="action-bar" style="margin-top:var(--space-4)">
         <input type="submit" value="Create Composition" class="btn btn-primary">
         <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">Cancel</a>
       </div>
+
     </form>
   </div>
 </div>
 
+{# ── Creation preview / placeholder ──────────────────────────────────────────
+   When prev_slots is populated (failed-validation re-render), show a compact
+   structural summary so officers can verify their entries before correcting and
+   resubmitting. On initial load the placeholder is shown instead.
+   Integrity warning hints are suppressed here — they reference party badges that
+   only exist on the detail page. Messages only are shown.
+   ──────────────────────────────────────────────────────────────────────────── #}
+{% if prev_slots %}
+<div class="card comp-creation-preview" style="margin-top:var(--space-4)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Slot structure from your entries</h3>
+    <p class="text-muted" style="font-size:var(--text-sm);margin-bottom:var(--space-2)">
+      {{ prev_slots | length }} slot{{ 's' if prev_slots | length != 1 }}
+      across {{ prev_party_count }} part{{ 'ies' if prev_party_count != 1 else 'y' }}.
+      This is what the tactical preview will show after saving.
+    </p>
+    {% if prev_comp_summary %}
+    <div class="comp-overview" style="margin-bottom:var(--space-2)">
+      <span class="role-tally">
+        <span class="role-tally__item{% if prev_comp_summary.tally.tank == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ prev_comp_summary.tally.tank }}</strong></span>
+        <span class="role-tally__item{% if prev_comp_summary.tally.healer == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ prev_comp_summary.tally.healer }}</strong></span>
+        <span class="role-tally__item{% if prev_comp_summary.tally.dps == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ prev_comp_summary.tally.dps }}</strong></span>
+        <span class="role-tally__item{% if prev_comp_summary.tally.support == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ prev_comp_summary.tally.support }}</strong></span>
+        <span class="role-tally__item{% if prev_comp_summary.tally.ranged == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ prev_comp_summary.tally.ranged }}</strong></span>
+      </span>
+    </div>
+    {% endif %}
+    {# Integrity warnings — messages only (no hints — hint copy references party badges
+       that only appear in the composition detail view, not here). #}
+    {% if prev_integrity_warnings %}
+    <div class="comp-integrity-warnings" style="margin-bottom:0">
+      {% for w in prev_integrity_warnings %}
+      <div class="alert alert-{{ 'error' if w.severity == 'critical' else w.severity }}" style="margin-bottom:var(--space-1)">{{ w.message }}</div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+{# Initial load: quiet placeholder — does not compete with the form. #}
+<p class="text-muted comp-creation-placeholder">
+  Tactical preview appears after save. Each slot card becomes one entry in the
+  composition layout, grouped by Party #.
+</p>
+{% endif %}
+
 <script>
-function addSlotRow() {
-  const tbody = document.getElementById('slots-body');
-  const nextIndex = tbody.rows.length + 1;
-  const tr = document.createElement('tr');
-  tr.className = 'slot-row';
-  tr.innerHTML = `
-    <td><input type="number" name="party_number" value="1" min="1"></td>
-    <td><input type="number" name="slot_index" value="${nextIndex}" min="1"></td>
-    <td><input type="text" name="role" placeholder="e.g. DPS"></td>
-    <td><input type="text" name="build_name" placeholder="e.g. Bow"></td>
-    <td><input type="text" name="weapon_name" placeholder="e.g. Warbow"></td>
-    <td>
-      <select name="priority">
-        <option value="normal">normal</option>
-        <option value="core">core</option>
-      </select>
-    </td>
-    <td>
-      <button type="button" class="btn btn-sm btn-danger"
-              onclick="this.closest('tr').remove()">✕</button>
-    </td>
-  `;
-  tbody.appendChild(tr);
-  tr.querySelector('input[name="role"]').focus();
+/* ── Composition Builder JS — Phase 3 Inline Build Selection ───────────────
+   Progressive enhancement only.  The form submits without JS.
+   ────────────────────────────────────────────────────────────────────────── */
+
+var WORKSPACE_BUILDS = {{ workspace_builds | tojson if workspace_builds else '[]' }};
+
+function addSlotToParty(partyNum) {
+  var container = document.getElementById('party-' + partyNum + '-cards');
+  if (!container) return;
+  var nextIndex = container.querySelectorAll('.cb-slot-card').length + 1;
+  var card = _createSlotCard(partyNum, nextIndex);
+  container.appendChild(card);
+  card.querySelector('.cb-slot-role-input').focus();
+  _updatePartyCount(partyNum);
+}
+
+function addNewParty() {
+  var grid = document.getElementById('cb-parties-grid');
+  if (!grid) return;
+  var groups = grid.querySelectorAll('.cb-party-group');
+  var maxParty = 0;
+  groups.forEach(function(g) {
+    var p = parseInt(g.dataset.party, 10) || 0;
+    if (p > maxParty) maxParty = p;
+  });
+  var newPartyNum = maxParty + 1;
+  var group = _createPartyGroup(newPartyNum);
+  grid.appendChild(group);
+  addSlotToParty(newPartyNum);
+}
+
+function removeSlotCard(btn) {
+  var card = btn.closest('.cb-slot-card');
+  var group = card ? card.closest('.cb-party-group') : null;
+  if (card) card.remove();
+  if (group) {
+    var partyNum = parseInt(group.dataset.party, 10);
+    _updatePartyCount(partyNum);
+  }
+}
+
+function duplicateSlotCard(btn) {
+  var card  = btn.closest('.cb-slot-card');
+  var group = card ? card.closest('.cb-party-group') : null;
+  if (!card || !group) return;
+  var partyNum  = parseInt(group.dataset.party, 10);
+  var container = document.getElementById('party-' + partyNum + '-cards');
+  if (!container) return;
+  var maxIdx = 0;
+  container.querySelectorAll('.cb-slot-num-input[aria-label="Slot index"]').forEach(function(inp) {
+    var v = parseInt(inp.value, 10) || 0;
+    if (v > maxIdx) maxIdx = v;
+  });
+  var clone = card.cloneNode(true);
+  var idxInput = clone.querySelector('.cb-slot-num-input[aria-label="Slot index"]');
+  if (idxInput) idxInput.value = maxIdx + 1;
+  card.parentNode.insertBefore(clone, card.nextSibling);
+  _updatePartyCount(partyNum);
+  _hideNoSlotsNotice();
+  var focusTarget = clone.querySelector('.cb-slot-doctrine-role-input') ||
+                    clone.querySelector('.cb-slot-role-input');
+  if (focusTarget) focusTarget.focus();
+}
+
+function clearSlotBuild(btn) {
+  var card = btn.closest('.cb-slot-card');
+  if (!card) return;
+  var sel    = card.querySelector('select[name="albion_build_id"]');
+  var name   = card.querySelector('.cb-slot-build-input');
+  var weapon = card.querySelector('.cb-slot-weapon-input');
+  var doc    = card.querySelector('.cb-slot-doctrine-role-input');
+  if (sel)    sel.value    = '';
+  if (name)   name.value   = '';
+  if (weapon) weapon.value = '';
+  if (doc)    doc.value    = '';
+  card.classList.add('cb-slot-card--open');
+  var openBadge = card.querySelector('.cb-badge--open');
+  if (openBadge) openBadge.style.display = '';
+  var preview = card.querySelector('.cb-slot-doctrine-preview');
+  if (preview) { preview.innerHTML = ''; preview.setAttribute('aria-hidden', 'true'); }
+  if (name) name.focus();
+}
+
+function _buildSelectHtml() {
+  if (!WORKSPACE_BUILDS || !WORKSPACE_BUILDS.length) {
+    return '<input type="hidden" name="albion_build_id" value="">';
+  }
+  var opts = '<option value="">— Select from library —</option>';
+  WORKSPACE_BUILDS.forEach(function(b) {
+    var label = b.name + (b.role ? ' \u00b7 ' + b.role : '');
+    opts += '<option value="' + b.id + '"' +
+            ' data-name="' + (b.name || '').replace(/"/g, '&quot;') + '"' +
+            ' data-weapon="' + (b.weapon_name || '').replace(/"/g, '&quot;') + '"' +
+            ' data-doctrine="' + (b.doctrine_role || '').replace(/"/g, '&quot;') + '"' +
+            ' data-role="' + (b.role || '').replace(/"/g, '&quot;') + '">' +
+            label + '</option>';
+  });
+  return '<select name="albion_build_id" class="cb-slot-build-select"' +
+         ' aria-label="Select from build library">' + opts + '</select>';
+}
+
+function _createSlotCard(partyNum, slotIndex) {
+  var div = document.createElement('div');
+  div.className = 'cb-slot-card cb-slot-card--open';
+  div.dataset.role = 'default';
+  div.dataset.priority = 'normal';
+  div.innerHTML =
+    '<div class="cb-slot-card__header">' +
+      '<input type="text" name="doctrine_role" value=""' +
+             ' class="cb-slot-doctrine-role-input"' +
+             ' placeholder="Doctrine (e.g. Main Caller)"' +
+             ' autocomplete="off"' +
+             ' aria-label="Doctrine role">' +
+      '<input type="text" name="role" value=""' +
+             ' class="cb-slot-role-input"' +
+             ' placeholder="Role (e.g. Healer)"' +
+             ' list="role-list"' +
+             ' autocomplete="off"' +
+             ' aria-label="Role">' +
+      '<div class="cb-slot-card__badges" aria-hidden="true">' +
+        '<span class="cb-badge cb-badge--open">OPEN</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="cb-slot-card__body">' +
+      _buildSelectHtml() +
+      '<input type="text" name="build_name" value=""' +
+             ' class="cb-slot-build-input"' +
+             ' placeholder="Build name"' +
+             ' list="build-name-list"' +
+             ' autocomplete="off"' +
+             ' aria-label="Build name">' +
+      '<input type="text" name="weapon_name" value=""' +
+             ' class="cb-slot-weapon-input"' +
+             ' placeholder="Weapon (optional)"' +
+             ' list="weapon-name-list"' +
+             ' autocomplete="off"' +
+             ' aria-label="Weapon">' +
+    '</div>' +
+    '<div class="cb-slot-card__footer">' +
+      '<span class="cb-slot-card__meta">' +
+        '<label class="cb-meta-label">P<input type="number" name="party_number"' +
+                 ' value="' + partyNum + '" min="1"' +
+                 ' class="cb-slot-num-input"' +
+                 ' aria-label="Party number"></label>' +
+        '<label class="cb-meta-label">#<input type="number" name="slot_index"' +
+                 ' value="' + slotIndex + '" min="1"' +
+                 ' class="cb-slot-num-input"' +
+                 ' aria-label="Slot index"></label>' +
+        '<select name="priority" class="cb-slot-priority-select" aria-label="Priority">' +
+          '<option value="normal" selected>normal</option>' +
+          '<option value="core">core</option>' +
+        '</select>' +
+      '</span>' +
+      '<span class="cb-slot-quick-actions">' +
+        '<button type="button" class="btn btn-sm cb-slot-dup-btn"' +
+                ' onclick="duplicateSlotCard(this)"' +
+                ' aria-label="Duplicate this slot">\u29c9 Dup</button>' +
+        '<button type="button" class="btn btn-sm cb-slot-clear-btn"' +
+                ' onclick="clearSlotBuild(this)"' +
+                ' aria-label="Clear build from this slot">Clear</button>' +
+        '<button type="button" class="btn btn-sm btn-danger cb-slot-remove"' +
+                ' onclick="removeSlotCard(this)"' +
+                ' aria-label="Remove this slot">\u2715</button>' +
+      '</span>' +
+    '</div>';
+  return div;
+}
+
+function _createPartyGroup(partyNum) {
+  var section = document.createElement('section');
+  section.className = 'cb-party-group';
+  section.dataset.party = partyNum;
+  section.setAttribute('aria-label', 'Party ' + partyNum);
+  section.innerHTML =
+    '<div class="cb-party-header">' +
+      '<h3 class="cb-party-header__title">Party ' + partyNum + '</h3>' +
+      '<span class="cb-party-header__tally" id="party-' + partyNum + '-tally"></span>' +
+      '<span class="cb-party-header__count" id="party-' + partyNum + '-count">0 slots</span>' +
+    '</div>' +
+    '<div class="cb-slot-cards" id="party-' + partyNum + '-cards"></div>' +
+    '<div class="cb-party-actions">' +
+      '<button type="button" class="btn btn-sm"' +
+              ' onclick="addSlotToParty(' + partyNum + ')">+ Add slot</button>' +
+    '</div>';
+  return section;
+}
+
+function _updatePartyCount(partyNum) {
+  var countEl = document.getElementById('party-' + partyNum + '-count');
+  if (!countEl) return;
+  var cards = document.querySelectorAll('#party-' + partyNum + '-cards .cb-slot-card');
+  var n = cards.length;
+  countEl.textContent = n + (n === 1 ? ' slot' : ' slots');
+}
+
+document.addEventListener('input', function(e) {
+  if (e.target.classList.contains('cb-slot-role-input')) {
+    var card = e.target.closest('.cb-slot-card');
+    if (!card) return;
+    card.dataset.role = _getRoleFamily(e.target.value);
+  }
+  if (e.target.classList.contains('cb-slot-build-input')) {
+    var card = e.target.closest('.cb-slot-card');
+    if (!card) return;
+    var hasBuild = e.target.value.trim().length > 0;
+    card.classList.toggle('cb-slot-card--open', !hasBuild);
+    var openBadge = card.querySelector('.cb-badge--open');
+    if (openBadge) openBadge.style.display = hasBuild ? 'none' : '';
+  }
+});
+
+document.addEventListener('change', function(e) {
+  if (e.target.classList.contains('cb-slot-priority-select')) {
+    var card = e.target.closest('.cb-slot-card');
+    if (!card) return;
+    var isCore = e.target.value === 'core';
+    card.dataset.priority = e.target.value;
+    var coreBadge = card.querySelector('.cb-badge--core');
+    if (isCore && !coreBadge) {
+      coreBadge = document.createElement('span');
+      coreBadge.className = 'cb-badge cb-badge--core';
+      coreBadge.textContent = 'CORE';
+      var badgesDiv = card.querySelector('.cb-slot-card__badges');
+      if (badgesDiv) badgesDiv.prepend(coreBadge);
+    } else if (!isCore && coreBadge) {
+      coreBadge.remove();
+    }
+  }
+  if (e.target.classList.contains('cb-slot-build-select')) {
+    var card = e.target.closest('.cb-slot-card');
+    if (!card) return;
+    var opt = e.target.options[e.target.selectedIndex];
+    var buildName  = opt.dataset.name   || '';
+    var weaponName = opt.dataset.weapon || '';
+    var nameInput    = card.querySelector('.cb-slot-build-input');
+    var weaponInput  = card.querySelector('.cb-slot-weapon-input');
+    var docRoleInput = card.querySelector('.cb-slot-doctrine-role-input');
+    if (nameInput  && buildName)  nameInput.value  = buildName;
+    if (weaponInput)              weaponInput.value = weaponName;
+    var build = WORKSPACE_BUILDS && WORKSPACE_BUILDS.find(function(b) { return b.id === e.target.value; });
+    if (docRoleInput && build && !docRoleInput.value.trim()) {
+      docRoleInput.value = build.doctrine_role || '';
+    }
+    var roleInput = card.querySelector('.cb-slot-role-input');
+    if (roleInput && build && !roleInput.value.trim()) {
+      roleInput.value = build.role || '';
+      card.dataset.role = _getRoleFamily(roleInput.value);
+    }
+    if (nameInput) {
+      var hasBuild = nameInput.value.trim().length > 0 || !!buildName;
+      card.classList.toggle('cb-slot-card--open', !hasBuild);
+      var openBadge = card.querySelector('.cb-badge--open');
+      if (openBadge) openBadge.style.display = hasBuild ? 'none' : '';
+    }
+  }
+});
+
+function _getRoleFamily(role) {
+  if (!role) return 'default';
+  var r = role.toLowerCase();
+  if (/tank|front|brawl/.test(r))        return 'tank';
+  if (/heal/.test(r))                    return 'healer';
+  if (/support|util/.test(r))            return 'support';
+  if (/dps|melee|call|engage/.test(r))   return 'dps';
+  if (/ranged|bow|mage|frost/.test(r))   return 'ranged';
+  return 'default';
 }
 </script>
 {% endblock %}

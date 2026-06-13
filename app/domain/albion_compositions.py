@@ -59,9 +59,13 @@ def validate_slot_template(slot: dict) -> None:
 
 
 def validate_slot_templates(slots: list[dict]) -> None:
-    """Validate a full list of slot templates, including uniqueness of (party, index) pairs."""
-    if not slots:
-        raise ValidationError("A composition must have at least one slot template.")
+    """Validate a list of slot templates, including uniqueness of (party, index) pairs.
+
+    An empty list is valid — compositions may initially contain zero slot templates.
+    Per-slot validation (role, build_name, priority, party/slot indices) is enforced
+    for every slot that IS present.  Callers that need to forbid an empty replacement
+    (e.g. update_composition_slots) must add their own guard before calling this.
+    """
     for slot in slots:
         validate_slot_template(slot)
     seen: set[tuple[int, int]] = set()

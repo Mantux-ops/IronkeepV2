@@ -1,0 +1,170 @@
+/* =========================================================
+   IronkeepV2 — Design Tokens
+   Dark-theme native. Operational clarity first.
+   ========================================================= */
+
+:root {
+  /* Backgrounds — layered dark surface hierarchy */
+  --bg:        #0d1117;   /* page canvas */
+  --surface:   #161b22;   /* cards, panels */
+  --surface-2: #1c2128;   /* card headers, elevated */
+  --surface-3: #22272e;   /* hover, secondary panels */
+
+  /* Borders */
+  --border:        #30363d;   /* default dividers */
+  --border-strong: #484f58;   /* focus / active borders */
+
+  /* Typography — colour */
+  --text:       #e6edf3;   /* primary body */
+  --text-muted: #8b949e;   /* secondary / meta */
+  --text-faint: #484f58;   /* disabled, placeholder */
+
+  /* Typography — size scale (7 levels; desktop-first, rem-based)
+     Values are chosen to match existing usage clusters exactly so
+     that applying a token produces zero visual change.
+
+     Not every font-size in the app is on this scale — some sizes
+     (0.6rem arrows, 0.68rem slot-indices, 0.78rem tactical density,
+     0.8125rem compact forms, 0.9rem player names) are deliberate
+     density decisions and are intentionally NOT normalized here. */
+  --text-xs:   0.75rem;   /* 12px — metadata caps, sidebar labels, sched headers */
+  --text-sm:   0.8rem;    /* ~13px — secondary/muted text, table meta, compact cells */
+  --text-base: 0.875rem;  /* 14px — default component text (alerts, buttons, forms) */
+  --text-md:   0.9375rem; /* 15px — page body font-size, timeline labels */
+  --text-lg:   1.05rem;   /* ~17px — card sub-headings, stat values */
+  --text-xl:   1.5rem;    /* 24px — metric values, h1 */
+  --text-2xl:  2rem;      /* 32px — reserved for large KPI displays (no current use) */
+
+  /* Global navigation */
+  --nav-bg:     #010409;   /* top bar — deepest anchor */
+  --nav-text:   #e6edf3;
+  --nav-muted:  #8b949e;
+  --nav-border: #21262d;   /* nav bottom border — darker than --border for depth */
+
+  /* Accent — operational blue */
+  --accent:       #58a6ff;
+  --accent-hover: #79b8ff;
+  --accent-dim:   #1c2d47;   /* tinted background for accent highlights */
+
+  /* Semantic: Success */
+  --success:        #3fb950;
+  --success-bg:     #0a1f10;
+  --success-border: #1a4a28;
+  --success-text:   #3fb950;
+
+  /* Semantic: Warning */
+  --warning:        #d29922;
+  --warning-bg:     #1f1800;
+  --warning-border: #4a3a00;
+  --warning-text:   #d29922;
+
+  /* Semantic: Danger */
+  --danger:         #f85149;
+  --danger-hover:   #ff6e66;
+  --danger-bg:      #200e0e;
+  --danger-border:  #4a1818;
+  --danger-text:    #f85149;
+
+  /* Semantic: Info */
+  --info:        #58a6ff;
+  --info-bg:     #0c1a30;
+  --info-border: #1c3a68;
+  --info-text:   #58a6ff;
+
+  /* Legacy aliases kept for template compatibility */
+  --error-bg:     var(--danger-bg);
+  --error-border: var(--danger-border);
+  --error-text:   var(--danger-text);
+
+  /* Elevation */
+  --radius:      6px;
+  --radius-sm:   4px;    /* Phase 2 fix: was referenced but not defined */
+  --radius-lg:   10px;
+  --radius-card: 8px;    /* Phase 8.8 Slice 2: admin/public card radius — sits between --radius and --radius-lg */
+  --shadow:      0 1px 3px rgba(0,0,0,.55), 0 1px 2px rgba(0,0,0,.35);
+  --shadow-md:   0 4px 16px rgba(0,0,0,.65);
+  --shadow-card: 0 1px 4px rgba(0,0,0,.65), 0 2px 12px rgba(0,0,0,.35);  /* Phase 8.8 Slice 2: richer shadow for admin/public card depth */
+
+  /* Focus ring shadows — accent-tinted glow for keyboard navigation.
+     Two strengths: button/interactive (.25 alpha) and input/field (.15 alpha). */
+  --shadow-focus:    0 0 0 3px rgba(88, 166, 255, .25);  /* buttons, focus-visible */
+  --shadow-focus-sm: 0 0 0 3px rgba(88, 166, 255, .15);  /* inputs, textarea, select */
+
+  /* Spacing — 4-point base */
+  --space-1: 0.25rem;   /* 4px  */
+  --space-2: 0.5rem;    /* 8px  */
+  --space-3: 0.75rem;   /* 12px */
+  --space-4: 1rem;      /* 16px */
+  --space-5: 1.5rem;    /* 24px */
+  --space-6: 2rem;      /* 32px */
+
+  /* Layout */
+  --max-width-narrow: 760px;
+  --max-width:        1280px;
+  --max-width-wide:   1440px;
+
+  /* ── Tactical role families ────────────────────────────────────────────
+     Albion Online role color system. Used by:
+       - Planner slot cards (tactical.css, [data-role="*"])
+       - Build library cards (builds.css, [data-role="*"])
+       - Landing page showcase (landing.css, .ls-tally__label--*)
+     Colors are deliberately muted to avoid rainbow overload on dark bg.
+
+     CANONICAL role_family() values (from tactical.py):
+       tank | healer | support | dps | ranged | default
+
+     Display aliases (normalized by tactical.py before CSS is reached):
+       frontline → tank
+       melee     → dps
+
+     NEVER change these colors without updating ALL three CSS consumers.
+     Tests assert on class presence; color changes are invisible to tests. */
+  --role-tank:    #5b80a5;   /* steel blue    — frontline / tank     */
+  --role-healer:  #5a9e6a;   /* forest green  — healing              */
+  --role-support: #9375c0;   /* muted violet  — utility / CC         */
+  --role-dps:     #bf5050;   /* war red       — melee / engage / DPS */
+  --role-ranged:  #b89440;   /* amber gold    — ranged / mage        */
+  --role-default: #8b949e;   /* unclassified — no role_family match  */
+
+  /* Specialty semantic colors — badge variants and timeline group labels.
+     Each group defines a bg/text/border triplet used by exactly one badge class
+     (or shared between two closely related classes). Centralised here so color
+     updates affect all usages without hunting through component files. */
+
+  /* "Core" slot — gold tint, used for core-priority roster spots */
+  --core-bg:    #201800;
+  --core-text:  #d4a017;
+  --core-border: #4a3800;
+
+  /* "Plan" lifecycle badge — purple tint */
+  --plan-bg:    #1a0a30;
+  --plan-text:  #c084fc;
+  --plan-border: #3a1a68;
+
+  /* Teal — shared by badge-support and badge-signups.
+     bg differs slightly between the two (intentional). */
+  --teal-text:        #34c4a8;
+  --teal-border:      #1a4838;
+  --teal-support-bg:  #0a2018;
+  --teal-signups-bg:  #0a1f1a;
+
+  /* "Attendance" badge — orange tint */
+  --attend-bg:    #1f1000;
+  --attend-text:  #f0843a;
+  --attend-border: #4a2800;
+
+  /* Discord identity badge — Discord brand indigo */
+  --discord-badge-bg:     #1e2060;
+  --discord-badge-text:   #a5aaff;
+  --discord-badge-border: #3c4095;
+
+  /* Discord embed mock — mimics Discord's own dark-theme color palette.
+     These are intentionally NOT mapped to IronkeepV2 semantic tokens;
+     they exist to faithfully reproduce the Discord embed appearance. */
+  --discord-embed-bg:     #2b2d31;
+  --discord-embed-border: #4f545c;
+  --discord-embed-text:   #dbdee1;
+  --discord-embed-muted:  #b5bac1;
+  --discord-embed-footer: #80848e;
+  --discord-embed-sep:    #3f4147;
+}

@@ -163,6 +163,27 @@ _COLUMN_MIGRATIONS: list[str] = [
     # Payout ledger finalization — explicit paid timestamp and actor (Slice 42).
     "ALTER TABLE payout_ledger_entries ADD COLUMN paid_at         TEXT NULL",
     "ALTER TABLE payout_ledger_entries ADD COLUMN paid_by_user_id TEXT NULL",
+    # Phase 3: inline build management — reusable doctrine entity FK on slot templates.
+    "ALTER TABLE composition_slot_templates ADD COLUMN albion_build_id TEXT NULL REFERENCES albion_builds(id)",
+    # Phase 4: structured equipment doctrine — full loadout snapshot on slot templates and operation slots.
+    "ALTER TABLE composition_slot_templates ADD COLUMN offhand_name TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN head_name    TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN armor_name   TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN shoes_name   TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN cape_name    TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN food_name    TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN potion_name  TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN offhand_name TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN head_name    TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN armor_name   TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN shoes_name   TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN cape_name    TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN food_name    TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN potion_name  TEXT NULL",
+    # Tactical Doctrine Identity slice — battlefield role layer.
+    "ALTER TABLE albion_builds ADD COLUMN doctrine_role TEXT NULL",
+    "ALTER TABLE composition_slot_templates ADD COLUMN doctrine_role TEXT NULL",
+    "ALTER TABLE operation_slots ADD COLUMN doctrine_role TEXT NULL",
 ]
 
 

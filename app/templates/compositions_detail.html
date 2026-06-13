@@ -1,0 +1,464 @@
+{% extends "base.html" %}
+{% from "_doctrine_macros.html" import doctrine_summary %}
+{% block title %}{{ comp.name }} — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'compositions' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/compositions">Compositions</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">{{ comp.name }}</span>
+{% endblock %}
+
+{% block page_class %} page--wide{% endblock %}
+
+{% block content %}
+{% include "flash_messages.html" %}
+
+{# ── Page header: comp name + build coverage state + retire ───────────────── #}
+<header class="page-header">
+  <div class="page-header__main">
+    <h1>{{ comp.name }}</h1>
+    <p class="page-meta">
+      {{ comp_summary.total }} slot{{ 's' if comp_summary.total != 1 }}
+      &nbsp;·&nbsp;
+      {{ parties | length }} part{{ 'ies' if parties | length != 1 else 'y' }}
+      &nbsp;·&nbsp;
+      <span class="badge badge-{{ 'ready' if (comp_summary.built == comp_summary.total and comp_summary.total > 0) else 'forming' }}">
+        {{ comp_summary.built }}/{{ comp_summary.total }} built
+      </span>
+      {% if comp_summary.open_slots > 0 %}
+      &nbsp;·&nbsp;<span class="badge badge-warn comp-open-badge">{{ comp_summary.open_slots }} open</span>
+      {% endif %}
+      {% if comp_summary.open_core_slots > 0 %}
+      &nbsp;·&nbsp;<span class="comp-core-unfilled" aria-label="{{ comp_summary.open_core_slots }} core slot{{ 's' if comp_summary.open_core_slots != 1 }} unfilled">
+        {{ comp_summary.open_core_slots }} core unfilled
+      </span>
+      {% endif %}
+      {% if comp.deleted_at %}
+      &nbsp;·&nbsp;<span class="badge badge-archived">retired</span>
+      {% endif %}
+    </p>
+  </div>
+  {% if can_mutate %}
+  <div class="action-group action-group--compact">
+    {% if not comp.deleted_at %}
+    {# Primary edit action — in-place slot template editing #}
+    <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/edit"
+       class="btn btn-sm btn-primary">Edit Slots</a>
+    {% endif %}
+    {# Clone as variant: pre-fills name "Copy of …" for rapid variant creation #}
+    <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/clone"
+       class="btn btn-sm btn-secondary"
+       title="Clone this composition — start a new variant from these slots">Clone as Variant →</a>
+    {% if not comp.deleted_at %}
+    <span class="text-muted" style="font-size:0.8rem;align-self:center">
+      <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/clone?variant=Brawl" class="hint-link">Brawl</a>
+      &nbsp;·&nbsp;
+      <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/clone?variant=Kite" class="hint-link">Kite</a>
+      &nbsp;·&nbsp;
+      <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/clone?variant=Anti-Clap" class="hint-link">Anti-Clap</a>
+    </span>
+    {% endif %}
+    {% if not comp.deleted_at %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/retire"
+          class="inline-form"
+          onsubmit="return confirm('Retire {{ comp.name }}? Existing operations will not be affected.')">
+      <button type="submit" class="btn btn-sm btn-muted">Retire</button>
+    </form>
+    {% endif %}
+  </div>
+  {% endif %}
+</header>
+
+{% if comp.description %}
+<p class="text-muted" style="font-size:0.9rem;margin-bottom:var(--space-4)">{{ comp.description }}</p>
+{% endif %}
+
+{# ── Active operations using this composition ─────────────────────────────── #}
+{% if active_operations %}
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-header">
+    <h2>Active in {{ active_operations | length }} operation{{ 's' if active_operations | length != 1 }}</h2>
+  </div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Operation</th>
+            <th>Type</th>
+            <th>Scheduled</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for op in active_operations %}
+          <tr>
+            <td>
+              <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}">{{ op.title }}</a>
+            </td>
+            <td class="col-meta">{{ op.operation_type | upper }}</td>
+            <td class="col-meta">{{ op.scheduled_start_at[:10] }}</td>
+            <td><span class="badge badge-{{ op.status }}">{{ op.status }}</span></td>
+            <td>
+              <a href="/workspaces/{{ workspace.slug }}/operations/{{ op.id }}/planner"
+                 class="btn btn-sm">Planner →</a>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+{# ── Tactical party layout preview ───────────────────────────────────────────
+   READ-ONLY: this section contains no forms or POST targets. It synthesises
+   a projected party layout from composition slot templates only.
+   No operation context is required. No assignment state is shown here.
+   ──────────────────────────────────────────────────────────────────────────── #}
+{% if parties %}
+
+<h2>Tactical Layout
+  <span class="text-muted" style="font-weight:400;font-size:var(--text-sm)">— preview</span>
+  {% if compact_mode %}
+  <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}"
+     class="hint-link" style="font-size:var(--text-sm);font-weight:400;margin-left:var(--space-3)">Full view</a>
+  {% else %}
+  <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}?compact=1"
+     class="hint-link" style="font-size:var(--text-sm);font-weight:400;margin-left:var(--space-3)">Compact view</a>
+  {% endif %}
+</h2>
+<p class="text-muted comp-preview-note">Template preview only — no player assignments. The live planner shows current assignment state.</p>
+
+{# ── Composition integrity warnings ────────────────────────────────────────
+   Signal hierarchy:
+   - Integrity warnings (here) = composition-level summary ("N of M parties …")
+   - Per-party tac-gap-badges  = granular local detail ("No healer" on that party)
+   The two signals are complementary: warnings answer "what and how many",
+   badges answer "which party". Suppressing either would lose tactical context.
+   Severity → CSS: critical = alert-error, warn = alert-warning, info = alert-info #}
+{% if integrity_warnings %}
+<div class="comp-integrity-warnings">
+  {% for w in integrity_warnings %}
+  <div class="alert alert-{{ 'error' if w.severity == 'critical' else w.severity }}">
+    {{ w.message }}
+    {% if w.hint %}<span class="comp-integrity-hint">{{ w.hint }}</span>{% endif %}
+  </div>
+  {% endfor %}
+  {% if can_mutate and not comp.deleted_at %}
+  <p class="comp-integrity-action">
+    <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/edit">Edit slots to fix →</a>
+  </p>
+  {% endif %}
+</div>
+{% endif %}
+
+{# Full-composition role tally + health hint — mirrors the planner comp-overview strip #}
+<div class="comp-overview">
+  <span class="role-tally">
+    <span class="role-tally__item{% if comp_summary.tally.tank == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ comp_summary.tally.tank }}</strong></span>
+    <span class="role-tally__item{% if comp_summary.tally.healer == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ comp_summary.tally.healer }}</strong></span>
+    <span class="role-tally__item{% if comp_summary.tally.dps == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ comp_summary.tally.dps }}</strong></span>
+    <span class="role-tally__item{% if comp_summary.tally.support == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ comp_summary.tally.support }}</strong></span>
+    <span class="role-tally__item{% if comp_summary.tally.ranged == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ comp_summary.tally.ranged }}</strong></span>
+  </span>
+  {% if comp_summary.hint %}
+  <span class="comp-overview__hint comp-overview__hint--{{ comp_summary.hint_state }}">{{ comp_summary.hint }}</span>
+  {% endif %}
+</div>
+
+{# ── Per-party panels ─────────────────────────────────────────────────────── #}
+{# Collapsible wrapper for large compositions: > 4 parties start collapsed
+   to keep the page scannable. ≤ 4 parties render directly (no wrapper). #}
+{% if parties | length > 4 %}
+<details class="comp-preview-details">
+  <summary>Party layout — {{ parties | length }} parties · {{ comp_summary.total }} slot{{ 's' if comp_summary.total != 1 }}</summary>
+{% endif %}
+
+{% for party_num, slots in parties.items() | sort %}
+{% set psumm       = party_summaries[party_num] %}
+{% set party_built = psumm.built %}
+{% set party_total = psumm.total %}
+
+{% if party_built == party_total and party_total > 0 %}
+  {% set fill_cls = 'fill-count--full' %}
+{% elif party_built == 0 %}
+  {% set fill_cls = 'fill-count--empty' %}
+{% else %}
+  {% set fill_cls = 'fill-count--partial' %}
+{% endif %}
+
+{# Detect any critical gaps for left-border accent on weak parties #}
+{% set _gap_ns = namespace(has_critical=false) %}
+{% for _sev, _txt in psumm.gaps %}{% if _sev == 'critical' %}{% set _gap_ns.has_critical = true %}{% endif %}{% endfor %}
+
+<section class="card party-panel{% if _gap_ns.has_critical %} party-panel--weak{% endif %}">
+  <div class="card-body">
+    <div class="party-panel__header">
+      <h3>
+        Party {{ party_num }}
+        <span class="{{ fill_cls }} fill-count">{{ party_built }}/{{ party_total }} built</span>
+        {% if psumm.open_slots > 0 %}
+        <span class="comp-party-open" aria-label="{{ psumm.open_slots }} open slot{{ 's' if psumm.open_slots != 1 }}">
+          {{ psumm.open_slots }} open
+        </span>
+        {% endif %}
+      </h3>
+    </div>
+
+    {# Party tactical summary: per-party role tally + gap badges #}
+    <div class="party-summary">
+      <span class="role-tally">
+        <span class="role-tally__item{% if psumm.tally.tank == 0 %} role-tally__item--zero{% endif %}" data-role="tank">T:<strong>{{ psumm.tally.tank }}</strong></span>
+        <span class="role-tally__item{% if psumm.tally.healer == 0 %} role-tally__item--zero{% endif %}" data-role="healer">H:<strong>{{ psumm.tally.healer }}</strong></span>
+        <span class="role-tally__item{% if psumm.tally.dps == 0 %} role-tally__item--zero{% endif %}" data-role="dps">D:<strong>{{ psumm.tally.dps }}</strong></span>
+        <span class="role-tally__item{% if psumm.tally.support == 0 %} role-tally__item--zero{% endif %}" data-role="support">S:<strong>{{ psumm.tally.support }}</strong></span>
+        <span class="role-tally__item{% if psumm.tally.ranged == 0 %} role-tally__item--zero{% endif %}" data-role="ranged">R:<strong>{{ psumm.tally.ranged }}</strong></span>
+      </span>
+      {% for sev, text in psumm.gaps %}
+      <span class="tac-gap-badge tac-gap-badge--{{ sev }}">{% if sev == 'critical' %}⚠ {% endif %}{{ text }}</span>
+      {% endfor %}
+    </div>
+
+    {# Role colour bar: compact per-slot scan strip — one segment per slot #}
+    <div class="role-color-bar">
+      {% for slot in slots %}
+      <div class="role-color-bar__segment" data-role="{{ slot.role_family }}"></div>
+      {% endfor %}
+    </div>
+
+    {# ── Slot preview grid: read-only tactical formation cards ── #}
+    <div class="slot-card-grid">
+      {% for slot in slots %}
+      {# State repurposed for composition context:
+         --assigned  (green)  = build defined on this slot template
+         --open-core (orange) = core priority with no build yet
+         --empty     (plain)  = normal slot, no build defined           #}
+      {% set has_build = slot.build_name or slot.weapon_name %}
+      {% if has_build %}
+        {% set card_cls = 'slot-card--assigned' %}
+      {% elif slot.priority == 'core' %}
+        {% set card_cls = 'slot-card--open-core' %}
+      {% else %}
+        {% set card_cls = 'slot-card--empty' %}
+      {% endif %}
+
+      <div class="slot-card {{ card_cls }}" data-role="{{ slot.role_family }}" id="slot-{{ slot.id }}">
+
+        {# Header: role label + slot index + core marker #}
+        <div class="slot-card__header">
+          {% if slot.doctrine_role %}
+          <span class="slot-card__doctrine-role" aria-label="Doctrine role: {{ slot.doctrine_role }}">{{ slot.doctrine_role }}</span>
+          {% endif %}
+          <span class="slot-card__role {% if slot.doctrine_role %}slot-card__role--secondary{% endif %}">{{ slot.role }}</span>
+          <span class="slot-card__idx">#{{ slot.slot_index }}{% if slot.priority == 'core' %} ●{% endif %}</span>
+        </div>
+
+        {# Body: build identity + compact doctrine when equipment data is present #}
+        <div class="slot-card__body">
+          {% set primary   = slot.weapon_name or slot.build_name %}
+          {% set secondary = slot.build_name if (slot.weapon_name and slot.weapon_name != slot.build_name) else "" %}
+          {% if primary %}
+          <div class="slot-card__weapon" title="{{ primary }}">{{ primary }}</div>
+          {% else %}
+          <div class="slot-card__weapon slot-card__weapon--empty">No build</div>
+          {% endif %}
+          {% if secondary and not compact_mode %}
+          <div class="slot-card__build" title="{{ secondary }}">{{ secondary }}</div>
+          {% endif %}
+          {# Equipment doctrine summary: hidden in compact mode to reduce vertical noise #}
+          {% set _has_eq = slot.head_name or slot.armor_name or slot.shoes_name or slot.cape_name or slot.food_name or slot.potion_name %}
+          {% if _has_eq and not compact_mode %}
+          {{ doctrine_summary(slot, css_class='slot-doctrine') }}
+          {% endif %}
+        </div>
+
+        {# ── Per-slot quick-edit panel (officers only, non-retired compositions) ──
+           Uses native <details> for progressive enhancement — no JS required.
+           Submits to slot/quick; preserves role, priority, party, slot_index.
+           Operation slots remain frozen — snapshot invariant is not affected.    #}
+        {% if can_mutate and not comp.deleted_at %}
+        <details class="slot-card__quick-edit" aria-label="Quick edit slot #{{ slot.slot_index }}">
+          <summary class="slot-card__quick-edit-toggle">Edit</summary>
+          <form method="post"
+                action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/slot/quick"
+                class="slot-card__quick-edit-form">
+            <input type="hidden" name="slot_id" value="{{ slot.id }}">
+            <label class="sqe-label">
+              <span>Role</span>
+              <input type="text" name="role"
+                     value="{{ slot.role or '' }}"
+                     placeholder="Tank / Healer / DPS / Support"
+                     class="sqe-input sqe-role"
+                     list="sqe-role-list"
+                     autocomplete="off"
+                     aria-label="Role for slot #{{ slot.slot_index }}">
+            </label>
+            <label class="sqe-label">
+              <span>Doctrine</span>
+              <input type="text" name="doctrine_role"
+                     value="{{ slot.doctrine_role or '' }}"
+                     placeholder="e.g. Main Caller"
+                     class="sqe-input"
+                     autocomplete="off"
+                     aria-label="Doctrine role for slot #{{ slot.slot_index }}">
+            </label>
+            {% if workspace_builds %}
+            <label class="sqe-label">
+              <span>Library</span>
+              <select name="albion_build_id" class="sqe-select sqe-build-select"
+                      aria-label="Select build from library">
+                <option value="">— pick build —</option>
+                {% for b in workspace_builds %}
+                <option value="{{ b.id }}"
+                        data-name="{{ b.name | e }}"
+                        data-weapon="{{ (b.weapon_name or '') | e }}"
+                        data-doctrine="{{ (b.doctrine_role or '') | e }}"
+                        {% if b.id == slot.albion_build_id %}selected{% endif %}>
+                  {{ b.name }}{% if b.role %} · {{ b.role }}{% endif %}
+                </option>
+                {% endfor %}
+              </select>
+            </label>
+            {% else %}
+            <input type="hidden" name="albion_build_id" value="">
+            {% endif %}
+            <label class="sqe-label">
+              <span>Build</span>
+              <input type="text" name="build_name"
+                     value="{{ slot.build_name or '' }}"
+                     placeholder="Build name"
+                     class="sqe-input sqe-build-name"
+                     autocomplete="off"
+                     aria-label="Build name for slot #{{ slot.slot_index }}">
+            </label>
+            <label class="sqe-label">
+              <span>Weapon</span>
+              <input type="text" name="weapon_name"
+                     value="{{ slot.weapon_name or '' }}"
+                     placeholder="Weapon (optional)"
+                     class="sqe-input sqe-weapon-name"
+                     autocomplete="off"
+                     aria-label="Weapon for slot #{{ slot.slot_index }}">
+            </label>
+            <div class="sqe-actions">
+              <button type="submit" class="btn btn-sm btn-primary sqe-save">Save</button>
+              <button type="button" class="btn btn-sm sqe-clear"
+                      onclick="sqeClearBuild(this)"
+                      aria-label="Clear build from this slot">Clear build</button>
+            </div>
+          </form>
+          {# ── Promote free-typed slot to library build ──────────────────── #}
+          {% if slot.build_name and slot.weapon_name and not slot.albion_build_id %}
+          <form method="post"
+                action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/slots/{{ slot.id }}/promote-to-build"
+                class="sqe-promote-form"
+                onsubmit="return confirm('Create a new library build from this slot and link it?')">
+            <button type="submit" class="btn btn-sm sqe-promote-btn"
+                    title="Save this slot&#39;s build as a reusable library entry and link the slot to it">
+              Promote to library →
+            </button>
+          </form>
+          {% endif %}
+        </details>
+        {% endif %}
+
+      </div>
+      {% endfor %}
+    </div>
+
+  </div>
+</section>
+{% endfor %}
+
+{% if parties | length > 4 %}
+</details>
+{% endif %}
+
+{% else %}
+{# Empty composition — no slot templates defined yet #}
+<div class="card">
+  <div class="card-body" style="text-align:center;padding:var(--space-8) var(--space-4)">
+    <p class="text-muted" style="margin-bottom:var(--space-4)">No slots defined yet.</p>
+    {% if can_mutate and not comp.deleted_at %}
+    <a href="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/edit"
+       class="btn btn-primary">Edit Slots →</a>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{# ── Continuation flow ────────────────────────────────────────────────────── #}
+<div class="action-bar" style="margin-top:1rem">
+  {% if can_mutate and not comp.deleted_at %}
+  <a href="/workspaces/{{ workspace.slug }}/operations/new?composition_id={{ comp.id }}"
+     class="btn btn-primary">
+    New Operation →
+  </a>
+  {% endif %}
+  <a href="/workspaces/{{ workspace.slug }}/compositions" class="btn">← All Compositions</a>
+</div>
+
+{% if can_mutate and not comp.deleted_at %}
+<datalist id="sqe-role-list">
+  <option value="Tank">
+  <option value="Healer">
+  <option value="DPS">
+  <option value="Support">
+  <option value="Ranged">
+</datalist>
+
+<script>
+/* ── Quick-edit panel JS — Phase 6 Fast Mutation ──────────────────────────
+   Progressive enhancement: panel works without JS via native <details>.
+   JS adds:
+     - build library autofill (doctrine_role, build_name, weapon_name)
+     - "Clear build" button that wipes the mutable fields
+   ────────────────────────────────────────────────────────────────────────── */
+
+/* Build library autofill: when officer selects from dropdown, populate the
+   build_name and weapon_name text inputs in the same quick-edit form.
+   Only populates doctrine_role if the field is currently empty (slot override
+   semantics: an existing doctrine_role on the slot is preserved). */
+document.addEventListener('change', function(e) {
+  if (!e.target.classList.contains('sqe-build-select')) return;
+  var form = e.target.closest('.slot-card__quick-edit-form');
+  if (!form) return;
+  var opt         = e.target.options[e.target.selectedIndex];
+  var buildName   = opt.dataset.name    || '';
+  var weaponName  = opt.dataset.weapon  || '';
+  var docRole     = opt.dataset.doctrine || '';
+  var nameInput   = form.querySelector('.sqe-build-name');
+  var weaponInput = form.querySelector('.sqe-weapon-name');
+  var docInput    = form.querySelector('input[name="doctrine_role"]');
+  if (nameInput)   nameInput.value   = buildName;
+  if (weaponInput) weaponInput.value = weaponName;
+  if (docInput && !docInput.value.trim()) docInput.value = docRole;
+});
+
+/* "Clear build" — wipes build_name, weapon_name, albion_build_id, doctrine_role
+   so the officer can submit an open slot (no build). */
+function sqeClearBuild(btn) {
+  var form = btn.closest('.slot-card__quick-edit-form');
+  if (!form) return;
+  var buildSel    = form.querySelector('.sqe-build-select');
+  var nameInput   = form.querySelector('.sqe-build-name');
+  var weaponInput = form.querySelector('.sqe-weapon-name');
+  var docInput    = form.querySelector('input[name="doctrine_role"]');
+  if (buildSel)    buildSel.value    = '';
+  if (nameInput)   nameInput.value   = '';
+  if (weaponInput) weaponInput.value = '';
+  if (docInput)    docInput.value    = '';
+}
+</script>
+{% endif %}
+{% endblock %}

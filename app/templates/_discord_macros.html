@@ -1,4 +1,43 @@
 {#
+  discord_embed(embed, value_pre_line=False)
+
+  Renders a Discord embed preview block.
+
+  embed         — preview dict with keys:
+                    color_hex   — left-border accent color (hex string)
+                    title       — embed title text
+                    description — optional body text (announcement only)
+                    fields      — list of {name, value, inline}
+                    footer      — optional {text}
+  value_pre_line — set True to apply white-space:pre-line on field values
+                   (used for roster post fields which contain newline-separated text)
+
+  Usage:
+    {% from "_discord_macros.html" import discord_embed %}
+    {{ discord_embed(discord_preview) }}
+    {{ discord_embed(discord_roster_preview, value_pre_line=True) }}
+#}
+{% macro discord_embed(embed, value_pre_line=False) %}
+<div class="discord-embed" style="border-left-color: {{ embed.color_hex }}">
+  <div class="discord-embed__title">{{ embed.title }}</div>
+  {% if embed.description %}
+  <div class="discord-embed__description">{{ embed.description }}</div>
+  {% endif %}
+  <div class="discord-embed__fields">
+    {% for field in embed.fields %}
+    <div class="discord-embed__field{% if not field.inline %} discord-embed__field--block{% endif %}">
+      <div class="discord-embed__field-name">{{ field.name }}</div>
+      <div class="discord-embed__field-value"{% if value_pre_line %} style="white-space:pre-line"{% endif %}>{{ field.value }}</div>
+    </div>
+    {% endfor %}
+  </div>
+  {% if embed.footer %}
+  <div class="discord-embed__footer">{{ embed.footer.text }}</div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+{#
   discord_name(snowflake, meta_dict)
 
   Renders a Discord snowflake as "Name · …last4" when a cache row is present,

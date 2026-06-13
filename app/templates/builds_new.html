@@ -1,0 +1,164 @@
+{% extends "base.html" %}
+{% block title %}New Build — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">New</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'New Build' %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+{% if error %}
+<div class="alert alert-error" style="margin-bottom:var(--space-4)">{{ error }}</div>
+{% endif %}
+
+<div class="card" style="max-width:640px">
+  <div class="card-body">
+    {% if forked_from_name %}
+    <p class="form-hint hint-neutral" style="margin-bottom:var(--space-4)">
+      Forked from <strong>{{ forked_from_name }}</strong> — update the details and save to create a new build in the library.
+    </p>
+    {% else %}
+    <p class="form-hint" style="margin-bottom:var(--space-4)">
+      A build defines a reusable role doctrine — name, role, and equipment — that can be
+      attached to composition slot templates for faster editing and consistent assignments.
+      Equipment fields are optional; freeform text (e.g. "T8.3 Hallowfall") is accepted.
+    </p>
+    {% endif %}
+    <form method="post" action="/workspaces/{{ workspace.slug }}/builds" class="bld-form">
+      <input type="hidden" name="next_url" value="{{ next_url or '' }}">
+
+      {# ── Identity ──────────────────────────────────────────────────────── #}
+      <div class="bld-form__section">
+        <div class="form-group">
+          <label for="bld-doctrine-role">Doctrine role <em>(optional)</em></label>
+          <input type="text" id="bld-doctrine-role" name="doctrine_role"
+                 value="{{ prev.doctrine_role or '' }}"
+                 placeholder="e.g. Main Caller, Engage, Peel / Stopper, Beam Spike"
+                 autocomplete="off" maxlength="120"
+                 aria-describedby="bld-doctrine-role-hint">
+          <span class="form-hint" id="bld-doctrine-role-hint">
+            Battlefield responsibility — how this build operates in the field.
+            Distinct from role family (Tank / Healer / DPS).
+          </span>
+        </div>
+        <div class="form-group">
+          <label for="bld-name">Build name <span class="form-required">*</span></label>
+          <input type="text" id="bld-name" name="name" required
+                 value="{{ prev.name or '' }}"
+                 placeholder="e.g. Hallowfall Healer"
+                 autocomplete="off" maxlength="100">
+        </div>
+        <div class="form-group">
+          <label for="bld-role">Role <span class="form-required">*</span></label>
+          <input type="text" id="bld-role" name="role" required
+                 value="{{ prev.role or '' }}"
+                 placeholder="e.g. Healer"
+                 autocomplete="off" maxlength="60">
+        </div>
+      </div>
+
+      {# ── Weapon loadout ────────────────────────────────────────────────── #}
+      <div class="bld-form__section">
+        <h3 class="bld-form__section-title">Weapon</h3>
+        <div class="bld-form__row">
+          <div class="form-group bld-form__field--wide">
+            <label for="bld-weapon">Main weapon <span class="form-required">*</span></label>
+            <input type="text" id="bld-weapon" name="weapon_name" required
+                   value="{{ prev.weapon_name or '' }}"
+                   placeholder="e.g. T8.3 Hallowfall"
+                   autocomplete="off" maxlength="120">
+          </div>
+          <div class="form-group">
+            <label for="bld-offhand">Offhand <em>(optional)</em></label>
+            <input type="text" id="bld-offhand" name="offhand_name"
+                   value="{{ prev.offhand_name or '' }}"
+                   placeholder="e.g. Torch"
+                   autocomplete="off" maxlength="120">
+          </div>
+        </div>
+      </div>
+
+      {# ── Armour ────────────────────────────────────────────────────────── #}
+      <details class="bld-form__details"{% if prev.head_name or prev.armor_name or prev.shoes_name or prev.cape_name %} open{% endif %}>
+        <summary class="bld-form__details-toggle">Armour &amp; accessories <em>(optional)</em></summary>
+        <div class="bld-form__section bld-form__section--indented">
+          <div class="bld-form__row">
+            <div class="form-group">
+              <label for="bld-head">Head</label>
+              <input type="text" id="bld-head" name="head_name"
+                     value="{{ prev.head_name or '' }}" placeholder="e.g. Scholar Cowl"
+                     autocomplete="off" maxlength="120">
+            </div>
+            <div class="form-group">
+              <label for="bld-armor">Armour</label>
+              <input type="text" id="bld-armor" name="armor_name"
+                     value="{{ prev.armor_name or '' }}" placeholder="e.g. Scholar Robe"
+                     autocomplete="off" maxlength="120">
+            </div>
+            <div class="form-group">
+              <label for="bld-shoes">Shoes</label>
+              <input type="text" id="bld-shoes" name="shoes_name"
+                     value="{{ prev.shoes_name or '' }}" placeholder="e.g. Scholar Sandals"
+                     autocomplete="off" maxlength="120">
+            </div>
+          </div>
+          <div class="bld-form__row">
+            <div class="form-group">
+              <label for="bld-cape">Cape</label>
+              <input type="text" id="bld-cape" name="cape_name"
+                     value="{{ prev.cape_name or '' }}" placeholder="e.g. Thetford Cape"
+                     autocomplete="off" maxlength="120">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      {# ── Consumables ───────────────────────────────────────────────────── #}
+      <details class="bld-form__details"{% if prev.food_name or prev.potion_name %} open{% endif %}>
+        <summary class="bld-form__details-toggle">Consumables <em>(optional)</em></summary>
+        <div class="bld-form__section bld-form__section--indented">
+          <div class="bld-form__row">
+            <div class="form-group">
+              <label for="bld-food">Food</label>
+              <input type="text" id="bld-food" name="food_name"
+                     value="{{ prev.food_name or '' }}" placeholder="e.g. Beef Stew"
+                     autocomplete="off" maxlength="120">
+            </div>
+            <div class="form-group">
+              <label for="bld-potion">Potion</label>
+              <input type="text" id="bld-potion" name="potion_name"
+                     value="{{ prev.potion_name or '' }}" placeholder="e.g. Resistance Potion"
+                     autocomplete="off" maxlength="120">
+            </div>
+          </div>
+        </div>
+      </details>
+
+      {# ── Notes ─────────────────────────────────────────────────────────── #}
+      <div class="form-group">
+        <label for="bld-notes">Notes <em>(optional)</em></label>
+        <textarea id="bld-notes" name="notes" rows="4"
+                  placeholder="Doctrine notes, rotation hints, tier requirements, skill priorities…"
+                  maxlength="500">{{ prev.notes or '' }}</textarea>
+        <span class="form-hint">Up to 500 characters — use for rotation context, tier requirements, or tactical priorities.</span>
+      </div>
+
+      <div class="action-bar" style="margin-top:var(--space-4)">
+        <input type="submit" value="Save Build" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">Cancel</a>
+      </div>
+    </form>
+  </div>
+</div>
+{% endblock %}

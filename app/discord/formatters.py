@@ -148,13 +148,18 @@ def format_operation_announcement(
             "inline": True,
         })
 
+    if signup_url:
+        description = f"An operation has been posted.\n**Sign up:** {signup_url}"
+    else:
+        description = "An operation has been posted. Sign up at the web dashboard."
+
     embed: dict = {
-        "title":     operation["title"],
-        "description": "An operation has been posted. Sign up at the web dashboard.",
-        "color":     _color(operation["status"]),
-        "timestamp": operation.get("scheduled_start_at", ""),
-        "fields":    fields,
-        "footer":    {"text": _FOOTER},
+        "title":       operation["title"],
+        "description": description,
+        "color":       _color(operation["status"]),
+        "timestamp":   operation.get("scheduled_start_at", ""),
+        "fields":      fields,
+        "footer":      {"text": _FOOTER},
     }
 
     return {

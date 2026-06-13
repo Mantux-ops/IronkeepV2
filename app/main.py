@@ -27,9 +27,19 @@ WEB_BASE_URL
 import logging
 import os
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+# Load .env if present (development convenience — no effect in production
+# where variables are injected by the host environment).
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=False)  # env vars already set in the shell take priority
+except ImportError:
+    pass
 
 from fastapi import FastAPI
 from starlette.middleware.sessions import SessionMiddleware
+from starlette.staticfiles import StaticFiles
 
 from app import database, startup
 from app.routes import router
@@ -124,6 +134,12 @@ app.add_middleware(
     session_cookie="ironkeep_session",
     same_site="lax",
     https_only=_is_production,
+)
+
+app.mount(
+    "/static",
+    StaticFiles(directory=str(Path(__file__).parent / "static")),
+    name="static",
 )
 
 app.include_router(router)

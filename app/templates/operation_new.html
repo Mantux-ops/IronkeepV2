@@ -19,6 +19,16 @@
     {% include "flash_messages.html" %}
 
     <form method="post" action="/workspaces/{{ workspace.slug }}/operations" class="form">
+      {% if preset_comp %}
+      <div class="form-group">
+        <label>Composition</label>
+        <p class="form-hint">
+          <strong>{{ preset_comp.name }}</strong>
+          will be attached after the operation is created.
+        </p>
+        <input type="hidden" name="composition_id" value="{{ preset_comp.id }}">
+      </div>
+      {% endif %}
       <div class="form-group">
         <label for="title">Title</label>
         <input type="text" id="title" name="title" required

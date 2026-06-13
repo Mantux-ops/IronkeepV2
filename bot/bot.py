@@ -22,6 +22,13 @@ from __future__ import annotations
 
 import sys
 
+# Load .env if present so the bot can be started without manually exporting vars.
+try:
+    from dotenv import load_dotenv
+    load_dotenv(override=False)
+except ImportError:
+    pass
+
 import discord
 from discord import app_commands
 

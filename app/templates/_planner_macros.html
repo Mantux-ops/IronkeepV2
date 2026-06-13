@@ -1,0 +1,59 @@
+{# ── Planner action macros ───────────────────────────────────────────────────
+   Reusable form fragments for the tactical planner surface.
+   Import in any template that needs planner slot actions:
+
+     {% from "_planner_macros.html" import planner_slot_build_editor %}
+
+   ─────────────────────────────────────────────────────────────────────────── #}
+
+
+{# planner_slot_build_editor(slot, workspace, operation, show_build_edit)
+
+   Renders the inline "Edit build" <details> block inside a planner slot card.
+
+   Parameters:
+     slot             — operation_slots row dict
+     workspace        — workspace dict (needs .slug)
+     operation        — guild_operations row dict (needs .id)
+     show_build_edit  — boolean; if false, renders nothing
+
+   Contains:
+     - "Save" form  →  POST .../slots/{slot.id}/build
+     - "Apply to composition template →" form  →  POST .../slots/{slot.id}/apply-to-template
+       (only shown when slot.source_composition_slot_template_id is set)
+
+   Preserves all existing URLs, input names, datalist list= attributes,
+   CSS classes, and button text exactly as they appeared inline.
+#}
+{% macro planner_slot_build_editor(slot, workspace, operation, show_build_edit) %}
+{% if show_build_edit %}
+<details class="slot-build-edit">
+  <summary>Edit build</summary>
+  <div class="slot-build-edit__body">
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/build"
+          class="inline-form">
+      <input type="text" name="build_name"
+             value="{{ slot.build_name or '' }}"
+             placeholder="Build name" required
+             list="build-name-list"
+             aria-label="Build name for slot #{{ slot.slot_index }}">
+      <input type="text" name="weapon_name"
+             value="{{ slot.weapon_name or '' }}"
+             placeholder="Weapon"
+             list="weapon-name-list"
+             aria-label="Weapon for slot #{{ slot.slot_index }}">
+      <button type="submit" class="btn btn-sm">Save</button>
+    </form>
+    {% if slot.source_composition_slot_template_id %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/slots/{{ slot.id }}/apply-to-template"
+          class="inline-form"
+          style="margin-top:var(--space-1)">
+      <button type="submit" class="btn btn-sm btn-secondary">Apply to composition template →</button>
+    </form>
+    {% endif %}
+  </div>
+</details>
+{% endif %}
+{% endmacro %}

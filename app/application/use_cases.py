@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 
 from app import database, repositories
 from app.domain import (
+    albion_builds as albion_builds_domain,
     albion_compositions,
     attendance as attendance_domain,
     guild_operations,
@@ -623,7 +624,457 @@ def archive_operation(guild_workspace_id: str, guild_operation_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# 3. Create AlbionComposition
+# 3a. AlbionBuild CRUD
+# ---------------------------------------------------------------------------
+
+def _resolve_build_for_slot(
+    db,
+    guild_workspace_id: str,
+    slot: dict,
+) -> dict:
+    """Resolve albion_build_id FK within a slot dict.
+
+    If the slot carries a non-empty ``albion_build_id`` that resolves to a
+    valid, non-retired build in this workspace, the slot's doctrine fields
+    (build_name, weapon_name, offhand_name, head_name, armor_name,
+    shoes_name, cape_name, food_name, potion_name) are overwritten from the
+    build record and the FK is kept.
+
+    If the FK is absent, empty, or does not resolve (not found / retired /
+    wrong workspace), the FK is cleared and the slot's existing text fields
+    are used unchanged.  This ensures backward compatibility for manually
+    typed builds and protects against stale or cross-workspace FKs.
+
+    The Build Snapshot Invariant is preserved: operation_slots never carry
+    the FK and are not affected by any build field changes.
+    """
+    bid = (slot.get("albion_build_id") or "").strip()
+    if not bid:
+        return {
+            **slot,
+            "albion_build_id": None,
+            "offhand_name":  slot.get("offhand_name"),
+            "head_name":     slot.get("head_name"),
+            "armor_name":    slot.get("armor_name"),
+            "shoes_name":    slot.get("shoes_name"),
+            "cape_name":     slot.get("cape_name"),
+            "food_name":     slot.get("food_name"),
+            "potion_name":   slot.get("potion_name"),
+            "doctrine_role": slot.get("doctrine_role"),
+        }
+
+    build = repositories.get_albion_build(db, bid, guild_workspace_id)
+    if not build or build.get("retired_at"):
+        return {
+            **slot,
+            "albion_build_id": None,
+            "offhand_name":  slot.get("offhand_name"),
+            "head_name":     slot.get("head_name"),
+            "armor_name":    slot.get("armor_name"),
+            "shoes_name":    slot.get("shoes_name"),
+            "cape_name":     slot.get("cape_name"),
+            "food_name":     slot.get("food_name"),
+            "potion_name":   slot.get("potion_name"),
+            "doctrine_role": slot.get("doctrine_role"),
+        }
+
+    return {
+        **slot,
+        "build_name":    build["name"],
+        "weapon_name":   build["weapon_name"] or slot.get("weapon_name"),
+        "offhand_name":  build.get("offhand_name"),
+        "head_name":     build.get("head_name"),
+        "armor_name":    build.get("armor_name"),
+        "shoes_name":    build.get("shoes_name"),
+        "cape_name":     build.get("cape_name"),
+        "food_name":     build.get("food_name"),
+        "potion_name":   build.get("potion_name"),
+        # doctrine_role: build default propagated at attach; slot-level override preserved
+        # if the slot already has a value (slot.get wins over build default only when non-empty).
+        "doctrine_role": slot.get("doctrine_role") or build.get("doctrine_role"),
+        "albion_build_id": build["id"],
+    }
+
+
+def create_albion_build(
+    guild_workspace_id: str,
+    actor_user_id: str,
+    name: str,
+    role: str,
+    weapon_name: str,
+    offhand_name: str | None = None,
+    head_name: str | None = None,
+    armor_name: str | None = None,
+    shoes_name: str | None = None,
+    cape_name: str | None = None,
+    food_name: str | None = None,
+    potion_name: str | None = None,
+    notes: str | None = None,
+    doctrine_role: str | None = None,
+) -> dict:
+    """Create a reusable build doctrine entity in a workspace.
+
+    The actor must be an officer or owner.  Returns the full build row dict.
+    """
+    data = {
+        "name":          (name or "").strip(),
+        "role":          (role or "").strip(),
+        "weapon_name":   (weapon_name or "").strip(),
+        "offhand_name":  (offhand_name or "").strip() or None,
+        "head_name":     (head_name or "").strip() or None,
+        "armor_name":    (armor_name or "").strip() or None,
+        "shoes_name":    (shoes_name or "").strip() or None,
+        "cape_name":     (cape_name or "").strip() or None,
+        "food_name":     (food_name or "").strip() or None,
+        "potion_name":   (potion_name or "").strip() or None,
+        "notes":         (notes or "").strip() or None,
+        "doctrine_role": (doctrine_role or "").strip() or None,
+    }
+    albion_builds_domain.validate_build(data)
+
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can create builds.")
+
+        now = _now()
+        build = {
+            "id":                str(uuid.uuid4()),
+            "guild_workspace_id": guild_workspace_id,
+            "retired_at":        None,
+            "created_at":        now,
+            "updated_at":        now,
+            **data,
+        }
+        repositories.insert_albion_build(db, build)
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_BUILD_CREATED,
+            entity_type="albion_build",
+            entity_id=build["id"],
+            actor_type="user",
+            actor_id=actor_user_id,
+            payload={"name": build["name"], "role": build["role"]},
+        )
+        repositories.insert_operational_event(db, event)
+
+    return build
+
+
+def bulk_import_albion_builds(
+    guild_workspace_id: str,
+    actor_user_id: str,
+    rows: list[dict],
+) -> list[dict]:
+    """Bulk-create builds from a pre-parsed list of field dicts.
+
+    All rows are normalised and validated before any DB write.  If any row
+    fails validation a ``ValidationError`` is raised with the row number
+    prepended; nothing is inserted.  Returns the list of created build dicts.
+
+    This is a single atomic transaction: either all builds are created or none.
+    """
+    from app.errors import ValidationError  # noqa: PLC0415 (avoid circular at module level)
+
+    created: list[dict] = []
+    with database.transaction() as db:
+        # Permission check first — fail fast before touching any data.
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can import builds.")
+
+        # Normalise and validate every row before inserting any of them.
+        normalised: list[dict] = []
+        for i, row in enumerate(rows, start=1):
+            data = {
+                "name":          (row.get("name") or "").strip(),
+                "role":          (row.get("role") or "").strip(),
+                "weapon_name":   (row.get("weapon_name") or "").strip(),
+                "offhand_name":  (row.get("offhand_name") or "").strip() or None,
+                "head_name":     (row.get("head_name") or "").strip() or None,
+                "armor_name":    (row.get("armor_name") or "").strip() or None,
+                "shoes_name":    (row.get("shoes_name") or "").strip() or None,
+                "cape_name":     (row.get("cape_name") or "").strip() or None,
+                "food_name":     (row.get("food_name") or "").strip() or None,
+                "potion_name":   (row.get("potion_name") or "").strip() or None,
+                "notes":         (row.get("notes") or "").strip() or None,
+                "doctrine_role": (row.get("doctrine_role") or "").strip() or None,
+            }
+            try:
+                albion_builds_domain.validate_build(data)
+            except ValidationError as exc:
+                raise ValidationError(f"Row {i}: {exc}") from exc
+            normalised.append(data)
+
+        now = _now()
+        for data in normalised:
+            build = {
+                "id":                 str(uuid.uuid4()),
+                "guild_workspace_id": guild_workspace_id,
+                "retired_at":         None,
+                "created_at":         now,
+                "updated_at":         now,
+                **data,
+            }
+            repositories.insert_albion_build(db, build)
+
+            event = operational_events.make_event(
+                guild_workspace_id=guild_workspace_id,
+                guild_operation_id=None,
+                event_type=operational_events.ALBION_BUILD_CREATED,
+                entity_type="albion_build",
+                entity_id=build["id"],
+                actor_type="user",
+                actor_id=actor_user_id,
+                payload={"name": build["name"], "role": build["role"]},
+            )
+            repositories.insert_operational_event(db, event)
+            created.append(build)
+
+    return created
+
+
+def update_albion_build(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+    name: str,
+    role: str,
+    weapon_name: str,
+    offhand_name: str | None = None,
+    head_name: str | None = None,
+    armor_name: str | None = None,
+    shoes_name: str | None = None,
+    cape_name: str | None = None,
+    food_name: str | None = None,
+    potion_name: str | None = None,
+    notes: str | None = None,
+    doctrine_role: str | None = None,
+) -> None:
+    """Update a build's fields.
+
+    Build Snapshot Invariant: this does NOT retroactively update any slot
+    templates or operation_slots that already reference this build.  Existing
+    composition slot templates store independent text snapshots; they remain
+    unchanged until an officer explicitly re-attaches the updated build.
+    """
+    data = {
+        "name":          (name or "").strip(),
+        "role":          (role or "").strip(),
+        "weapon_name":   (weapon_name or "").strip(),
+        "offhand_name":  (offhand_name or "").strip() or None,
+        "head_name":     (head_name or "").strip() or None,
+        "armor_name":    (armor_name or "").strip() or None,
+        "shoes_name":    (shoes_name or "").strip() or None,
+        "cape_name":     (cape_name or "").strip() or None,
+        "food_name":     (food_name or "").strip() or None,
+        "potion_name":   (potion_name or "").strip() or None,
+        "notes":         (notes or "").strip() or None,
+        "doctrine_role": (doctrine_role or "").strip() or None,
+    }
+    albion_builds_domain.validate_build(data)
+
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can edit builds.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("retired_at"):
+            raise ConflictError("Retired builds cannot be edited.")
+
+        now = _now()
+        repositories.update_albion_build_fields(
+            db, build_id, guild_workspace_id, data, now
+        )
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_BUILD_UPDATED,
+            entity_type="albion_build",
+            entity_id=build_id,
+            actor_type="user",
+            actor_id=actor_user_id,
+            payload={"name": data["name"]},
+        )
+        repositories.insert_operational_event(db, event)
+
+
+def retire_albion_build(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+) -> None:
+    """Soft-delete a build.
+
+    Retired builds cannot be newly attached to slot templates.  Existing
+    compositions and operation_slots that reference this build remain stable
+    — the slot text snapshots are independent of build retirement.
+    """
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can retire builds.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("retired_at"):
+            raise ConflictError("Build is already retired.")
+
+        now = _now()
+        repositories.retire_albion_build(db, build_id, guild_workspace_id, now)
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_BUILD_RETIRED,
+            entity_type="albion_build",
+            entity_id=build_id,
+            actor_type="user",
+            actor_id=actor_user_id,
+            payload={"name": build["name"]},
+        )
+        repositories.insert_operational_event(db, event)
+
+
+def promote_composition_slot_to_build(
+    guild_workspace_id: str,
+    composition_id: str,
+    slot_id: str,
+    actor_user_id: str,
+) -> dict:
+    """Create a new library build from a free-typed composition slot template,
+    then immediately backfill albion_build_id on that one slot.
+
+    Both writes happen in a single transaction so the library never contains a
+    "ghost" build that was created but not linked, and the slot never ends up
+    with a dangling FK.
+
+    Eligibility guards (all raise before any write):
+    - Actor must be officer or owner.
+    - Composition must not be retired (deleted_at).
+    - Slot must belong to this composition and workspace.
+    - Slot must have albion_build_id = NULL (already-linked slots are rejected).
+    - Slot must have a non-empty build_name.
+    - Slot must have a non-empty weapon_name (required by albion_builds schema).
+
+    The slot's build_name and weapon_name text snapshots are preserved
+    unchanged after the FK backfill — the new build's fields match them at
+    creation time, so no visible change occurs on the composition.
+
+    operation_slots are never touched.  Other composition_slot_templates rows
+    in the same or other compositions are not affected.
+    """
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can promote slots.")
+
+        comp = repositories.get_albion_composition(db, composition_id, guild_workspace_id)
+        if not comp:
+            raise NotFoundError(f"Composition '{composition_id}' not found.")
+        if comp.get("deleted_at"):
+            raise ConflictError("Cannot promote a slot on a retired composition.")
+
+        slot = repositories.get_composition_slot_template_by_id(
+            db, slot_id, guild_workspace_id
+        )
+        if not slot or slot.get("albion_composition_id") != composition_id:
+            raise NotFoundError(f"Slot '{slot_id}' not found in composition '{composition_id}'.")
+
+        if slot.get("albion_build_id"):
+            raise ConflictError(
+                "This slot is already linked to a library build. "
+                "Detach the current build before promoting."
+            )
+
+        build_name = (slot.get("build_name") or "").strip()
+        if not build_name:
+            raise ValidationError("This slot has no build name — cannot promote an empty slot.")
+
+        weapon_name = (slot.get("weapon_name") or "").strip()
+        if not weapon_name:
+            raise ValidationError(
+                "This slot has no weapon name — add one in the quick-edit panel "
+                "before promoting to the library."
+            )
+
+        now = _now()
+        new_build = {
+            "id":                 str(uuid.uuid4()),
+            "guild_workspace_id": guild_workspace_id,
+            "name":               build_name,
+            "role":               slot["role"],
+            "weapon_name":        weapon_name,
+            "offhand_name":       slot.get("offhand_name"),
+            "head_name":          slot.get("head_name"),
+            "armor_name":         slot.get("armor_name"),
+            "shoes_name":         slot.get("shoes_name"),
+            "cape_name":          slot.get("cape_name"),
+            "food_name":          slot.get("food_name"),
+            "potion_name":        slot.get("potion_name"),
+            "notes":              None,
+            "doctrine_role":      slot.get("doctrine_role"),
+            "retired_at":         None,
+            "created_at":         now,
+            "updated_at":         now,
+        }
+        albion_builds_domain.validate_build(new_build)
+        repositories.insert_albion_build(db, new_build)
+
+        # Backfill the FK on this slot only — all text snapshot fields stay
+        # exactly as they are; only albion_build_id changes.
+        # role="" → SQL CASE expression preserves the existing role unchanged.
+        backfill_fields = {
+            "role":           "",
+            "build_name":     slot["build_name"],
+            "weapon_name":    slot.get("weapon_name"),
+            "doctrine_role":  slot.get("doctrine_role"),
+            "albion_build_id": new_build["id"],
+            "offhand_name":   slot.get("offhand_name"),
+            "head_name":      slot.get("head_name"),
+            "armor_name":     slot.get("armor_name"),
+            "shoes_name":     slot.get("shoes_name"),
+            "cape_name":      slot.get("cape_name"),
+            "food_name":      slot.get("food_name"),
+            "potion_name":    slot.get("potion_name"),
+        }
+        repositories.update_composition_slot_fields(
+            db, slot_id, composition_id, guild_workspace_id, backfill_fields, now
+        )
+        repositories.touch_albion_composition(db, composition_id, guild_workspace_id, now)
+
+    return new_build
+
+
+# ---------------------------------------------------------------------------
+# 3b. Create AlbionComposition
 # ---------------------------------------------------------------------------
 
 def create_albion_composition(
@@ -657,21 +1108,31 @@ def create_albion_composition(
         }
         repositories.insert_albion_composition(db, composition)
 
+        resolved = [_resolve_build_for_slot(db, guild_workspace_id, s) for s in slots]
         templates = [
             {
                 "id": str(uuid.uuid4()),
-                "guild_workspace_id": guild_workspace_id,
+                "guild_workspace_id":    guild_workspace_id,
                 "albion_composition_id": composition["id"],
-                "party_number": s["party_number"],
-                "slot_index": s["slot_index"],
-                "role": s["role"].strip(),
-                "build_name": s["build_name"].strip(),
-                "weapon_name": s.get("weapon_name"),
-                "priority": s.get("priority", "normal"),
-                "created_at": now,
-                "updated_at": now,
+                "party_number":  s["party_number"],
+                "slot_index":    s["slot_index"],
+                "role":          s["role"].strip(),
+                "build_name":    s["build_name"].strip(),
+                "weapon_name":   s.get("weapon_name"),
+                "offhand_name":  s.get("offhand_name"),
+                "head_name":     s.get("head_name"),
+                "armor_name":    s.get("armor_name"),
+                "shoes_name":    s.get("shoes_name"),
+                "cape_name":     s.get("cape_name"),
+                "food_name":     s.get("food_name"),
+                "potion_name":   s.get("potion_name"),
+                "albion_build_id": s.get("albion_build_id"),
+                "doctrine_role": s.get("doctrine_role"),
+                "priority":      s.get("priority", "normal"),
+                "created_at":    now,
+                "updated_at":    now,
             }
-            for s in slots
+            for s in resolved
         ]
         repositories.insert_composition_slot_templates(db, templates)
 
@@ -736,6 +1197,182 @@ def retire_composition(
                 "composition_name": comp["name"],
                 "actor_user_id": actor_user_id,
             },
+        )
+        repositories.insert_operational_event(db, event)
+
+
+# ---------------------------------------------------------------------------
+# 3c. Update composition slot templates (edit in-place)
+# ---------------------------------------------------------------------------
+
+def quick_update_composition_slot(
+    guild_workspace_id: str,
+    composition_id: str,
+    actor_user_id: str,
+    slot_id: str,
+    build_name: str,
+    weapon_name: str | None = None,
+    doctrine_role: str | None = None,
+    albion_build_id: str | None = None,
+    role: str = "",
+) -> None:
+    """Update the mutable fields on a single composition slot template.
+
+    Targeted in-place mutation: build_name, weapon_name, doctrine_role, role,
+    and the equipment snapshot are changed.  Priority, party number, and slot
+    index remain untouched.
+
+    ``role`` is updated when a non-empty value is supplied; a blank string
+    preserves the existing role so the caller need not fetch it first.
+
+    Allows empty build_name to set a slot to "open" state — unlike the full
+    update_composition_slots path which requires every slot to have a build.
+
+    Build Snapshot Invariant: does NOT affect operation_slots or any live
+    operation planner state.  Only the composition template is updated.
+    """
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(db, guild_workspace_id, actor_user_id)
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can edit composition slots.")
+
+        comp = repositories.get_albion_composition(db, composition_id, guild_workspace_id)
+        if not comp:
+            raise NotFoundError(f"Composition '{composition_id}' not found.")
+        if comp.get("deleted_at"):
+            raise ConflictError("Cannot edit slots on a retired composition.")
+
+        # Resolve build FK if provided; propagates all equipment fields from build.
+        slot_data: dict = {
+            "role":           (role or "").strip(),
+            "build_name":     (build_name or "").strip(),
+            "weapon_name":    (weapon_name or "").strip() or None,
+            "doctrine_role":  (doctrine_role or "").strip() or None,
+            "albion_build_id": albion_build_id or None,
+            "offhand_name":   None, "head_name": None, "armor_name": None,
+            "shoes_name":     None, "cape_name":  None, "food_name":  None,
+            "potion_name":    None,
+        }
+        resolved = _resolve_build_for_slot(db, guild_workspace_id, slot_data)
+
+        now = _now()
+        fields = {
+            "role":           resolved.get("role", ""),
+            "build_name":     resolved["build_name"],
+            "weapon_name":    resolved.get("weapon_name"),
+            "doctrine_role":  resolved.get("doctrine_role"),
+            "albion_build_id": resolved.get("albion_build_id"),
+            "offhand_name":   resolved.get("offhand_name"),
+            "head_name":      resolved.get("head_name"),
+            "armor_name":     resolved.get("armor_name"),
+            "shoes_name":     resolved.get("shoes_name"),
+            "cape_name":      resolved.get("cape_name"),
+            "food_name":      resolved.get("food_name"),
+            "potion_name":    resolved.get("potion_name"),
+        }
+        updated = repositories.update_composition_slot_fields(
+            db, slot_id, composition_id, guild_workspace_id, fields, now
+        )
+        if updated == 0:
+            raise NotFoundError(f"Slot '{slot_id}' not found in composition '{composition_id}'.")
+
+        repositories.touch_albion_composition(db, composition_id, guild_workspace_id, now)
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_COMPOSITION_SLOTS_UPDATED,
+            entity_type="albion_composition",
+            entity_id=composition_id,
+            actor_type="user",
+            actor_id=actor_user_id,
+            payload={"slot_id": slot_id, "build_name": fields["build_name"]},
+        )
+        repositories.insert_operational_event(db, event)
+
+
+def update_composition_slots(
+    guild_workspace_id: str,
+    composition_id: str,
+    actor_user_id: str,
+    slots: list[dict],
+) -> None:
+    """Atomically replace all slot templates for an existing composition.
+
+    - Composition must exist and not be retired.
+    - Actor must be an officer or owner in the workspace.
+    - Validates the new slot set before applying any changes.
+    - Operation slots generated from this composition are NOT affected —
+      they are frozen snapshots and remain unchanged.
+
+    Editing may NOT clear all slots to zero.  Zero-slot compositions may only
+    be created via create_albion_composition — accidental blanking through the
+    edit form is rejected here.  Use retire_composition to decommission.
+    """
+    if not slots:
+        raise ValidationError(
+            "Clearing all slots via Edit is not allowed. "
+            "Use Retire to decommission a composition."
+        )
+    albion_compositions.validate_slot_templates(slots)
+
+    with database.transaction() as db:
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not actor_mem:
+            raise NotFoundError("Workspace not found.")
+        if not workspace_membership.can_manage_workspace_members(actor_mem["role"]):
+            raise PermissionDenied("Only owners and officers can edit composition slots.")
+
+        comp = repositories.get_albion_composition(db, composition_id, guild_workspace_id)
+        if not comp:
+            raise NotFoundError(f"Composition '{composition_id}' not found.")
+        if comp.get("deleted_at"):
+            raise ConflictError("Cannot edit slots on a retired composition.")
+
+        now = _now()
+        repositories.delete_composition_slot_templates(db, composition_id, guild_workspace_id)
+        resolved = [_resolve_build_for_slot(db, guild_workspace_id, s) for s in slots]
+        new_templates = [
+            {
+                "id": str(uuid.uuid4()),
+                "guild_workspace_id":    guild_workspace_id,
+                "albion_composition_id": composition_id,
+                "party_number":  s["party_number"],
+                "slot_index":    s["slot_index"],
+                "role":          s["role"].strip(),
+                "build_name":    s["build_name"].strip(),
+                "weapon_name":   s.get("weapon_name"),
+                "offhand_name":  s.get("offhand_name"),
+                "head_name":     s.get("head_name"),
+                "armor_name":    s.get("armor_name"),
+                "shoes_name":    s.get("shoes_name"),
+                "cape_name":     s.get("cape_name"),
+                "food_name":     s.get("food_name"),
+                "potion_name":   s.get("potion_name"),
+                "albion_build_id": s.get("albion_build_id"),
+                "doctrine_role": s.get("doctrine_role"),
+                "priority":      s.get("priority", "normal"),
+                "created_at":    now,
+                "updated_at":    now,
+            }
+            for s in resolved
+        ]
+        repositories.insert_composition_slot_templates(db, new_templates)
+        repositories.touch_albion_composition(db, composition_id, guild_workspace_id, now)
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_COMPOSITION_SLOTS_UPDATED,
+            entity_type="albion_composition",
+            entity_id=composition_id,
+            actor_type="user",
+            actor_id=actor_user_id,
+            payload={"slot_count": len(slots)},
         )
         repositories.insert_operational_event(db, event)
 
@@ -843,22 +1480,31 @@ def generate_operation_slots(
         templates = repositories.get_composition_slot_templates(
             db, plan["albion_composition_id"], guild_workspace_id
         )
-        mass_planner.validate_plan_has_templates(len(templates))
+        # Zero-slot compositions are valid named shells; generating from them
+        # produces zero operation slots, which is a valid (empty) snapshot state.
 
         now = _now()
         slots = [
             {
                 "id": str(uuid.uuid4()),
-                "guild_workspace_id": guild_workspace_id,
-                "guild_operation_id": guild_operation_id,
+                "guild_workspace_id":                  guild_workspace_id,
+                "guild_operation_id":                  guild_operation_id,
                 "source_composition_slot_template_id": t["id"],
                 "party_number": t["party_number"],
-                "slot_index": t["slot_index"],
-                "role": t["role"],
-                "build_name": t["build_name"],
-                "weapon_name": t["weapon_name"],
-                "priority": t["priority"],
-                "created_at": now,
+                "slot_index":   t["slot_index"],
+                "role":         t["role"],
+                "build_name":   t["build_name"],
+                "weapon_name":  t["weapon_name"],
+                "offhand_name": t.get("offhand_name"),
+                "head_name":    t.get("head_name"),
+                "armor_name":   t.get("armor_name"),
+                "shoes_name":   t.get("shoes_name"),
+                "cape_name":     t.get("cape_name"),
+                "food_name":     t.get("food_name"),
+                "potion_name":   t.get("potion_name"),
+                "doctrine_role": t.get("doctrine_role"),
+                "priority":      t["priority"],
+                "created_at":    now,
             }
             for t in templates
         ]
@@ -890,6 +1536,7 @@ def submit_signup_intent(
     willingness: str = "specific",
     availability: str = "confirmed",
     source: str = "web",
+    actor_user_id: str | None = None,
 ) -> dict:
     """
     Register a participant's intent to attend an operation.
@@ -928,6 +1575,15 @@ def submit_signup_intent(
                 f"'{display_name}' has already submitted a signup for this operation."
             )
 
+        # Encode the submitting user's ID into the source field so that
+        # withdrawal ownership can be verified by user ID rather than
+        # display_name — without requiring a schema change.
+        # Format: "web:{user_id}" for authenticated web signups.
+        # "discord" is unchanged; old "web" entries fall back to display_name.
+        effective_source = source
+        if source == "web" and actor_user_id:
+            effective_source = f"web:{actor_user_id}"
+
         now = _now()
         signup = {
             "id": str(uuid.uuid4()),
@@ -938,7 +1594,7 @@ def submit_signup_intent(
             "preferred_build_name": preferred_build_name,
             "willingness": willingness,
             "availability": availability,
-            "source": source,
+            "source": effective_source,
             "created_at": now,
         }
         repositories.insert_signup_intent(db, signup)
@@ -993,12 +1649,9 @@ def withdraw_signup_intent(
         if not actor:
             raise NotFoundError("Actor user not found.")
         membership = repositories.get_workspace_membership(db, guild_workspace_id, actor_user_id)
-        if not membership:
-            raise PermissionDenied("You are not a member of this workspace.")
 
-        actor_role = membership["role"]
-
-        # Fetch and validate the signup.
+        # Fetch and validate the signup before the permission check so that
+        # 'not found' errors take priority over 'permission denied' errors.
         signup = repositories.get_signup_intent_by_id(db, signup_id, guild_workspace_id)
         if not signup or signup["guild_operation_id"] != guild_operation_id:
             raise NotFoundError("Signup not found.")
@@ -1008,22 +1661,38 @@ def withdraw_signup_intent(
         if not op:
             raise NotFoundError("Operation not found.")
         if op["status"] not in _SIGNUP_WITHDRAWAL_ALLOWED_STATUSES:
+            status = op["status"]
             raise ConflictError(
-                f"Signup withdrawal is not allowed when the operation status is "
-                f"'{op['status']}'."
+                f"Signup withdrawal is not allowed when the operation status is '{status}'."
             )
 
         # Already withdrawn?
         if signup["withdrawn_at"] is not None:
             raise ConflictError("This signup has already been withdrawn.")
 
-        # Member permission check.
-        # Dev-auth phase: compare display names.  Replace with userâ†”participant
-        # identity link when a persistent auth provider is available.
-        if actor_role == "member":
-            participant = repositories.get_participant(db, signup["participant_id"], guild_workspace_id)
-            if not participant or participant["display_name"] != actor["display_name"]:
-                raise PermissionDenied("You can only withdraw your own signup.")
+        # Permission check.
+        # Officers and owners may withdraw any signup.
+        # Members and non-members (visitors) may only withdraw their own.
+        actor_role = membership["role"] if membership else None
+        is_privileged = actor_role in workspace_membership.MUTATOR_ROLES
+
+        if not is_privileged:
+            # Ownership: use the mechanism that matches how this signup was created.
+            # "web:{user_id}" signups — ID-only check, no display-name fallback.
+            #   This makes display-name collisions harmless for any signup that
+            #   carries an embedded user ID.
+            # "web" / "discord" / legacy signups — display-name fallback only;
+            #   these pre-date the ID-stamping change.
+            source = signup.get("source") or ""
+            if source.startswith("web:"):
+                if source != f"web:{actor_user_id}":
+                    raise PermissionDenied("You can only withdraw your own signup.")
+            else:
+                participant = repositories.get_participant(
+                    db, signup["participant_id"], guild_workspace_id
+                )
+                if not participant or participant["display_name"] != actor["display_name"]:
+                    raise PermissionDenied("You can only withdraw your own signup.")
 
         # Active assignment guard.
         active_count = repositories.count_active_assignments_for_participant_in_operation(
@@ -1185,13 +1854,12 @@ def assign_participant_to_operation_slot(
         active = repositories.get_active_assignment_for_slot(db, operation_slot_id)
         mass_planner.validate_slot_is_open(active)
 
-        assignment, reserve_was_removed = _execute_single_assignment(
+        assignment, _reserve_was_removed = _execute_single_assignment(
             db, guild_workspace_id, guild_operation_id, slot, participant_id
         )
 
-        # Recalculate readiness when reserve_count changed (reserve was cleaned up).
-        if reserve_was_removed:
-            _recalculate_readiness(db, guild_workspace_id, guild_operation_id)
+        # Always recalculate — slot fill state changed regardless of reserve cleanup.
+        _recalculate_readiness(db, guild_workspace_id, guild_operation_id)
 
     return assignment
 
@@ -1696,6 +2364,80 @@ def remove_assignment(
     return {**assignment, "status": "removed"}
 
 
+def reassign_slot(
+    guild_workspace_id: str,
+    guild_operation_id: str,
+    operation_slot_id: str,
+    new_participant_id: str,
+) -> dict:
+    """Atomic swap: soft-remove any active assignment then assign a new participant.
+
+    Combines the remove + assign in a single transaction so the slot is never
+    in an intermediate unassigned state visible to concurrent readers.
+
+    If the slot already has no active assignment the remove step is skipped and
+    this behaves as a plain assign.  This is intentional: calling reassign on
+    an open slot is valid and produces the expected outcome.
+
+    Snapshot invariant: operation_slots is never mutated — only the assignments
+    table changes.  The frozen slot identity (role, build) is preserved.
+
+    Returns the new assignment row.
+    """
+    with database.transaction() as db:
+        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
+        if not op:
+            raise NotFoundError(
+                f"GuildOperation '{guild_operation_id}' not found in this workspace."
+            )
+
+        guild_operations.validate_assignment_mutation_allowed(op["status"])
+
+        slot = repositories.get_operation_slot(db, operation_slot_id, guild_workspace_id)
+        if not slot:
+            raise NotFoundError(
+                f"OperationSlot '{operation_slot_id}' not found in this workspace."
+            )
+        if slot["guild_operation_id"] != guild_operation_id:
+            raise ValidationError(
+                "OperationSlot does not belong to the specified GuildOperation."
+            )
+
+        # Soft-remove the existing assignment if one is active.
+        existing = repositories.get_active_assignment_for_slot(db, operation_slot_id)
+        if existing:
+            if existing.get("guild_workspace_id") not in (guild_workspace_id, None):
+                raise WorkspaceBoundaryViolation(
+                    "Existing assignment does not belong to this workspace."
+                )
+            repositories.set_assignment_status(
+                db, existing["id"], guild_operation_id, "removed", guild_workspace_id
+            )
+            rm_event = operational_events.make_event(
+                guild_workspace_id=guild_workspace_id,
+                guild_operation_id=guild_operation_id,
+                event_type=operational_events.ASSIGNMENT_REMOVED,
+                entity_type="assignment",
+                entity_id=existing["id"],
+                payload={
+                    "operation_slot_id": operation_slot_id,
+                    "participant_id":    existing["participant_id"],
+                    "reason":            "reassign",
+                },
+            )
+            repositories.insert_operational_event(db, rm_event)
+
+        # Assign the replacement participant.
+        assignment, _reserve_removed = _execute_single_assignment(
+            db, guild_workspace_id, guild_operation_id, slot, new_participant_id
+        )
+
+        # Single readiness recalculation covers both the remove and the assign.
+        _recalculate_readiness(db, guild_workspace_id, guild_operation_id)
+
+    return assignment
+
+
 # ---------------------------------------------------------------------------
 # 12. Mark Participant as Reserve
 # ---------------------------------------------------------------------------
@@ -2105,6 +2847,7 @@ def post_discord_announcement(
     guild_workspace_id: str,
     guild_operation_id: str,
     actor_id: str,
+    signup_url: str | None = None,
 ) -> dict:
     """
     Post (or update) the operation announcement message on Discord.
@@ -2172,18 +2915,21 @@ def post_discord_announcement(
             db, guild_workspace_id, guild_operation_id, "announcement"
         )
 
+
     # ------------------------------------------------------------------
     # Format payload (pure, no DB or API)
     # signup_url links Discord users to the web signup page.
-    # WEB_BASE_URL is optional â€” omitted means no link button.
+    # Prefer the caller-supplied URL (built from request.base_url at the
+    # route layer); fall back to WEB_BASE_URL env var for non-HTTP callers
+    # such as the Discord bot adapter.
     # ------------------------------------------------------------------
-    web_base_url = os.environ.get("WEB_BASE_URL", "").rstrip("/")
-    signup_url = (
-        f"{web_base_url}/workspaces/{ws['slug']}/operations/{guild_operation_id}/signup"
-        if web_base_url else None
-    )
+    if signup_url is None:
+        web_base_url = os.environ.get("WEB_BASE_URL", "").rstrip("/")
+        signup_url = (
+            f"{web_base_url}/workspaces/{ws['slug']}/operations/{guild_operation_id}/signup"
+            if web_base_url else None
+        )
     payload = format_operation_announcement(op, readiness, signup_url=signup_url)
-
     # ------------------------------------------------------------------
     # REST call â€” outside any DB transaction
     # DiscordApiError propagates to the caller; Phase 2 is skipped entirely.

@@ -1,0 +1,66 @@
+{# ── Doctrine rendering macros ─────────────────────────────────────────────
+   Reusable compact doctrine summary components.
+   Import in any template that needs doctrine display:
+
+     {% from "_doctrine_macros.html" import doctrine_summary %}
+
+   doctrine_summary(obj) renders a scannable multi-line build summary:
+
+     T8.3 Hallowfall · Mistcaller
+     Scholar Cowl · Scholar Robe · Scholar Sandals · Lymhurst Cape
+     Pork Omelette · Resistance Potion
+
+   The macro accepts any object (build row or slot row) that exposes the
+   standard equipment fields:
+     weapon_name, offhand_name, head_name, armor_name, shoes_name,
+     cape_name, food_name, potion_name
+   ───────────────────────────────────────────────────────────────────────── #}
+
+{% macro doctrine_summary(obj, css_class='') %}
+{%- set _weapon    = obj.weapon_name or '' -%}
+{%- set _offhand   = obj.offhand_name or '' -%}
+{%- set _head      = obj.head_name    or '' -%}
+{%- set _armor     = obj.armor_name   or '' -%}
+{%- set _shoes     = obj.shoes_name   or '' -%}
+{%- set _cape      = obj.cape_name    or '' -%}
+{%- set _food      = obj.food_name    or '' -%}
+{%- set _potion    = obj.potion_name  or '' -%}
+{%- set _armour_parts = [] -%}
+{%- if _head   %}{% set _armour_parts = _armour_parts + [_head]   %}{% endif -%}
+{%- if _armor  %}{% set _armour_parts = _armour_parts + [_armor]  %}{% endif -%}
+{%- if _shoes  %}{% set _armour_parts = _armour_parts + [_shoes]  %}{% endif -%}
+{%- if _cape   %}{% set _armour_parts = _armour_parts + [_cape]   %}{% endif -%}
+{%- set _cons_parts = [] -%}
+{%- if _food   %}{% set _cons_parts = _cons_parts + [_food]   %}{% endif -%}
+{%- if _potion %}{% set _cons_parts = _cons_parts + [_potion] %}{% endif -%}
+<div class="bld-doctrine{{ (' ' ~ css_class) if css_class }}">
+  {%- if _weapon %}
+  <div class="bld-doctrine__weapons">
+    <span class="bld-doctrine__weapon">{{ _weapon }}</span>
+    {%- if _offhand %}<span class="bld-doctrine__sep"> · </span><span class="bld-doctrine__offhand">{{ _offhand }}</span>{% endif %}
+  </div>
+  {%- endif %}
+  {%- if _armour_parts %}
+  <div class="bld-doctrine__armour">{{ _armour_parts | join(' · ') }}</div>
+  {%- endif %}
+  {%- if _cons_parts %}
+  <div class="bld-doctrine__consumables">{{ _cons_parts | join(' · ') }}</div>
+  {%- endif %}
+</div>
+{% endmacro %}
+
+
+{% macro doctrine_inline(obj) %}
+{#- Single-line compact summary: weapon [· offhand] [· armour pieces] [· consumables]
+    Used where vertical space is constrained (e.g. build list cards). -#}
+{%- set _parts = [] -%}
+{%- if obj.weapon_name %}{% set _parts = _parts + [obj.weapon_name] %}{% endif -%}
+{%- if obj.offhand_name %}{% set _parts = _parts + [obj.offhand_name] %}{% endif -%}
+{%- if obj.head_name   %}{% set _parts = _parts + [obj.head_name]   %}{% endif -%}
+{%- if obj.armor_name  %}{% set _parts = _parts + [obj.armor_name]  %}{% endif -%}
+{%- if obj.shoes_name  %}{% set _parts = _parts + [obj.shoes_name]  %}{% endif -%}
+{%- if obj.cape_name   %}{% set _parts = _parts + [obj.cape_name]   %}{% endif -%}
+{%- if obj.food_name   %}{% set _parts = _parts + [obj.food_name]   %}{% endif -%}
+{%- if obj.potion_name %}{% set _parts = _parts + [obj.potion_name] %}{% endif -%}
+{{ _parts | join(' · ') }}
+{% endmacro %}

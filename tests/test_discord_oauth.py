@@ -37,7 +37,10 @@ Covers:
   22. safe_next allows valid relative path.
   23. safe_next rejects protocol-relative "//evil.com".
   24. safe_next rejects absolute URL "https://evil.com".
-  25. safe_next returns "/" for empty/None.
+  25. safe_next returns "/workspaces" for empty/None/whitespace/invalid.
+  26. safe_next allows query strings on internal paths.
+  27. safe_next rejects javascript: scheme.
+  28. safe_next rejects ftp: and other non-http schemes.
 """
 
 from __future__ import annotations
@@ -403,7 +406,7 @@ def test_login_page_production_unconfigured_shows_error():
 
 
 # ---------------------------------------------------------------------------
-# 22-25: _safe_next helper
+# 22-28: _safe_next helper
 # ---------------------------------------------------------------------------
 
 def test_safe_next_allows_valid_relative_path():
@@ -411,13 +414,57 @@ def test_safe_next_allows_valid_relative_path():
 
 
 def test_safe_next_rejects_protocol_relative():
-    assert _safe_next("//evil.com/steal") == "/"
+    # Protocol-relative URLs are an open-redirect vector — must be blocked.
+    assert _safe_next("//evil.com/steal") == "/workspaces"
 
 
 def test_safe_next_rejects_absolute_url():
-    assert _safe_next("https://evil.com") == "/"
+    # Absolute HTTP/HTTPS URLs must never be accepted as redirect targets.
+    assert _safe_next("https://evil.com") == "/workspaces"
+    assert _safe_next("http://evil.com") == "/workspaces"
 
 
-def test_safe_next_returns_slash_for_empty():
-    assert _safe_next("") == "/"
-    assert _safe_next(None) == "/"
+def test_safe_next_returns_workspaces_for_empty():
+    # Absent or empty next-path defaults to the authenticated dashboard.
+    assert _safe_next("") == "/workspaces"
+    assert _safe_next(None) == "/workspaces"
+
+
+def test_safe_next_returns_workspaces_for_whitespace_only():
+    # Whitespace-only strings are equivalent to absent — reject cleanly.
+    assert _safe_next("   ") == "/workspaces"
+    assert _safe_next("\t\n") == "/workspaces"
+
+
+def test_safe_next_rejects_javascript_scheme():
+    # javascript: payloads must be blocked — they do not start with "/".
+    assert _safe_next("javascript:alert(1)") == "/workspaces"
+    assert _safe_next("JAVASCRIPT:alert(1)") == "/workspaces"
+
+
+def test_safe_next_rejects_non_http_schemes():
+    # Any scheme other than a leading "/" is external and must be rejected.
+    assert _safe_next("ftp://example.com") == "/workspaces"
+    assert _safe_next("data:text/html,<h1>x</h1>") == "/workspaces"
+
+
+def test_safe_next_preserves_internal_path_with_query_string():
+    # Query strings are a legitimate part of internal paths and must survive.
+    assert _safe_next("/workspaces/orbie?tab=operations") == "/workspaces/orbie?tab=operations"
+    assert _safe_next("/foo/bar?x=1&y=2") == "/foo/bar?x=1&y=2"
+
+
+def test_safe_next_preserves_root_slash():
+    # A bare "/" is a valid internal path (the public landing page).
+    assert _safe_next("/") == "/"
+
+
+def test_safe_next_authenticated_fallback_is_workspaces():
+    # The fallback for all rejected/missing inputs is the authenticated default,
+    # NOT the public landing page — authenticated users should land at /workspaces.
+    for bad in (None, "", "   ", "//evil.com", "https://evil.com",
+                "javascript:x", "ftp://x"):
+        result = _safe_next(bad)
+        assert result == "/workspaces", (
+            f"_safe_next({bad!r}) returned {result!r}, expected '/workspaces'"
+        )

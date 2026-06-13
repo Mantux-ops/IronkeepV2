@@ -1,7 +1,7 @@
 {# Operation navigation tabs.
    Include this at the top of every operation-level page.
    Requires `workspace`, `operation`, and `active_tab` in context. #}
-<nav class="op-tabs">
+<nav class="op-tabs" aria-label="Operation">
   <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}"
      class="{% if active_tab == 'overview' %}active{% endif %}">Overview</a>
   <a href="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/planner"

@@ -66,11 +66,11 @@
       <table class="sched-table">
         <thead>
           <tr>
-            <th>Event type</th>
-            <th>Retries</th>
-            <th>Last attempt (UTC)</th>
-            <th>Next attempt (UTC)</th>
-            <th>Error</th>
+            <th scope="col">Event type</th>
+            <th scope="col">Retries</th>
+            <th scope="col">Last attempt (UTC)</th>
+            <th scope="col">Next attempt (UTC)</th>
+            <th scope="col">Error</th>
           </tr>
         </thead>
         <tbody>
@@ -113,11 +113,11 @@
       <table class="sched-table">
         <thead>
           <tr>
-            <th>Job</th>
-            <th>Started</th>
-            <th>Duration</th>
-            <th>Status</th>
-            <th>Summary</th>
+            <th scope="col">Job</th>
+            <th scope="col">Started</th>
+            <th scope="col">Duration</th>
+            <th scope="col">Status</th>
+            <th scope="col">Summary</th>
           </tr>
         </thead>
         <tbody>
@@ -168,9 +168,7 @@
       </table>
     </div>
     {% else %}
-    <p style="color: var(--text-muted); font-size: 0.875rem">
-      No scheduler runs recorded yet.
-    </p>
+    <p class="empty-state">No scheduler runs recorded yet.</p>
     {% endif %}
 
     <p style="margin-top: 1.5rem; font-size: 0.78rem; color: var(--text-muted)">

@@ -1,0 +1,312 @@
+/* =========================================================
+   IronkeepV2 — Dashboard
+   Dashboard layout, metric cards, attention widgets,
+   scheduler table, activity list, stat grids.
+   @media breakpoints for these rules live in responsive.css.
+   ========================================================= */
+
+/* ── Workspace entry hero strip ───────────────────────── */
+/* Lightweight framing element above the summary metrics.
+   Phase 8.8 Slice 2: elevated shadow + accent left-border add warmth.
+   The left-border uses --accent at reduced opacity to connect the hero
+   strip to the product identity without creating a loud decoration.   */
+.ws-hero {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  padding: var(--space-4) var(--space-5);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid rgba(88, 166, 255, 0.45);  /* accent tint — soft, not a status signal */
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  margin-bottom: var(--space-5);
+}
+.ws-hero__content { min-width: 0; }
+.ws-hero__name {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  margin: 0;
+}
+.ws-hero__meta {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  margin: var(--space-1) 0 0;
+}
+.ws-hero__actions { flex-shrink: 0; }
+
+/* ── Dashboard layout primitives ──────────────────────── */
+
+/* dashboard-grid: main content column + fixed-width sidebar */
+.dashboard-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 300px;
+  gap: var(--space-4);
+  align-items: start;
+}
+/* @media (max-width: 960px) { .dashboard-grid } → responsive.css */
+
+/* sidebar-panel: vertical stack of cards inside .dashboard-grid aside */
+.sidebar-panel { display: flex; flex-direction: column; gap: var(--space-4); }
+
+/* section-header__action: trailing action link in a section title row.
+   Only the __action child is used in templates; no element carries
+   class="section-header" as a parent. The parent rule was removed in
+   Phase 5 as confirmed dead CSS. */
+.section-header__action {
+  font-size: var(--text-base);
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+.section-header__action:hover { color: var(--text); text-decoration: none; }
+
+/* metric-card: compact KPI tile
+   Phase 8.8 Slice 2: --radius-card and a light shadow add surface presence.
+   The KPI tiles now feel elevated from the ambient canvas rather than painted
+   flat on it. Summary metrics strip gains section rhythm as a result.       */
+.metric-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow);
+  padding: var(--space-3) var(--space-4);
+}
+.metric-card__value {
+  font-size: var(--text-xl);
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.metric-card__label {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-top: var(--space-1);
+}
+.metric-card__sub {
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+  margin-top: var(--space-1);
+}
+
+/* action-group: full-width stacked button list for sidebars */
+.action-group {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.action-group a,
+.action-group button {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+
+/* ── Attention list ────────────────────────────────────── */
+.attention-list { display: flex; flex-direction: column; }
+.attention-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+}
+.attention-item:last-child { border-bottom: none; }
+
+.attention-item__count {
+  font-size: 1rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  min-width: 2rem;
+  text-align: center;
+  flex-shrink: 0;
+}
+.attention-item--warning .attention-item__count { color: var(--warning); }
+.attention-item--danger  .attention-item__count { color: var(--danger-text); }
+.attention-item--info    .attention-item__count { color: var(--info); }
+
+.attention-item__body { flex: 1; min-width: 0; }
+.attention-item__body strong { display: block; font-size: var(--text-base); font-weight: 600; }
+.attention-item__body small  { font-size: var(--text-sm); color: var(--text-muted); }
+
+/* ── Summary metrics strip ─────────────────────────────── */
+.summary-metrics {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+
+/* Accent variants — semantic left-border highlight (one per semantic state) */
+.metric-card--ok      { border-left: 3px solid var(--success); }
+.metric-card--info    { border-left: 3px solid var(--info); }
+.metric-card--warning { border-left: 3px solid var(--warning); }
+.metric-card--danger  { border-left: 3px solid var(--danger-text); }
+.metric-card--neutral { border-left: 3px solid var(--border); }
+
+/* metric-card__fraction: the "/total" denominator inside __value (kept here
+   with metric-card BEM family; was previously in utilities.css). */
+.metric-card__fraction {
+  font-size: 0.65em;
+  color: var(--text-muted);
+  font-weight: 400;
+}
+
+/* ── Dashboard hierarchy — readiness accents, emphasis ─── */
+.all-clear-state {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  background: var(--success-bg);
+  border: 1px solid var(--success-border);
+  border-radius: var(--radius);
+  color: var(--success-text);
+  font-size: var(--text-base);
+  margin-bottom: var(--space-5);
+}
+
+.op-title-cell { font-weight: 600; }
+.op-title-cell a { font-weight: 600; }
+
+.op-type-cell {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-left: 0.4em;
+}
+
+/* Dashboard readiness row accents */
+.data-table tr.row-not-ready td { border-left: 3px solid var(--danger-text); }
+.data-table tr.row-forming   td { border-left: 3px solid var(--warning); }
+
+/* card--compact: reduced padding for secondary/metadata cards */
+.card--compact .card-header { padding: var(--space-2) var(--space-3); }
+.card--compact .card-body   { padding: var(--space-2) var(--space-3); }
+
+/* sidebar-label: low-priority sidebar info card header */
+.sidebar-label {
+  padding: var(--space-2) var(--space-3) 0;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-faint);
+}
+
+/* action-section-label: section divider within a sidebar action group */
+.action-section-label {
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
+  padding-top: var(--space-3);
+  margin-top: var(--space-1);
+  border-top: 1px solid var(--border);
+  display: block;
+}
+.action-section-label:first-child {
+  padding-top: 0;
+  margin-top: 0;
+  border-top: none;
+}
+
+/* op-next-step: inline workflow continuation hint */
+.op-next-step {
+  display: block;
+  font-size: 0.73rem;
+  font-weight: 400;
+  color: var(--text-faint);
+  margin-top: 0.1em;
+}
+
+/* ── Stat grid ─────────────────────────────────────────── */
+.stat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: var(--space-3); }
+.stat-item {
+  padding: var(--space-3);
+  background: var(--surface-2);
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+.stat-item strong { display: block; font-size: var(--text-lg); font-weight: 700; color: var(--text); margin-bottom: 0.15rem; }
+.stat-item span   { font-size: var(--text-sm); color: var(--text-muted); }
+
+/* ── Scheduler status table ────────────────────────────── */
+.sched-table { width: 100%; border-collapse: collapse; font-size: var(--text-base); }
+.sched-table th {
+  text-align: left;
+  padding: 0.4rem 0.6rem;
+  border-bottom: 2px solid var(--border);
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.sched-table td { padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+.sched-table tr:last-child td { border-bottom: none; }
+.sched-table tr.row-stuck td { background: var(--warning-bg); }
+.sched-table .col-job  { font-family: ui-monospace, monospace; font-size: 0.8125rem; white-space: nowrap; color: var(--accent); }
+.sched-table .col-time { font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sched-table .col-dur  { font-size: var(--text-sm); color: var(--text-muted); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.sched-table .col-err  { font-size: 0.78rem; color: var(--danger-text); font-family: ui-monospace, monospace; margin-top: 0.25rem; }
+
+details.result-details { margin-top: 0.3rem; }
+details.result-details summary { font-size: var(--text-xs); color: var(--text-muted); cursor: pointer; user-select: none; }
+details.result-details pre {
+  margin-top: 0.3rem;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--text-muted);
+}
+
+/* ── Recent activity widget ────────────────────────────── */
+.activity-list {
+  display: flex;
+  flex-direction: column;
+}
+.activity-item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15em;
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--border);
+}
+.activity-item:last-child { border-bottom: none; }
+
+/* Primary text: what happened */
+.activity-item__event {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  line-height: 1.35;
+  color: var(--text);
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+/* Secondary text: which operation (muted link) */
+.activity-item__op {
+  font-size: 0.775rem;
+  color: var(--text-muted);
+  overflow-wrap: break-word;
+  word-break: break-word;
+}
+.activity-item__op a { color: var(--text-muted); }
+.activity-item__op a:hover { color: var(--text); text-decoration: none; }
+
+/* Faint meta: relative timestamp */
+.activity-item__meta {
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-top: 0.1em;
+}

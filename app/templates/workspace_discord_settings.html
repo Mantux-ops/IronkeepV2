@@ -80,7 +80,7 @@
     </form>
 
     {% if workspace.discord_guild_id %}
-    <div class="card-section" style="margin-top: 1.5rem; padding-top: 1rem; border-top: 1px solid var(--border);">
+    <div class="card-section">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem">
         <h3 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin:0">Current Configuration</h3>
         {% set any_stale = discord_meta.values() | selectattr('is_stale') | list | length > 0 %}
@@ -113,14 +113,14 @@
       </dl>
 
       {% if not any_meta and workspace.discord_guild_id %}
-      <p class="page-meta" style="margin-top:0.5rem;font-size:0.8rem">
+      <div class="page-meta" style="margin-top:0.5rem;font-size:0.8rem">
         Discord names not yet fetched.
         <form method="post"
               action="/workspaces/{{ workspace.slug }}/settings/discord/refresh-metadata"
               class="inline-form" style="display:inline">
           <button type="submit" class="btn btn-sm">Fetch Discord Names</button>
         </form>
-      </p>
+      </div>
       {% endif %}
     </div>
     {% endif %}

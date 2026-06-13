@@ -447,6 +447,73 @@ def count_deleted_albion_compositions(
     return row[0] if row else 0
 
 
+def get_all_composition_slot_roles_for_workspace(
+    db: sqlite3.Connection, guild_workspace_id: str
+) -> list[dict]:
+    """Fetch (albion_composition_id, role) pairs for all slot templates in the workspace.
+
+    Returns only the fields needed for role-tally computation on the compositions list page.
+    Avoids N individual queries by fetching all templates in one pass.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT albion_composition_id, role
+            FROM composition_slot_templates
+            WHERE guild_workspace_id = ?
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    )
+
+
+def get_operations_using_composition(
+    db: sqlite3.Connection, composition_id: str, guild_workspace_id: str
+) -> list[dict]:
+    """Return non-archived operations that reference this composition via operation_plans.
+
+    Used by the composition detail page to surface active operational context
+    and provide direct Planner navigation links.
+    Ordered by scheduled_start_at descending (most recent first).
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT o.id, o.title, o.operation_type, o.status, o.scheduled_start_at
+            FROM guild_operations o
+            JOIN operation_plans p ON p.guild_operation_id = o.id
+            WHERE p.albion_composition_id = ?
+              AND p.guild_workspace_id = ?
+              AND o.status != 'archived'
+            ORDER BY o.scheduled_start_at DESC
+            """,
+            (composition_id, guild_workspace_id),
+        ).fetchall()
+    )
+
+
+def count_active_operations_per_composition(
+    db: sqlite3.Connection, guild_workspace_id: str
+) -> dict[str, int]:
+    """Return {albion_composition_id: count} of non-archived operations using each composition.
+
+    An operation is counted as active when its status is not 'archived'.
+    Used by the compositions list to show tactical reuse context.
+    """
+    rows = db.execute(
+        """
+        SELECT p.albion_composition_id, COUNT(p.guild_operation_id) AS cnt
+        FROM operation_plans p
+        JOIN guild_operations o ON o.id = p.guild_operation_id
+        WHERE p.guild_workspace_id = ?
+          AND o.status != 'archived'
+        GROUP BY p.albion_composition_id
+        """,
+        (guild_workspace_id,),
+    ).fetchall()
+    return {row["albion_composition_id"]: row["cnt"] for row in rows}
+
+
 def soft_delete_albion_composition(
     db: sqlite3.Connection,
     composition_id: str,
@@ -469,6 +536,176 @@ def soft_delete_albion_composition(
 
 
 # ---------------------------------------------------------------------------
+# AlbionBuild
+# ---------------------------------------------------------------------------
+
+def insert_albion_build(db: sqlite3.Connection, build: dict) -> None:
+    db.execute(
+        """
+        INSERT INTO albion_builds
+            (id, guild_workspace_id, name, role, weapon_name, offhand_name,
+             head_name, armor_name, shoes_name, cape_name, food_name, potion_name,
+             notes, doctrine_role, created_at, updated_at, retired_at)
+        VALUES
+            (:id, :guild_workspace_id, :name, :role, :weapon_name, :offhand_name,
+             :head_name, :armor_name, :shoes_name, :cape_name, :food_name, :potion_name,
+             :notes, :doctrine_role, :created_at, :updated_at, :retired_at)
+        """,
+        build,
+    )
+
+
+def get_albion_build(
+    db: sqlite3.Connection, build_id: str, guild_workspace_id: str
+) -> dict | None:
+    return _row(
+        db.execute(
+            "SELECT * FROM albion_builds WHERE id = ? AND guild_workspace_id = ?",
+            (build_id, guild_workspace_id),
+        ).fetchone()
+    )
+
+
+def get_albion_builds(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    include_retired: bool = False,
+) -> list[dict]:
+    if include_retired:
+        sql = (
+            "SELECT * FROM albion_builds WHERE guild_workspace_id = ? "
+            "ORDER BY name"
+        )
+    else:
+        sql = (
+            "SELECT * FROM albion_builds "
+            "WHERE guild_workspace_id = ? AND retired_at IS NULL "
+            "ORDER BY name"
+        )
+    return _rows(db.execute(sql, (guild_workspace_id,)).fetchall())
+
+
+def update_albion_build_fields(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    fields: dict,
+    updated_at: str,
+) -> None:
+    """Update mutable fields on an albion_build row."""
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET name          = :name,
+            role          = :role,
+            weapon_name   = :weapon_name,
+            offhand_name  = :offhand_name,
+            head_name     = :head_name,
+            armor_name    = :armor_name,
+            shoes_name    = :shoes_name,
+            cape_name     = :cape_name,
+            food_name     = :food_name,
+            potion_name   = :potion_name,
+            notes         = :notes,
+            doctrine_role = :doctrine_role,
+            updated_at    = :updated_at
+        WHERE id = :id AND guild_workspace_id = :guild_workspace_id
+        """,
+        {**fields, "id": build_id, "guild_workspace_id": guild_workspace_id, "updated_at": updated_at},
+    )
+
+
+def retire_albion_build(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    retired_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET retired_at = ?, updated_at = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (retired_at, retired_at, build_id, guild_workspace_id),
+    )
+
+
+def get_build_usage_compositions(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return distinct active compositions that reference build_id via FK.
+
+    A composition is counted when at least one of its composition_slot_templates
+    rows carries albion_build_id = build_id.  Retired compositions
+    (deleted_at IS NOT NULL) are excluded.  Results are ordered by name.
+
+    This is a read-only query — it never touches slot templates or operation
+    slots.  The FK is a traceability reference only; this query surfaces it.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT DISTINCT c.id, c.name, c.deleted_at
+            FROM albion_compositions c
+            JOIN composition_slot_templates cst
+              ON cst.albion_composition_id = c.id
+             AND cst.albion_build_id = ?
+             AND cst.guild_workspace_id = ?
+            WHERE c.deleted_at IS NULL
+            ORDER BY c.name
+            """,
+            (build_id, guild_workspace_id),
+        ).fetchall()
+    )
+
+
+def get_builds_with_usage_counts(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    include_retired: bool = False,
+) -> list[dict]:
+    """Return build rows augmented with a usage_count field.
+
+    usage_count = number of distinct active compositions (deleted_at IS NULL)
+    that have at least one composition_slot_templates row with
+    albion_build_id = build.id.
+
+    Builds with no FK references carry usage_count = 0.
+    Ordering matches get_albion_builds: alphabetical by name.
+    """
+    retired_clause = "" if include_retired else "AND b.retired_at IS NULL"
+    rows = _rows(
+        db.execute(
+            f"""
+            SELECT b.*,
+                   COUNT(DISTINCT CASE
+                       WHEN c.deleted_at IS NULL THEN cst.albion_composition_id
+                   END) AS usage_count
+            FROM albion_builds b
+            LEFT JOIN composition_slot_templates cst
+              ON cst.albion_build_id = b.id
+             AND cst.guild_workspace_id = b.guild_workspace_id
+            LEFT JOIN albion_compositions c
+              ON c.id = cst.albion_composition_id
+            WHERE b.guild_workspace_id = ?
+              {retired_clause}
+            GROUP BY b.id
+            ORDER BY b.name
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    )
+    # Ensure usage_count is always an int (sqlite returns it as int already,
+    # but guard for None from an empty LEFT JOIN).
+    for row in rows:
+        row["usage_count"] = row.get("usage_count") or 0
+    return rows
+
+
+# ---------------------------------------------------------------------------
 # CompositionSlotTemplate
 # ---------------------------------------------------------------------------
 
@@ -479,10 +716,14 @@ def insert_composition_slot_templates(
         """
         INSERT INTO composition_slot_templates
             (id, guild_workspace_id, albion_composition_id, party_number, slot_index,
-             role, build_name, weapon_name, priority, created_at, updated_at)
+             role, build_name, weapon_name,
+             offhand_name, head_name, armor_name, shoes_name, cape_name, food_name, potion_name,
+             albion_build_id, doctrine_role, priority, created_at, updated_at)
         VALUES
             (:id, :guild_workspace_id, :albion_composition_id, :party_number, :slot_index,
-             :role, :build_name, :weapon_name, :priority, :created_at, :updated_at)
+             :role, :build_name, :weapon_name,
+             :offhand_name, :head_name, :armor_name, :shoes_name, :cape_name, :food_name, :potion_name,
+             :albion_build_id, :doctrine_role, :priority, :created_at, :updated_at)
         """,
         templates,
     )
@@ -500,6 +741,153 @@ def get_composition_slot_templates(
             """,
             (composition_id, guild_workspace_id),
         ).fetchall()
+    )
+
+
+def get_composition_slot_template_by_id(
+    db: sqlite3.Connection, template_id: str, guild_workspace_id: str
+) -> dict | None:
+    """Fetch a single composition_slot_templates row by primary key.
+
+    Scoped to guild_workspace_id so cross-workspace reads are structurally
+    impossible.  Returns None if the template does not exist or belongs to a
+    different workspace.
+    """
+    return _row(
+        db.execute(
+            "SELECT * FROM composition_slot_templates WHERE id = ? AND guild_workspace_id = ?",
+            (template_id, guild_workspace_id),
+        ).fetchone()
+    )
+
+
+def update_composition_slot_fields(
+    db: sqlite3.Connection,
+    slot_id: str,
+    composition_id: str,
+    guild_workspace_id: str,
+    fields: dict,
+    updated_at: str,
+) -> int:
+    """Targeted UPDATE on a single composition_slot_templates row.
+
+    Updates only the mutable doctrine fields (build, weapon, doctrine_role,
+    equipment snapshot) without touching role, priority, party, or index.
+    Returns the number of rows updated (1 on success, 0 if slot not found).
+
+    The WHERE clause scopes the update to the correct workspace and composition
+    so cross-workspace writes are structurally impossible.
+    Does NOT touch operation_slots — those remain frozen snapshots.
+    """
+    cursor = db.execute(
+        """
+        UPDATE composition_slot_templates
+        SET role            = CASE WHEN :role != '' THEN :role ELSE role END,
+            build_name      = :build_name,
+            weapon_name     = :weapon_name,
+            doctrine_role   = :doctrine_role,
+            albion_build_id = :albion_build_id,
+            offhand_name    = :offhand_name,
+            head_name       = :head_name,
+            armor_name      = :armor_name,
+            shoes_name      = :shoes_name,
+            cape_name       = :cape_name,
+            food_name       = :food_name,
+            potion_name     = :potion_name,
+            updated_at      = :updated_at
+        WHERE id                      = :id
+          AND albion_composition_id   = :albion_composition_id
+          AND guild_workspace_id      = :guild_workspace_id
+        """,
+        {
+            **fields,
+            "id":                    slot_id,
+            "albion_composition_id": composition_id,
+            "guild_workspace_id":    guild_workspace_id,
+            "updated_at":            updated_at,
+        },
+    )
+    return cursor.rowcount
+
+
+def delete_composition_slot_templates(
+    db: sqlite3.Connection,
+    composition_id: str,
+    guild_workspace_id: str,
+) -> int:
+    """Delete all slot templates for a composition.
+
+    Returns the number of rows deleted.
+    Used by update_composition_slots to atomically replace the slot set.
+    Does NOT touch operation_slots — those are frozen snapshots and are
+    never modified by template changes.
+    """
+    cursor = db.execute(
+        """
+        DELETE FROM composition_slot_templates
+        WHERE albion_composition_id = ? AND guild_workspace_id = ?
+        """,
+        (composition_id, guild_workspace_id),
+    )
+    return cursor.rowcount
+
+
+def get_distinct_slot_build_suggestions(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> dict:
+    """Return distinct, trimmed, alphabetically sorted build_name and weapon_name
+    values from composition_slot_templates for this workspace.
+
+    NULL, empty, and whitespace-only values are excluded.
+    Safe to call on a workspace with no templates — both lists will be empty.
+    Never raises; never mutates.
+    """
+    build_names = [
+        row[0]
+        for row in db.execute(
+            """
+            SELECT DISTINCT TRIM(build_name)
+            FROM composition_slot_templates
+            WHERE guild_workspace_id = ?
+              AND build_name IS NOT NULL
+              AND TRIM(build_name) != ''
+            ORDER BY TRIM(build_name) ASC
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    ]
+    weapon_names = [
+        row[0]
+        for row in db.execute(
+            """
+            SELECT DISTINCT TRIM(weapon_name)
+            FROM composition_slot_templates
+            WHERE guild_workspace_id = ?
+              AND weapon_name IS NOT NULL
+              AND TRIM(weapon_name) != ''
+            ORDER BY TRIM(weapon_name) ASC
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    ]
+    return {"build_names": build_names, "weapon_names": weapon_names}
+
+
+def touch_albion_composition(
+    db: sqlite3.Connection,
+    composition_id: str,
+    guild_workspace_id: str,
+    updated_at: str,
+) -> None:
+    """Bump the updated_at timestamp on a composition row."""
+    db.execute(
+        """
+        UPDATE albion_compositions
+        SET updated_at = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (updated_at, composition_id, guild_workspace_id),
     )
 
 
@@ -542,11 +930,15 @@ def insert_operation_slots(db: sqlite3.Connection, slots: list[dict]) -> None:
         INSERT INTO operation_slots
             (id, guild_workspace_id, guild_operation_id,
              source_composition_slot_template_id,
-             party_number, slot_index, role, build_name, weapon_name, priority, created_at)
+             party_number, slot_index, role, build_name, weapon_name,
+             offhand_name, head_name, armor_name, shoes_name, cape_name, food_name, potion_name,
+             doctrine_role, priority, created_at)
         VALUES
             (:id, :guild_workspace_id, :guild_operation_id,
              :source_composition_slot_template_id,
-             :party_number, :slot_index, :role, :build_name, :weapon_name, :priority, :created_at)
+             :party_number, :slot_index, :role, :build_name, :weapon_name,
+             :offhand_name, :head_name, :armor_name, :shoes_name, :cape_name, :food_name, :potion_name,
+             :doctrine_role, :priority, :created_at)
         """,
         slots,
     )
@@ -575,6 +967,24 @@ def get_operation_slot(
             "SELECT * FROM operation_slots WHERE id = ? AND guild_workspace_id = ?",
             (slot_id, guild_workspace_id),
         ).fetchone()
+    )
+
+
+def update_operation_slot_build(
+    db: sqlite3.Connection,
+    slot_id: str,
+    guild_workspace_id: str,
+    build_name: str,
+    weapon_name: str | None,
+) -> None:
+    """Update the build_name and weapon_name on an existing operation slot."""
+    db.execute(
+        """
+        UPDATE operation_slots
+        SET build_name = ?, weapon_name = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (build_name, weapon_name or None, slot_id, guild_workspace_id),
     )
 
 
@@ -1554,6 +1964,68 @@ def get_operational_events(
         db.execute(
             "SELECT * FROM operational_events WHERE guild_workspace_id = ? ORDER BY occurred_at",
             (guild_workspace_id,),
+        ).fetchall()
+    )
+
+
+# Event types surfaced in the dashboard recent-activity widget.
+# Individual signups, slot assignments, and attendance records are excluded —
+# they are high-frequency operations that would drown out meaningful activity.
+_ACTIVITY_WIDGET_EVENT_TYPES: tuple[str, ...] = (
+    "guild_operation.created",
+    "guild_operation.published",
+    "guild_operation.locked",
+    "guild_operation.completed",
+    "guild_operation.archived",
+    "payout_ledger.entry.approved",
+    "payout_ledger.entry.paid",
+    "discord_announcement.posted",
+    "discord_announcement.updated",
+    "discord_roster.posted",
+    "discord_roster.updated",
+)
+
+
+def get_recent_workspace_activity(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    limit: int = 5,
+) -> list[dict]:
+    """
+    Return the most recent notable operational events for a workspace, newest first.
+
+    Joins with guild_operations to include op_title for operation-level events.
+    Only returns event types relevant for officer dashboard awareness: lifecycle
+    transitions, payout actions, and Discord announcements.  Individual signups,
+    slot assignments, and attendance records are excluded to keep the widget
+    low-noise.
+    """
+    placeholders = ",".join("?" * len(_ACTIVITY_WIDGET_EVENT_TYPES))
+    params = (guild_workspace_id, *_ACTIVITY_WIDGET_EVENT_TYPES, limit)
+    return _rows(
+        db.execute(
+            f"""
+            SELECT
+                e.id,
+                e.event_type,
+                e.actor_id,
+                e.actor_type,
+                e.occurred_at,
+                e.guild_operation_id,
+                COALESCE(o.title, '') AS op_title
+            FROM operational_events e
+            LEFT JOIN guild_operations o ON e.guild_operation_id = o.id
+            WHERE e.guild_workspace_id = ?
+              AND e.event_type IN ({placeholders})
+              AND (
+                e.guild_operation_id IS NULL
+                OR o.status IS NULL
+                OR o.status != 'archived'
+              )
+            ORDER BY e.occurred_at DESC
+            LIMIT ?
+            """,
+            params,
         ).fetchall()
     )
 
@@ -2713,3 +3185,25 @@ def get_ledger_totals_for_operation(
         "active_count":   dc + ac + pc,
         "active_total":   dt + at + pt,
     }
+
+
+def count_pending_ledger_entries_for_workspace(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> int:
+    """
+    Count payout_ledger_entries in 'draft' or 'approved' status across all
+    operations in the workspace.  Used by the dashboard attention section to
+    surface entries that still need officer action (approval or payment).
+    Voided and paid entries are excluded — they require no further action.
+    """
+    row = db.execute(
+        """
+        SELECT COUNT(*)
+        FROM payout_ledger_entries
+        WHERE guild_workspace_id = ?
+          AND status IN ('draft', 'approved')
+        """,
+        (guild_workspace_id,),
+    ).fetchone()
+    return row[0] if row else 0

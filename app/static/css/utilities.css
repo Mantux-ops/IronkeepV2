@@ -1,0 +1,66 @@
+/* =========================================================
+   IronkeepV2 — Utilities
+   Atomic helper classes for colour, state, table columns.
+   ========================================================= */
+
+/* ── Base utility classes ──────────────────────────────── */
+.text-muted   { color: var(--text-muted); }
+.text-danger  { color: var(--danger-text); }
+.text-warning { color: var(--warning-text); }
+.empty-state  { color: var(--text-muted); font-style: italic; padding: var(--space-2) 0; }
+
+/* sr-only: visually hidden, available to screen readers and keyboard focus */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* ── Phase 7 — consolidated utility classes ────────────── */
+
+/* col-meta: muted, compact, no-wrap table column (scheduled dates, types) */
+.col-meta {
+  white-space: nowrap;
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
+/* col-action: no-wrap cell for action button columns */
+.col-action { white-space: nowrap; }
+
+/* btn-muted: secondary/terminal action button (archived "View", etc.) */
+.btn-muted { color: var(--text-muted); }
+.btn-muted:hover { color: var(--text); }
+
+/* ── Operational metrics typography (Phase 8.7 — docs/design_doctrine.md §4) ──
+   Live operational data: counts, percentages, timestamps, totals.
+   Proportional sans remains default; these classes add tabular alignment only. */
+.op-metric {
+  font-variant-numeric: tabular-nums;
+}
+.op-metric--emphasis {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+.op-metric--pct {
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.op-metric--timestamp {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8125rem;
+  color: var(--text-muted);
+}
+.op-metric--hint {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.8em;
+  color: var(--text-muted);
+}
+
+/* metric-card__fraction: moved to dashboard.css with the metric-card BEM family (Phase 4) */

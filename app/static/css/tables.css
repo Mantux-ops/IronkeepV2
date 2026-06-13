@@ -1,0 +1,60 @@
+/* =========================================================
+   IronkeepV2 — Tables
+   Table wrapper, data-table, row state highlights,
+   generic table (non-data-table contexts).
+   ========================================================= */
+
+/* ── Table wrapper ─────────────────────────────────────── */
+.table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+/* ── Data table ────────────────────────────────────────── */
+.data-table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 0;
+}
+.data-table th,
+.data-table td {
+  border-bottom: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: var(--text-base);
+  vertical-align: top;
+}
+.data-table th {
+  background: var(--surface-2);
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+.data-table tbody tr:last-child td { border-bottom: none; }
+.data-table tbody tr:hover td { background: var(--surface-3); }
+
+/* Row state highlights — dark-mode variants */
+.data-table tr.row-assigned   td { background: var(--success-bg); }  /* #0a1f10 === --success-bg */
+.data-table tr.row-open       td { background: var(--info-bg); }     /* #0c1a30 === --info-bg */
+.data-table tr.row-open-core  td { background: var(--warning-bg); border-left: 3px solid var(--warning); }  /* #1f1800 === --warning-bg */
+.data-table tr.row-muted      td { color: var(--text-faint); }
+.data-table tr.row-unmarked-attendance td {
+  background: #1a1400;  /* deliberate: slightly different from --warning-bg (#1f1800) */
+  border-left: 3px solid var(--warning);
+}
+.data-table tr.row-unmarked-attendance td em { color: var(--warning-text); }
+
+/* ── Generic table (non-.data-table contexts) ──────────── */
+table { border-collapse: collapse; width: 100%; margin-bottom: var(--space-3); }
+th, td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  font-size: var(--text-base);
+}
+th { background: var(--surface-2); color: var(--text-muted); }

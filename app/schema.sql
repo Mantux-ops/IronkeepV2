@@ -176,6 +176,14 @@ CREATE TABLE IF NOT EXISTS albion_compositions (
 -- Individual slot templates inside a composition.
 -- These are MUTABLE — they can be edited without affecting already-generated
 -- operation slots (which are a frozen snapshot at generation time).
+--
+-- Equipment snapshot fields (offhand_name … potion_name):
+--   Populated by _resolve_build_for_slot when an albion_build is attached.
+--   They store a point-in-time copy of the build's equipment so that the
+--   composition surface can display full doctrine without a live FK join,
+--   and so that operation_slots can carry a complete doctrine payload.
+--   They are NOT updated automatically when the source build is edited —
+--   that is the Build Snapshot Invariant.
 CREATE TABLE IF NOT EXISTS composition_slot_templates (
     id                      TEXT PRIMARY KEY,
     guild_workspace_id      TEXT NOT NULL REFERENCES guild_workspaces(id),
@@ -185,11 +193,68 @@ CREATE TABLE IF NOT EXISTS composition_slot_templates (
     role                    TEXT NOT NULL,
     build_name              TEXT NOT NULL,
     weapon_name             TEXT,
+    offhand_name            TEXT,
+    head_name               TEXT,
+    armor_name              TEXT,
+    shoes_name              TEXT,
+    cape_name               TEXT,
+    food_name               TEXT,
+    potion_name             TEXT,
+    -- nullable FK: references the reusable albion_build that was attached when
+    -- this slot was last saved.  The text fields hold a snapshot of the build
+    -- at that moment — the FK does NOT update them automatically on build edits.
+    -- operation_slots never carry this FK; they are frozen text-only snapshots.
+    albion_build_id         TEXT REFERENCES albion_builds(id),
+    -- Operational battlefield role snapshot — propagated from build at attach time.
+    -- e.g. "Main Caller", "Engage", "Peel / Stopper", "Beam Spike".
+    -- Distinct from role_family (structural) — this is orchestration identity.
+    doctrine_role           TEXT,
     priority                TEXT NOT NULL DEFAULT 'normal',  -- core | normal
     created_at              TEXT NOT NULL,
     updated_at              TEXT NOT NULL,
     UNIQUE (guild_workspace_id, albion_composition_id, party_number, slot_index)
 );
+
+-- ---------------------------------------------------------------------------
+-- Reusable build doctrine entities  (workspace-scoped)
+-- A build is a named, role-specific equipment loadout that officers create
+-- once and attach to composition slot templates for doctrine reuse.
+--
+-- Build Snapshot Invariant:
+--   Editing a build does NOT retroactively update slot templates or operation
+--   slots.  Each slot template stores its own text snapshot (build_name,
+--   weapon_name) at attach time.  Historical operation assignments are always
+--   determined by the frozen text fields in operation_slots, never by the
+--   current state of this table.
+--
+-- Retired builds cannot be newly attached to slot templates, but existing
+-- compositions and operation_slots that reference them remain stable.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS albion_builds (
+    id                  TEXT PRIMARY KEY,
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    name                TEXT NOT NULL,
+    role                TEXT NOT NULL,
+    weapon_name         TEXT NOT NULL,
+    offhand_name        TEXT,
+    head_name           TEXT,
+    armor_name          TEXT,
+    shoes_name          TEXT,
+    cape_name           TEXT,
+    food_name           TEXT,
+    potion_name         TEXT,
+    notes               TEXT,
+    -- Operational battlefield role: freeform intent label (e.g. "Main Caller", "Peel / Stopper").
+    -- Distinct from role_family (structural) — this is orchestration identity, not tactical category.
+    doctrine_role       TEXT,
+    created_at          TEXT NOT NULL,
+    updated_at          TEXT NOT NULL,
+    -- NULL = active; ISO-8601 timestamp = retired (soft-delete)
+    retired_at          TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_albion_builds_workspace
+    ON albion_builds(guild_workspace_id, retired_at);
 
 -- ---------------------------------------------------------------------------
 -- Operation plan  (attaches a composition to an operation)
@@ -209,6 +274,11 @@ CREATE TABLE IF NOT EXISTS operation_plans (
 -- ---------------------------------------------------------------------------
 -- Operation slots  (frozen snapshot — copied from composition at plan time)
 -- NO status column.  Assignment state is derived from the assignments table.
+--
+-- Equipment snapshot fields (offhand_name … potion_name) carry the full
+-- doctrine payload for future assignment-context delivery (Discord embeds,
+-- mobile summaries).  They are set once at slot-generation time and are
+-- NEVER modified afterwards — the frozen-snapshot invariant.
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS operation_slots (
     id                                  TEXT PRIMARY KEY,
@@ -221,6 +291,15 @@ CREATE TABLE IF NOT EXISTS operation_slots (
     role                                TEXT NOT NULL,
     build_name                          TEXT NOT NULL,
     weapon_name                         TEXT,
+    offhand_name                        TEXT,
+    head_name                           TEXT,
+    armor_name                          TEXT,
+    shoes_name                          TEXT,
+    cape_name                           TEXT,
+    food_name                           TEXT,
+    potion_name                         TEXT,
+    -- Frozen snapshot of doctrine_role at slot-generation time.
+    doctrine_role                       TEXT,
     priority                            TEXT NOT NULL DEFAULT 'normal',
     created_at                          TEXT NOT NULL,
     UNIQUE (guild_workspace_id, guild_operation_id, party_number, slot_index)
