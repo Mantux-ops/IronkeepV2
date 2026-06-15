@@ -29,7 +29,8 @@
   <nav class="landing-nav" aria-label="Primary navigation">
     {% block public_nav %}
     <a class="brand" href="/">{% include "_brand_mark.html" %}Ironkeep</a>
-    <div>
+    <div style="display:flex;align-items:center;gap:var(--space-4)">
+      <a href="/discord/setup">Add to Discord</a>
       <a href="/login">Login</a>
     </div>
     {% endblock %}
