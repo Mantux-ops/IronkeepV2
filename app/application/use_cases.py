@@ -3483,6 +3483,15 @@ def approve_albion_character_claim(
             reviewed_at=now,
         )
 
+        # Link the matching imported roster player row, if one exists.
+        # Uses WHERE user_id IS NULL — never overwrites an existing link.
+        repositories.link_workspace_albion_player_to_user(
+            db,
+            guild_workspace_id=guild_workspace_id,
+            albion_player_id=claim["albion_player_id"],
+            user_id=target_user_id,
+        )
+
         event = operational_events.make_event(
             guild_workspace_id=guild_workspace_id,
             guild_operation_id=None,

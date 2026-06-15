@@ -3537,3 +3537,39 @@ def get_existing_albion_player_ids(
     ).fetchall()
     return {row["albion_player_id"] for row in rows}
 
+
+def link_workspace_albion_player_to_user(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    albion_player_id: str,
+    user_id: str,
+) -> bool:
+    """
+    Set workspace_albion_players.user_id for the matching imported player row,
+    but ONLY if user_id is currently NULL.
+
+    Linking rules (all enforced by the WHERE clause):
+    - If no row exists for (guild_workspace_id, albion_player_id): no-op, returns False.
+    - If row exists with user_id IS NULL: links to user_id, returns True.
+    - If row exists with user_id already set (same or different user): no-op, returns False.
+
+    This means:
+    - Idempotent if already linked (regardless of who it is linked to).
+    - Never overwrites an existing link.
+    - Callers should not rely on the return value for correctness — it is
+      provided for observability only.
+    """
+    now = _now()
+    cursor = db.execute(
+        """
+        UPDATE workspace_albion_players
+        SET user_id    = ?,
+            updated_at = ?
+        WHERE guild_workspace_id = ?
+          AND albion_player_id   = ?
+          AND user_id IS NULL
+        """,
+        (user_id, now, guild_workspace_id, albion_player_id),
+    )
+    return cursor.rowcount > 0
+
