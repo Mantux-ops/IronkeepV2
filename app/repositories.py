@@ -3469,21 +3469,30 @@ def upsert_workspace_albion_player(
 
     user_id and created_at are preserved from the original insert — never
     overwritten on re-import.  This preserves existing Ironkeep identity links.
+
+    stale_at is set to NULL on conflict: a player seen during any import or
+    refresh is immediately re-activated regardless of prior stale marking.
+
+    stale_at defaults to None when not present in the record dict, so callers
+    that pre-date Slice 3 remain backward-compatible.
     """
+    record = dict(record)
+    record.setdefault("stale_at", None)
     db.execute(
         """
         INSERT INTO workspace_albion_players
             (id, guild_workspace_id, albion_player_id, character_name,
-             user_id, source_guild_id, last_seen_in_guild_at,
+             user_id, source_guild_id, last_seen_in_guild_at, stale_at,
              created_at, updated_at)
         VALUES
             (:id, :guild_workspace_id, :albion_player_id, :character_name,
-             :user_id, :source_guild_id, :last_seen_in_guild_at,
+             :user_id, :source_guild_id, :last_seen_in_guild_at, :stale_at,
              :created_at, :updated_at)
         ON CONFLICT (guild_workspace_id, albion_player_id) DO UPDATE SET
             character_name        = excluded.character_name,
             source_guild_id       = excluded.source_guild_id,
             last_seen_in_guild_at = excluded.last_seen_in_guild_at,
+            stale_at              = NULL,
             updated_at            = excluded.updated_at
         """,
         record,
@@ -3536,6 +3545,44 @@ def get_existing_albion_player_ids(
         (guild_workspace_id,),
     ).fetchall()
     return {row["albion_player_id"] for row in rows}
+
+
+def mark_workspace_albion_players_stale(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    seen_player_ids: set[str],
+    now: str,
+) -> int:
+    """
+    Mark as stale any active workspace_albion_players row whose
+    albion_player_id is NOT in *seen_player_ids*.
+
+    Only rows with stale_at IS NULL are affected — already-stale rows are
+    not touched (their stale_at timestamp is preserved as first-stale date).
+
+    Returns the count of newly-staled rows.
+
+    Safety: if seen_player_ids is empty (e.g. all guilds returned zero
+    members), this function marks NOBODY stale — callers that want to
+    mark everything stale for an empty roster must pass an explicit empty
+    set and handle the case themselves.  By default we treat an empty
+    seen set as a signal that the caller should not proceed.
+    """
+    if not seen_player_ids:
+        return 0
+    placeholders = ",".join("?" * len(seen_player_ids))
+    cursor = db.execute(
+        f"""
+        UPDATE workspace_albion_players
+        SET stale_at   = ?,
+            updated_at = ?
+        WHERE guild_workspace_id = ?
+          AND stale_at IS NULL
+          AND albion_player_id NOT IN ({placeholders})
+        """,
+        (now, now, guild_workspace_id, *seen_player_ids),
+    )
+    return cursor.rowcount
 
 
 def link_workspace_albion_player_to_user(

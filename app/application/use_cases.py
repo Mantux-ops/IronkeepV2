@@ -1,4 +1,4 @@
-﻿"""
+"""
 Application use cases â€” transactional commands.
 
 Rules:
@@ -4169,6 +4169,7 @@ def import_albion_guild_roster(
                 "user_id":               None,
                 "source_guild_id":       source_guild_row_id,
                 "last_seen_in_guild_at": now,
+                "stale_at":              None,
                 "created_at":            now,
                 "updated_at":            now,
             })
@@ -4203,3 +4204,154 @@ def import_albion_guild_roster(
         "errors":     [],
     }
 
+
+def refresh_all_guild_rosters(
+    *,
+    guild_workspace_id: str,
+    requesting_user_id: str,
+) -> dict:
+    """
+    Refresh all linked Albion guild rosters for the workspace and mark
+    players not seen in any roster as stale.
+
+    Flow (all-or-nothing safety model):
+    1.  Auth check: requesting_user_id must be officer or owner.
+    2.  DB: load all linked workspace_albion_guilds.
+    3.  Validate: at least one linked guild must exist.
+    4.  HTTP: fetch every guild member list.  If ANY fetch fails the
+        function raises ValidationError before touching the DB.
+    5.  DB (single transaction):
+        a.  Upsert each guild row (updates last_imported_at).
+        b.  Upsert each member (updates last_seen_in_guild_at; clears stale_at).
+        c.  Mark stale any player absent from the global seen set.
+        d.  Emit one audit event.
+
+    Returns:
+        {
+          "guilds_refreshed": int,
+          "active":           int,   # players present in at least one guild
+          "updated":          int,   # existing rows refreshed (subset of active)
+          "stale_marked":     int,   # newly stale rows
+        }
+
+    Raises:
+        PermissionDenied  -- caller is not officer/owner.
+        NotFoundError     -- workspace does not exist.
+        ValidationError   -- no linked guilds; or any Albion API call fails.
+    """
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        membership = repositories.get_workspace_membership(
+            db, guild_workspace_id, requesting_user_id
+        )
+        if not membership:
+            raise PermissionDenied("You are not a member of this workspace.")
+        if not workspace_membership.can_manage_workspace_members(membership["role"]):
+            raise PermissionDenied(
+                "Only officers and owners can refresh guild rosters."
+            )
+        linked_guilds = repositories.list_workspace_albion_guilds(db, guild_workspace_id)
+
+    if not linked_guilds:
+        raise ValidationError(
+            "No linked guilds found. Import at least one guild roster first."
+        )
+
+    # Phase 2: fetch all guild rosters outside any transaction.
+    # Abort before any DB writes if any fetch fails.
+    from app.albion.rest_client import AlbionApiError, fetch_albion_guild_members
+
+    fetched: list[tuple[dict, list[dict]]] = []  # (guild_row, members)
+    for guild_row in linked_guilds:
+        gname = guild_row["guild_name"]
+        try:
+            members = fetch_albion_guild_members(guild_row["albion_guild_id"])
+        except AlbionApiError as exc:
+            raise ValidationError(
+                f"Failed to fetch roster for guild '{gname}': {exc}. "
+                "Refresh aborted -- no changes were written."
+            ) from exc
+        fetched.append((guild_row, members))
+
+    # Phase 3: single atomic DB write.
+    now = _now()
+
+    # Build global seen set across ALL guild rosters.
+    seen_player_ids: set[str] = set()
+    for _guild_row, members in fetched:
+        for m in members:
+            pid = m.get("albion_player_id", "")
+            if pid:
+                seen_player_ids.add(pid)
+
+    active  = 0
+    updated = 0
+
+    with database.transaction() as db:
+        existing_ids = repositories.get_existing_albion_player_ids(
+            db, guild_workspace_id
+        )
+
+        for guild_row, members in fetched:
+            repositories.upsert_workspace_albion_guild(db, {
+                "id":                 guild_row["id"],
+                "guild_workspace_id": guild_workspace_id,
+                "albion_guild_id":    guild_row["albion_guild_id"],
+                "guild_name":         guild_row["guild_name"],
+                "alliance_id":        guild_row["alliance_id"],
+                "alliance_name":      guild_row["alliance_name"],
+                "last_imported_at":   now,
+                "created_at":         guild_row["created_at"],
+            })
+
+            for member in members:
+                player_id = member.get("albion_player_id", "")
+                if not player_id:
+                    continue
+                char_name = member.get("character_name", player_id)
+                is_existing = player_id in existing_ids
+                repositories.upsert_workspace_albion_player(db, {
+                    "id":                    str(uuid.uuid4()),
+                    "guild_workspace_id":    guild_workspace_id,
+                    "albion_player_id":      player_id,
+                    "character_name":        char_name,
+                    "user_id":               None,
+                    "source_guild_id":       guild_row["id"],
+                    "last_seen_in_guild_at": now,
+                    "stale_at":              None,
+                    "created_at":            now,
+                    "updated_at":            now,
+                })
+                active += 1
+                if is_existing:
+                    updated += 1
+
+        stale_marked = repositories.mark_workspace_albion_players_stale(
+            db, guild_workspace_id, seen_player_ids, now
+        )
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_GUILD_ROSTER_REFRESHED,
+            entity_type="guild_workspace",
+            entity_id=guild_workspace_id,
+            actor_type="user",
+            actor_id=requesting_user_id,
+            payload={
+                "guilds_refreshed": len(fetched),
+                "active":           active,
+                "updated":          updated,
+                "stale_marked":     stale_marked,
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+    return {
+        "guilds_refreshed": len(fetched),
+        "active":           active,
+        "updated":          updated,
+        "stale_marked":     stale_marked,
+    }

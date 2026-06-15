@@ -111,8 +111,16 @@
 
 {% if linked_guilds %}
 <div class="card">
-  <div class="card-header">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
     <h2 style="margin:0">Linked Guilds</h2>
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/members/import-guilds/refresh"
+          class="inline-form">
+      <button type="submit" class="btn btn-sm btn-primary"
+              onclick="return confirm('Refresh all linked guild rosters? This may take a moment.')">
+        Refresh rosters
+      </button>
+    </form>
   </div>
   <div class="card-body">
     <div class="table-wrap">

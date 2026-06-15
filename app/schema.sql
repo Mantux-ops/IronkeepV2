@@ -703,6 +703,8 @@ CREATE TABLE IF NOT EXISTS workspace_albion_players (
     -- nullable FK to the guild whose last import produced/updated this row
     source_guild_id       TEXT REFERENCES workspace_albion_guilds(id),
     last_seen_in_guild_at TEXT,
+    -- NULL = active; non-NULL = timestamp when player was first marked stale
+    stale_at              TEXT,
     created_at            TEXT NOT NULL,
     updated_at            TEXT NOT NULL,
     UNIQUE(guild_workspace_id, albion_player_id)

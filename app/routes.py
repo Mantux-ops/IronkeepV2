@@ -1363,6 +1363,48 @@ async def post_import_guilds_confirm(request: Request, slug: str):
     return _ok_redirect(import_url, msg)
 
 
+@router.post("/workspaces/{slug}/members/import-guilds/refresh")
+async def post_refresh_guild_rosters(request: Request, slug: str):
+    """
+    Refresh all linked Albion guild rosters and mark stale players.
+
+    All-or-nothing: if any guild API call fails, no DB writes are made.
+    Redirects to the import page with a summary or an error message.
+    """
+    import_url = _IMPORT_GUILDS_URL.format(slug=slug)
+
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    try:
+        result = use_cases.refresh_all_guild_rosters(
+            guild_workspace_id=ws["id"],
+            requesting_user_id=user["id"],
+        )
+    except IronkeepError as exc:
+        return _err_redirect(import_url, str(exc))
+
+    n      = result["guilds_refreshed"]
+    active = result["active"]
+    stale  = result["stale_marked"]
+    msg    = (
+        f"Refreshed {n} guild(s). "
+        f"{active} active player(s)"
+        + (f", {stale} marked stale" if stale else "")
+        + "."
+    )
+    return _ok_redirect(import_url, msg)
+
+
 
 
 _DISCORD_SETTINGS_URL = "/workspaces/{slug}/settings/discord"

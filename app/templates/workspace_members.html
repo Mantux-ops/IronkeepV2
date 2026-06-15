@@ -136,6 +136,7 @@
             <th>Character</th>
             <th>Source guild</th>
             <th>Last seen in guild</th>
+            <th>Status</th>
             <th>Linked user</th>
           </tr>
         </thead>
@@ -152,6 +153,14 @@
             </td>
             <td class="text-muted" style="font-size:0.9em">
               {% if p.last_seen_in_guild_at %}{{ p.last_seen_in_guild_at[:10] }}{% else %}—{% endif %}
+            </td>
+            <td style="font-size:0.85em">
+              {% if p.stale_at %}
+                <span class="badge badge-error" style="font-size:0.8em">Stale</span>
+                <span class="text-muted" style="font-size:0.85em"> since {{ p.stale_at[:10] }}</span>
+              {% else %}
+                <span class="badge badge-officer" style="font-size:0.8em">Active</span>
+              {% endif %}
             </td>
             <td style="font-size:0.9em">
               {% set linked_member = members_by_user_id.get(p.user_id) if p.user_id else none %}

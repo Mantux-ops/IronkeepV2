@@ -192,6 +192,9 @@ _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE albion_builds ADD COLUMN doctrine_role TEXT NULL",
     "ALTER TABLE composition_slot_templates ADD COLUMN doctrine_role TEXT NULL",
     "ALTER TABLE operation_slots ADD COLUMN doctrine_role TEXT NULL",
+    # Phase 11 Slice 3: stale marking for imported Albion guild roster players.
+    # NULL = active; non-NULL = ISO timestamp when player was first marked stale.
+    "ALTER TABLE workspace_albion_players ADD COLUMN stale_at TEXT NULL",
 ]
 
 
