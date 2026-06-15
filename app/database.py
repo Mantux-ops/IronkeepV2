@@ -165,6 +165,14 @@ _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE payout_ledger_entries ADD COLUMN paid_by_user_id TEXT NULL",
     # Phase 3: inline build management — reusable doctrine entity FK on slot templates.
     "ALTER TABLE composition_slot_templates ADD COLUMN albion_build_id TEXT NULL REFERENCES albion_builds(id)",
+    # Phase 10 Slice 1: Discord-first workspace bootstrap.
+    # discord_provisioned_at: set when a workspace is created automatically via
+    # on_guild_join.  NULL means manually created.  Used by setup-required UI.
+    "ALTER TABLE guild_workspaces ADD COLUMN discord_provisioned_at TEXT NULL",
+    # Phase 10 Slice 2: Setup completion and safe owner bootstrap.
+    # discord_guild_owner_id: Discord snowflake of the guild owner at install time.
+    # Used by complete_discord_workspace_setup to verify ownership claims.
+    "ALTER TABLE discord_guild_installs ADD COLUMN discord_guild_owner_id TEXT NULL",
     # Phase 4: structured equipment doctrine — full loadout snapshot on slot templates and operation slots.
     "ALTER TABLE composition_slot_templates ADD COLUMN offhand_name TEXT NULL",
     "ALTER TABLE composition_slot_templates ADD COLUMN head_name    TEXT NULL",

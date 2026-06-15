@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Add Ironkeep to Discord — Ironkeep{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Add Ironkeep to Discord' %}
+    {% include "page_header.html" %}
+
+    <p>Adding the Ironkeep bot to your Discord server automatically creates a workspace.
+    The guild owner then completes setup through this web app to take ownership.</p>
+
+    {% if discord_configured %}
+
+    <h3>Step 1 — Add the bot to your server</h3>
+    <p>Click below to invite the Ironkeep bot. You need the <strong>Manage Server</strong>
+    permission in the Discord server to install bots.</p>
+    <p>The bot requests these permissions: <em>Send Messages, Embed Links, Read Message History,
+    View Channel</em>. No administrator access is required.</p>
+    <div class="action-bar">
+      <a href="{{ invite_url }}" class="btn btn-primary" target="_blank" rel="noopener noreferrer">
+        Add Ironkeep Bot to Discord ↗
+      </a>
+    </div>
+
+    <h3>Step 2 — Complete workspace setup</h3>
+    <p>Once the bot joins your server, a workspace is created automatically.
+    To claim ownership you need your server's <strong>Guild ID</strong>.</p>
+    <p>To find your Guild ID: enable Developer Mode in Discord
+    (User Settings → Advanced → Developer Mode), then right-click your server
+    icon and choose <em>Copy Server ID</em>.</p>
+    <div class="action-bar">
+      <a href="/discord/setup/continue" class="btn">Continue Setup →</a>
+    </div>
+
+    {% else %}
+
+    <div class="alert alert-warning">
+      <strong>Discord setup is not configured on this deployment.</strong>
+      The <code>DISCORD_CLIENT_ID</code> environment variable is not set.
+      Contact your server administrator to configure the Discord integration.
+    </div>
+    <div class="action-bar">
+      <a href="/workspaces" class="btn">My Workspaces</a>
+    </div>
+
+    {% endif %}
+
+  </div>
+</div>
+{% endblock %}

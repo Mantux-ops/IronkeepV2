@@ -54,6 +54,12 @@ from app.errors import ValidationError
 # Event type constants
 # ---------------------------------------------------------------------------
 WORKSPACE_CREATED = "workspace.created"
+# Emitted when a workspace is auto-created by the bot joining a Discord guild.
+# Workspace-level, audit-only, NOT in DISPATCHABLE_EVENT_TYPES.
+WORKSPACE_DISCORD_PROVISIONED = "workspace.discord_provisioned"
+# Emitted when a Discord guild owner completes setup and claims workspace ownership.
+# Workspace-level, audit-only, NOT in DISPATCHABLE_EVENT_TYPES.
+WORKSPACE_OWNER_CLAIMED = "workspace.owner_claimed"
 WORKSPACE_DISCORD_CONFIG_UPDATED = "workspace.discord_config.updated"
 WORKSPACE_MEMBER_REMOVED = "workspace.member.removed"
 ALBION_COMPOSITION_CREATED       = "albion_composition.created"

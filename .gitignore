@@ -32,3 +32,19 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Local pytest output logs
+pytest_*.txt
+
+# Local logs
+logs/
+
+# Local backups
+backups/
+
+# Archives
+*.zip
+
+# Ruff / mypy caches
+.ruff_cache/
+.mypy_cache/

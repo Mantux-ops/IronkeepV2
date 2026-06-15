@@ -1,0 +1,45 @@
+services:
+  web:
+    build: .
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      IRONKEEP_DB_PATH: /app/data/ironkeep_v2.db
+      IRONKEEP_HOST: 0.0.0.0
+      IRONKEEP_PORT: 8000
+    volumes:
+      - ironkeep_data:/app/data
+    ports:
+      - "8000:8000"
+
+  scheduler:
+    build: .
+    restart: unless-stopped
+    command: ["./scripts/run_scheduler.sh"]
+    env_file:
+      - .env
+    environment:
+      IRONKEEP_DB_PATH: /app/data/ironkeep_v2.db
+      SCHEDULER_ENABLED: "1"
+      DISCORD_DISPATCH_ENABLED: "1"
+    volumes:
+      - ironkeep_data:/app/data
+    depends_on:
+      - web
+
+  bot:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-u", "bot/bot.py"]
+    env_file:
+      - .env
+    environment:
+      IRONKEEP_DB_PATH: /app/data/ironkeep_v2.db
+    volumes:
+      - ironkeep_data:/app/data
+    depends_on:
+      - web
+
+volumes:
+  ironkeep_data:

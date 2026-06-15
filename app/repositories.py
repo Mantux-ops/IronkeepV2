@@ -78,6 +78,34 @@ def get_workspaces_for_user(db: sqlite3.Connection, user_id: str) -> list[dict]:
     )
 
 
+def get_unclaimed_discord_workspaces(db: sqlite3.Connection) -> list[dict]:
+    """
+    Return Discord-provisioned workspaces that have no owner member.
+
+    These are workspaces created automatically by the bot (discord_provisioned_at
+    IS NOT NULL) that are still in the "setup required" state because no verified
+    guild owner has completed the web setup flow yet.
+
+    Used to display setup-required notices on the workspace list page.
+    The list is shown to all authenticated users so any guild officer can see
+    that their server's workspace needs claiming.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT w.*
+            FROM guild_workspaces w
+            WHERE w.discord_provisioned_at IS NOT NULL
+              AND NOT EXISTS (
+                  SELECT 1 FROM workspace_members m
+                  WHERE m.guild_workspace_id = w.id AND m.role = 'owner'
+              )
+            ORDER BY w.name
+            """,
+        ).fetchall()
+    )
+
+
 # ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
@@ -306,6 +334,15 @@ def delete_workspace_member(
         "DELETE FROM workspace_members WHERE guild_workspace_id = ? AND user_id = ?",
         (guild_workspace_id, user_id),
     )
+
+
+def count_workspace_owners(db: sqlite3.Connection, guild_workspace_id: str) -> int:
+    """Return the number of members with role='owner' in this workspace."""
+    row = db.execute(
+        "SELECT COUNT(*) FROM workspace_members WHERE guild_workspace_id = ? AND role = 'owner'",
+        (guild_workspace_id,),
+    ).fetchone()
+    return row[0] if row else 0
 
 
 def count_active_assignments_for_participant(
@@ -2078,6 +2115,149 @@ def get_workspace_by_discord_guild_id(
             (discord_guild_id,),
         ).fetchone()
     )
+
+
+def set_workspace_discord_guild_id(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    discord_guild_id: str,
+    discord_provisioned_at: str,
+) -> None:
+    """
+    Set discord_guild_id and discord_provisioned_at on a workspace row.
+
+    Called from ensure_workspace_for_discord_guild within the same transaction
+    as insert_workspace so the two writes are atomic.  discord_provisioned_at
+    records that the workspace was created automatically by the bot.
+    """
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET discord_guild_id       = ?,
+            discord_provisioned_at = ?,
+            updated_at             = ?
+        WHERE id = ?
+        """,
+        (discord_guild_id, discord_provisioned_at, discord_provisioned_at, workspace_id),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Discord guild installs  (audit log of bot join/rejoin events)
+# ---------------------------------------------------------------------------
+
+def get_discord_guild_install(
+    db: sqlite3.Connection,
+    discord_guild_id: str,
+) -> dict | None:
+    """Look up the install audit record for a given Discord guild snowflake."""
+    return _row(
+        db.execute(
+            "SELECT * FROM discord_guild_installs WHERE discord_guild_id = ?",
+            (discord_guild_id,),
+        ).fetchone()
+    )
+
+
+def upsert_discord_guild_install(
+    db: sqlite3.Connection,
+    discord_guild_id: str,
+    guild_name: str,
+    guild_workspace_id: str,
+    discord_guild_owner_id: str | None = None,
+) -> None:
+    """
+    Insert a new install record or increment the re-join counter.
+
+    ON CONFLICT(discord_guild_id): update guild_name (server may be renamed),
+    increment install_count, refresh installed_at, and update owner_id using
+    COALESCE so an existing non-null value is kept when the new value is NULL.
+    created_at is never touched after the initial insert.
+    """
+    now = _now()
+    db.execute(
+        """
+        INSERT INTO discord_guild_installs
+            (id, discord_guild_id, guild_name, guild_workspace_id,
+             discord_guild_owner_id, install_count, installed_at, created_at)
+        VALUES (?, ?, ?, ?, ?, 1, ?, ?)
+        ON CONFLICT(discord_guild_id) DO UPDATE SET
+            guild_name             = excluded.guild_name,
+            install_count          = discord_guild_installs.install_count + 1,
+            installed_at           = excluded.installed_at,
+            discord_guild_owner_id = COALESCE(
+                                         excluded.discord_guild_owner_id,
+                                         discord_guild_installs.discord_guild_owner_id
+                                     )
+        """,
+        (str(uuid.uuid4()), discord_guild_id, guild_name, guild_workspace_id,
+         discord_guild_owner_id, now, now),
+    )
+
+
+def get_discord_identity_for_user(
+    db: sqlite3.Connection,
+    user_id: str,
+) -> dict | None:
+    """
+    Return the user_auth_identities row for auth_provider='discord', or None.
+
+    Primary: look up user_auth_identities (the normalised identity table).
+    Fallback: check users.auth_provider for pure Discord users created before
+    the user_auth_identities backfill migration (legacy path).
+    """
+    row = db.execute(
+        """
+        SELECT * FROM user_auth_identities
+        WHERE user_id = ? AND auth_provider = 'discord'
+        """,
+        (user_id,),
+    ).fetchone()
+    if row:
+        return _row(row)
+    # Fallback: pure Discord user whose identity pre-dates the backfill.
+    user_row = db.execute(
+        "SELECT * FROM users WHERE id = ? AND auth_provider = 'discord'",
+        (user_id,),
+    ).fetchone()
+    if user_row:
+        u = dict(user_row)
+        return {
+            "user_id":          u["id"],
+            "auth_provider":    "discord",
+            "provider_user_id": u["provider_user_id"],
+        }
+    return None
+
+
+def grant_workspace_owner_if_unclaimed(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    user_id: str,
+    now: str,
+) -> bool:
+    """
+    Atomically insert an owner membership only if no owner row exists.
+
+    Uses INSERT INTO ... SELECT ... WHERE NOT EXISTS to avoid a read-then-write
+    race.  The SELECT and INSERT are evaluated as a single atomic operation by
+    SQLite, so two concurrent callers cannot both succeed.
+
+    Returns True if the membership was inserted (caller is now owner).
+    Returns False if an owner row already existed (safe idempotency / race guard).
+    """
+    cursor = db.execute(
+        """
+        INSERT INTO workspace_members (id, guild_workspace_id, user_id, role, created_at)
+        SELECT ?, ?, ?, 'owner', ?
+        WHERE NOT EXISTS (
+            SELECT 1 FROM workspace_members
+            WHERE guild_workspace_id = ? AND role = 'owner'
+        )
+        """,
+        (str(uuid.uuid4()), guild_workspace_id, user_id, now, guild_workspace_id),
+    )
+    return cursor.rowcount == 1
 
 
 # ---------------------------------------------------------------------------

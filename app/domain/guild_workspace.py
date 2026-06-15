@@ -9,6 +9,7 @@ data reaches the database.
 from __future__ import annotations
 
 import re
+from typing import Callable
 
 from app.errors import ValidationError
 
@@ -61,6 +62,56 @@ def validate_discord_snowflake(value: str | None, field_name: str = "value") -> 
             f"(e.g. 123456789012345678). Got: '{value[:30]}'"
         )
     return value
+
+
+def derive_workspace_slug_from_guild_name(guild_name: str) -> str:
+    """
+    Derive a base workspace slug from a Discord guild name.
+
+    Algorithm:
+      1. Lowercase the name.
+      2. Replace any character that is not a–z or 0–9 with a single hyphen.
+      3. Collapse consecutive hyphens into one.
+      4. Strip leading/trailing hyphens.
+      5. Truncate to 48 characters (leaves room for a -NNN uniqueness suffix).
+      6. Strip any trailing hyphen left by truncation.
+      7. Fall back to 'discord-guild' when the result is fewer than 3 characters.
+
+    Returns a valid base slug string.  Uniqueness is NOT guaranteed — call
+    make_unique_workspace_slug to resolve collisions using a DB lookup.
+    """
+    slug = guild_name.lower()
+    slug = re.sub(r"[^a-z0-9]+", "-", slug)
+    slug = slug.strip("-")
+    slug = slug[:48].rstrip("-")
+    if len(slug) < 3:
+        slug = "discord-guild"
+    return slug
+
+
+def make_unique_workspace_slug(
+    base_slug: str,
+    slug_taken: Callable[[str], bool],
+) -> str:
+    """
+    Return base_slug if available, otherwise base_slug-2, base_slug-3, …
+
+    slug_taken(slug) must return True if the slug is already in use.
+
+    Raises ValidationError if no unique slug can be found within 999 attempts
+    (astronomically unlikely in practice).
+    """
+    if not slug_taken(base_slug):
+        return base_slug
+    for i in range(2, 1000):
+        # Keep total length well within the 64-char slug limit.
+        candidate = f"{base_slug[:44]}-{i}"
+        if not slug_taken(candidate):
+            return candidate
+    raise ValidationError(
+        f"Could not derive a unique slug from '{base_slug}'. "
+        "Please create the workspace manually with a custom slug."
+    )
 
 
 def validate_discord_config(

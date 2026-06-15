@@ -518,7 +518,26 @@ CREATE INDEX IF NOT EXISTS idx_operation_reserves_operation
 --   can edit or delete messages without relying on in-process state.
 --   Operation-level only in this slice; workspace-level messages are future.
 -- discord_dispatch_failures: retry tracking for failed outbound Discord calls.
+-- discord_guild_installs: audit log of bot join/rejoin events per guild.
+--   One row per distinct guild (UNIQUE discord_guild_id).  Re-joins increment
+--   install_count and refresh guild_name/installed_at via upsert.
 -- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS discord_guild_installs (
+    id                  TEXT PRIMARY KEY,
+    discord_guild_id    TEXT NOT NULL UNIQUE,
+    guild_name          TEXT NOT NULL,
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    -- Incremented each time on_guild_join fires for the same guild.
+    install_count       INTEGER NOT NULL DEFAULT 1,
+    -- ISO-8601 UTC timestamp of the most recent join event.
+    installed_at        TEXT NOT NULL,
+    created_at          TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_guild_installs_workspace
+    ON discord_guild_installs(guild_workspace_id);
+
+
 CREATE TABLE IF NOT EXISTS discord_messages (
     id                  TEXT PRIMARY KEY,
     guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),

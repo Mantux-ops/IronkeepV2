@@ -8,6 +8,9 @@ Swapping the bot application requires only changing environment variables.
 Current commands:
   /ikv2_ping  — health-check; confirms the bot is alive and shows latency
 
+Gateway events:
+  on_guild_join  — delegates to app.discord.provisioning.handle_guild_join
+
 Component interactions:
   checkin:scout:{operation_id}   — routes to adapter.handle_component_interaction
   checkin:support:{operation_id} — routes to adapter.handle_component_interaction
@@ -33,7 +36,7 @@ import discord
 from discord import app_commands
 
 from app import database
-from app.discord import adapter
+from app.discord import adapter, provisioning
 from bot.config import BotConfig, load_config
 
 
@@ -95,6 +98,20 @@ class IronkeepBot(discord.Client):
             f"  Client  : {self.config.client_id}\n"
             f"  Sync    : {'guild ' + self.config.dev_guild_id if self.config.dev_guild_id else 'global'}\n"
             f"  Commands: {len(self.tree.get_commands())}"
+        )
+
+    async def on_guild_join(self, guild: discord.Guild) -> None:
+        """
+        Called when the bot is added to a Discord server (or rejoins after removal).
+
+        Delegates workspace provisioning to the app layer.  No business logic
+        lives here — only value extraction and delegation.  Exceptions are
+        handled inside provisioning.handle_guild_join so the bot stays alive.
+        """
+        provisioning.handle_guild_join(
+            discord_guild_id=str(guild.id),
+            guild_name=guild.name,
+            discord_guild_owner_id=str(guild.owner_id) if guild.owner_id else None,
         )
 
     async def on_interaction(self, interaction: discord.Interaction) -> None:

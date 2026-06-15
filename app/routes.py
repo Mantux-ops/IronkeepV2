@@ -621,6 +621,111 @@ def landing(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# Discord setup — public entry point and bot install landing
+# ---------------------------------------------------------------------------
+
+# Bot invite permission integer (from docs/pilot_onboarding.md):
+#   VIEW_CHANNEL (1024) + SEND_MESSAGES (2048) + EMBED_LINKS (16384)
+#   + READ_MESSAGE_HISTORY (65536) = 84992
+# Open question: USE_EXTERNAL_EMOJIS (262144) is documented as optional;
+# add it to the invite URL once confirmed required for production use.
+_BOT_PERMISSIONS = 84992
+
+
+@router.get("/discord/setup")
+def get_discord_setup(request: Request):
+    """
+    Public landing page for Discord bot installation and workspace setup.
+
+    Renders a two-step guide:
+      1. Add bot to Discord server (invite link shown if DISCORD_CLIENT_ID set).
+      2. Complete workspace setup via /discord/setup/continue.
+
+    No authentication required.  DISCORD_CLIENT_SECRET is never exposed.
+    """
+    client_id  = os.environ.get("DISCORD_CLIENT_ID", "").strip()
+    invite_url = None
+    if client_id:
+        from urllib.parse import urlencode  # noqa: PLC0415
+        invite_url = (
+            "https://discord.com/oauth2/authorize?"
+            + urlencode({
+                "client_id":   client_id,
+                "scope":       "bot applications.commands",
+                "permissions": str(_BOT_PERMISSIONS),
+            })
+        )
+
+    with database.transaction() as db:
+        current_user = get_current_user(db, request)
+
+    return templates.TemplateResponse(
+        request,
+        "discord_setup.html",
+        {
+            "workspace":          None,
+            "current_user":       current_user,
+            "invite_url":         invite_url,
+            "discord_configured": bool(client_id),
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Discord setup continuation — bot install → owner claim
+# ---------------------------------------------------------------------------
+
+@router.get("/discord/setup/continue")
+def get_discord_setup_continue(request: Request):
+    """
+    Setup continuation for Discord-provisioned workspaces.
+
+    A Discord guild owner visits this URL after adding the bot to their server
+    (typically from the bot invite page with ?guild_id=<discord_guild_id>
+    appended).  The route verifies that the logged-in user's Discord snowflake
+    matches the guild owner ID recorded at bot-join time, then atomically
+    grants workspace ownership.
+
+    Four rendered states: claimed / already_claimed / not_found /
+    verification_failed.  No redirects on failure — all outcomes are shown
+    inline so users understand what to do next.
+    """
+    try:
+        with database.transaction() as db:
+            user = require_current_user(db, request)
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+
+    guild_id = request.query_params.get("guild_id", "").strip()
+
+    if not guild_id:
+        return templates.TemplateResponse(
+            request,
+            "discord_setup_continue.html",
+            {
+                "workspace":    None,
+                "current_user": user,
+                "state":        "not_found",
+            },
+        )
+
+    result = use_cases.complete_discord_workspace_setup(
+        discord_guild_id=guild_id,
+        user_id=user["id"],
+    )
+
+    return templates.TemplateResponse(
+        request,
+        "discord_setup_continue.html",
+        {
+            "workspace":    result.get("workspace"),
+            "current_user": user,
+            "state":        result["status"],
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
 # Home — workspace list (authenticated)
 # ---------------------------------------------------------------------------
 
@@ -628,17 +733,19 @@ def landing(request: Request):
 def home(request: Request):
     try:
         with database.transaction() as db:
-            user = require_current_user(db, request)
+            user       = require_current_user(db, request)
             workspaces = repositories.get_workspaces_for_user(db, user["id"])
+            unclaimed  = repositories.get_unclaimed_discord_workspaces(db)
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     return templates.TemplateResponse(
         request,
         "home.html",
         {
-            "workspace": None,
-            "workspaces": workspaces,
-            "current_user": user,
+            "workspace":                   None,
+            "workspaces":                  workspaces,
+            "current_user":                user,
+            "unclaimed_discord_workspaces": unclaimed,
         },
     )
 

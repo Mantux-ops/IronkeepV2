@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}Discord Server Setup — Ironkeep{% endblock %}
+
+{% block content %}
+<div class="card">
+  <div class="card-body">
+    {% set title = 'Discord Server Setup' %}
+    {% include "page_header.html" %}
+
+    {% if state == 'claimed' %}
+    <div class="alert alert-success">
+      <strong>Setup complete.</strong>
+      You are now the owner of this workspace.
+    </div>
+    {% if workspace %}
+    <p>Your workspace <strong>{{ workspace.name }}</strong> is ready to use.</p>
+    <div class="action-bar">
+      <a href="/workspaces/{{ workspace.slug }}" class="btn btn-primary">Go to Workspace</a>
+    </div>
+    {% endif %}
+
+    {% elif state == 'already_claimed' %}
+    <div class="alert alert-info">
+      <strong>Already set up.</strong>
+      This workspace already has an owner.
+      If you need access, ask the workspace owner to add you as a member.
+    </div>
+    {% if workspace %}
+    <div class="action-bar">
+      <a href="/workspaces" class="btn">My Workspaces</a>
+    </div>
+    {% endif %}
+
+    {% elif state == 'not_found' %}
+    <div class="alert alert-warning">
+      <strong>Workspace not found.</strong>
+      No Ironkeep workspace is linked to this Discord server yet.
+      Make sure the Ironkeep bot has been added to your server, then try again.
+    </div>
+    <div class="action-bar">
+      <a href="/workspaces" class="btn">My Workspaces</a>
+    </div>
+
+    {% elif state == 'verification_failed' %}
+    <div class="alert alert-error">
+      <strong>Verification failed.</strong>
+      Only the Discord server owner can complete this setup.
+      Make sure you are logged in with the Discord account that owns the server.
+    </div>
+    <div class="action-bar">
+      <a href="/login" class="btn">Log in with a different account</a>
+      <a href="/workspaces" class="btn">My Workspaces</a>
+    </div>
+
+    {% else %}
+    <div class="alert alert-warning">
+      Unexpected setup state. Please try again or contact support.
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

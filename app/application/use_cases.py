@@ -323,6 +323,203 @@ def create_guild_workspace(
     return workspace
 
 
+# ---------------------------------------------------------------------------
+# 1b. Ensure GuildWorkspace for Discord Guild  (bot join — no owner)
+# ---------------------------------------------------------------------------
+
+def ensure_workspace_for_discord_guild(
+    discord_guild_id: str,
+    guild_name: str,
+    discord_guild_owner_id: str | None = None,
+) -> dict:
+    """
+    Idempotent workspace bootstrap triggered by the bot joining a Discord guild.
+
+    Behaviour:
+    - If a workspace is already linked to discord_guild_id: upsert the install
+      audit record (re-join counter, refresh owner_id) and return the existing
+      workspace unchanged.
+    - Otherwise: derive a URL-safe slug from guild_name, create the workspace
+      with discord_guild_id and discord_provisioned_at set, insert a
+      discord_guild_installs row, emit workspace.discord_provisioned event.
+
+    discord_guild_owner_id: Discord snowflake of the guild owner at install
+    time, used by complete_discord_workspace_setup for ownership verification.
+    Optional so that existing callers and tests are not broken.
+
+    Ownership: NO workspace_members row is created.  The workspace exists in an
+    "unclaimed / setup-required" state until a verified Discord user completes
+    the setup flow via complete_discord_workspace_setup.
+
+    Name sanitisation: guild_name is truncated to 80 chars and falls back to
+    "Discord Server" if the result is shorter than 2 characters.  The
+    workspace_name validator is intentionally bypassed here because bot-join
+    names originate from Discord (not user input) and failing silently would
+    prevent the workspace from being created at all.
+
+    Returns the workspace dict (always includes discord_guild_id).
+    """
+    if not (discord_guild_id or "").strip():
+        raise ValidationError("Discord Guild ID must not be empty.")
+    guild_workspace.validate_discord_snowflake(discord_guild_id, "Discord Guild ID")
+
+    # Sanitise guild_name — Discord names can contain arbitrary Unicode.
+    name = (guild_name or "").strip()[:80]
+    if len(name) < 2:
+        name = "Discord Server"
+
+    with database.transaction() as db:
+        # ---------------------------------------------------------------
+        # Idempotency: workspace already linked to this guild?
+        # ---------------------------------------------------------------
+        existing = repositories.get_workspace_by_discord_guild_id(db, discord_guild_id)
+        if existing:
+            repositories.upsert_discord_guild_install(
+                db,
+                discord_guild_id=discord_guild_id,
+                guild_name=guild_name[:255] if guild_name else "",
+                guild_workspace_id=existing["id"],
+                discord_guild_owner_id=discord_guild_owner_id,
+            )
+            return existing
+
+        # ---------------------------------------------------------------
+        # New workspace: derive slug with collision resolution
+        # ---------------------------------------------------------------
+        base_slug = guild_workspace.derive_workspace_slug_from_guild_name(name)
+
+        def _slug_taken(s: str) -> bool:
+            return repositories.get_workspace_by_slug(db, s) is not None
+
+        slug = guild_workspace.make_unique_workspace_slug(base_slug, _slug_taken)
+
+        now = _now()
+        workspace = {
+            "id": str(uuid.uuid4()),
+            "name": name,
+            "slug": slug,
+            "primary_game": "albion",
+            "created_at": now,
+            "updated_at": now,
+        }
+        repositories.insert_workspace(db, workspace)
+        repositories.set_workspace_discord_guild_id(
+            db, workspace["id"], discord_guild_id, now
+        )
+        repositories.upsert_discord_guild_install(
+            db,
+            discord_guild_id=discord_guild_id,
+            guild_name=guild_name[:255] if guild_name else "",
+            guild_workspace_id=workspace["id"],
+            discord_guild_owner_id=discord_guild_owner_id,
+        )
+
+        event = operational_events.make_event(
+            guild_workspace_id=workspace["id"],
+            guild_operation_id=None,
+            event_type=operational_events.WORKSPACE_DISCORD_PROVISIONED,
+            entity_type="guild_workspace",
+            entity_id=workspace["id"],
+            actor_type="system",
+            payload={
+                "discord_guild_id": discord_guild_id,
+                "guild_name": guild_name,
+                "slug": slug,
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+    # Reflect the discord_guild_id that was set inside the transaction.
+    workspace["discord_guild_id"] = discord_guild_id
+    workspace["discord_provisioned_at"] = now
+    return workspace
+
+
+def complete_discord_workspace_setup(
+    discord_guild_id: str,
+    user_id: str,
+) -> dict:
+    """
+    Attempt to claim ownership of a Discord-provisioned workspace.
+
+    Verification: the logged-in user must have a Discord identity whose
+    snowflake matches the discord_guild_owner_id recorded in
+    discord_guild_installs at install time.
+
+    Returns a result dict:
+      {'status': str, 'workspace': dict | None}
+
+    Status values:
+      'claimed'              — ownership granted; user is now owner
+      'already_claimed'      — workspace already has one or more owners
+      'not_found'            — no workspace found for this Discord guild ID
+      'verification_failed'  — caller's Discord ID does not match the stored
+                               guild owner ID, or no Discord identity exists
+                               for the caller, or no owner ID was recorded
+
+    Design invariants:
+      - Only the verified Discord guild owner can claim.
+      - Race safety: uses INSERT INTO ... SELECT WHERE NOT EXISTS so two
+        concurrent requests cannot both succeed; only one INSERT lands.
+      - No membership rows are created on any failure path.
+      - Never raises for expected failure modes.
+      - No secrets logged.
+    """
+    if not (discord_guild_id or "").strip():
+        return {"status": "not_found", "workspace": None}
+
+    with database.transaction() as db:
+        # Step 1 — resolve workspace.
+        workspace = repositories.get_workspace_by_discord_guild_id(db, discord_guild_id)
+        if not workspace:
+            return {"status": "not_found", "workspace": None}
+
+        # Step 2 — early return if already claimed, regardless of verification.
+        if repositories.count_workspace_owners(db, workspace["id"]) > 0:
+            return {"status": "already_claimed", "workspace": workspace}
+
+        # Step 3 — resolve calling user's Discord snowflake.
+        discord_identity = repositories.get_discord_identity_for_user(db, user_id)
+        if not discord_identity:
+            return {"status": "verification_failed", "workspace": None}
+
+        caller_discord_id = discord_identity["provider_user_id"]
+
+        # Step 4 — match against the snowflake recorded at bot-join time.
+        install_record  = repositories.get_discord_guild_install(db, discord_guild_id)
+        stored_owner_id = (install_record or {}).get("discord_guild_owner_id")
+
+        if not stored_owner_id or caller_discord_id != stored_owner_id:
+            return {"status": "verification_failed", "workspace": None}
+
+        # Step 5 — atomic conditional INSERT (race-safe, idempotent).
+        now     = _now()
+        granted = repositories.grant_workspace_owner_if_unclaimed(
+            db, workspace["id"], user_id, now
+        )
+
+        if not granted:
+            # Another request claimed the workspace in the race window.
+            return {"status": "already_claimed", "workspace": workspace}
+
+        # Step 6 — emit audit event.
+        event = operational_events.make_event(
+            guild_workspace_id=workspace["id"],
+            guild_operation_id=None,
+            event_type=operational_events.WORKSPACE_OWNER_CLAIMED,
+            entity_type="guild_workspace",
+            entity_id=workspace["id"],
+            actor_type="user",
+            actor_id=user_id,
+            payload={
+                "discord_guild_id": discord_guild_id,
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+    return {"status": "claimed", "workspace": workspace}
+
+
 def add_workspace_member(
     guild_workspace_id: str,
     actor_user_id: str,
