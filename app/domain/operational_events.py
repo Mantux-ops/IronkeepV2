@@ -19,6 +19,7 @@ deleted or updated.
     albion_identity.claimed
     albion_identity.approved
     albion_identity.rejected
+    albion_guild.roster_imported
 
   Operation-level  — guild_operation_id is required
     guild_operation.created
@@ -102,6 +103,9 @@ USER_DISCORD_LINKED = "user.discord_linked"
 ALBION_IDENTITY_CLAIMED  = "albion_identity.claimed"
 ALBION_IDENTITY_APPROVED = "albion_identity.approved"
 ALBION_IDENTITY_REJECTED = "albion_identity.rejected"
+# Guild roster import events — workspace-level, audit-only, not dispatchable.
+# Emitted once per guild per import run.
+ALBION_GUILD_ROSTER_IMPORTED = "albion_guild.roster_imported"
 # Payout ledger events — operation-level, audit-only, not dispatchable.
 # Emitted when a ledger entry is created, updated, approved, or voided.
 PAYOUT_LEDGER_ENTRY_CREATED  = "payout_ledger.entry.created"

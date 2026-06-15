@@ -3950,3 +3950,247 @@ def mark_payout_ledger_entry_paid(
             },
         )
         repositories.insert_operational_event(db, event)
+
+
+# ---------------------------------------------------------------------------
+# Guild roster import  (Phase 11)
+# ---------------------------------------------------------------------------
+
+def resolve_albion_guild_preview(
+    *,
+    guild_workspace_id: str,
+    requesting_user_id: str,
+    guild_name_or_id: str,
+) -> dict:
+    """
+    Resolve an Albion guild by name (or direct ID) without writing to the DB.
+
+    Intended for the preview step: call this before the officer confirms import.
+
+    Returns a dict:
+        {
+          "albion_guild_id": str | None,
+          "guild_name":      str,
+          "alliance_id":     str | None,
+          "alliance_name":   str | None,
+          "member_count":    int,
+          "error":           str | None,  # None on success
+        }
+
+    On success, error is None.
+    On failure (API error, no match), error contains a user-safe message.
+
+    Raises PermissionDenied if the caller is not an officer/owner.
+    Raises NotFoundError if the workspace does not exist.
+    """
+    value = guild_name_or_id.strip()
+    if not value:
+        return {
+            "albion_guild_id": None,
+            "guild_name":      guild_name_or_id,
+            "alliance_id":     None,
+            "alliance_name":   None,
+            "member_count":    0,
+            "error":           "Guild name or ID must not be empty.",
+        }
+
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        membership = repositories.get_workspace_membership(
+            db, guild_workspace_id, requesting_user_id
+        )
+
+    if not membership:
+        raise PermissionDenied("You are not a member of this workspace.")
+    if not workspace_membership.can_manage_workspace_members(membership["role"]):
+        raise PermissionDenied("Only officers and owners can import guild rosters.")
+
+    from app.albion.rest_client import AlbionApiError, search_albion_guilds
+
+    try:
+        results = search_albion_guilds(value)
+    except AlbionApiError as exc:
+        return {
+            "albion_guild_id": None,
+            "guild_name":      value,
+            "alliance_id":     None,
+            "alliance_name":   None,
+            "member_count":    0,
+            "error":           f"Albion API error: {exc}",
+        }
+
+    if not results:
+        return {
+            "albion_guild_id": None,
+            "guild_name":      value,
+            "alliance_id":     None,
+            "alliance_name":   None,
+            "member_count":    0,
+            "error":           f"No guild found matching '{value}'.",
+        }
+
+    best = results[0]
+    return {
+        "albion_guild_id": best["albion_guild_id"],
+        "guild_name":      best["guild_name"],
+        "alliance_id":     best.get("alliance_id"),
+        "alliance_name":   best.get("alliance_name"),
+        "member_count":    best.get("member_count", 0),
+        "error":           None,
+    }
+
+
+def import_albion_guild_roster(
+    *,
+    guild_workspace_id: str,
+    requesting_user_id: str,
+    albion_guild_id: str,
+    guild_name_hint: str = "",
+    alliance_id_hint: str | None = None,
+    alliance_name_hint: str | None = None,
+) -> dict:
+    """
+    Import all current members of an Albion guild into the workspace roster.
+
+    Flow:
+    1. Auth check: requesting_user_id must be officer or owner.
+    2. HTTP: fetch guild members from Albion API (outside transaction).
+    3. DB (single transaction):
+       a. Upsert workspace_albion_guilds record.
+       b. For each member: upsert workspace_albion_players.
+          - character_name and source_guild_id are updated on re-import.
+          - user_id (existing identity link) is preserved on conflict.
+       c. Emit audit event.
+
+    Returns:
+        {
+          "guild_name":   str,
+          "total":        int,   # members returned by API
+          "imported":     int,   # new rows inserted
+          "updated":      int,   # existing rows updated
+          "errors":       [],    # always empty in slice 1
+        }
+
+    Raises:
+        PermissionDenied  — caller is not an officer/owner.
+        NotFoundError     — workspace does not exist.
+        ValidationError   — Albion API error or empty guild_id.
+    """
+    guild_id = albion_guild_id.strip()
+    if not guild_id:
+        raise ValidationError("Albion guild ID must not be empty.")
+
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        membership = repositories.get_workspace_membership(
+            db, guild_workspace_id, requesting_user_id
+        )
+
+    if not membership:
+        raise PermissionDenied("You are not a member of this workspace.")
+    if not workspace_membership.can_manage_workspace_members(membership["role"]):
+        raise PermissionDenied("Only officers and owners can import guild rosters.")
+
+    # ------------------------------------------------------------------
+    # Phase 2: API call (outside transaction)
+    # ------------------------------------------------------------------
+    from app.albion.rest_client import AlbionApiError, fetch_albion_guild_members
+
+    try:
+        members = fetch_albion_guild_members(guild_id)
+    except AlbionApiError as exc:
+        raise ValidationError(
+            f"Could not fetch guild members from Albion API: {exc}"
+        ) from exc
+
+    # Derive guild metadata from member objects if available.
+    resolved_guild_name    = guild_name_hint or guild_id
+    resolved_alliance_id   = alliance_id_hint
+    resolved_alliance_name = alliance_name_hint
+
+    if members:
+        first = members[0]
+        if first.get("guild_name"):
+            resolved_guild_name = first["guild_name"]
+
+    # ------------------------------------------------------------------
+    # Phase 3: DB write (single transaction)
+    # ------------------------------------------------------------------
+    now = _now()
+    guild_row_id = str(uuid.uuid4())
+
+    with database.transaction() as db:
+        existing_ids = repositories.get_existing_albion_player_ids(
+            db, guild_workspace_id
+        )
+
+        repositories.upsert_workspace_albion_guild(db, {
+            "id":                guild_row_id,
+            "guild_workspace_id": guild_workspace_id,
+            "albion_guild_id":   guild_id,
+            "guild_name":        resolved_guild_name,
+            "alliance_id":       resolved_alliance_id,
+            "alliance_name":     resolved_alliance_name,
+            "last_imported_at":  now,
+            "created_at":        now,
+        })
+
+        guild_rec = repositories.get_workspace_albion_guild(
+            db, guild_workspace_id, guild_id
+        )
+        source_guild_row_id = guild_rec["id"] if guild_rec else guild_row_id
+
+        imported = 0
+        updated  = 0
+        for member in members:
+            player_id = member.get("albion_player_id", "")
+            if not player_id:
+                continue
+            char_name = member.get("character_name", player_id)
+            is_new = player_id not in existing_ids
+            repositories.upsert_workspace_albion_player(db, {
+                "id":                    str(uuid.uuid4()),
+                "guild_workspace_id":    guild_workspace_id,
+                "albion_player_id":      player_id,
+                "character_name":        char_name,
+                "user_id":               None,
+                "source_guild_id":       source_guild_row_id,
+                "last_seen_in_guild_at": now,
+                "created_at":            now,
+                "updated_at":            now,
+            })
+            if is_new:
+                imported += 1
+            else:
+                updated += 1
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.ALBION_GUILD_ROSTER_IMPORTED,
+            entity_type="workspace_albion_guild",
+            entity_id=source_guild_row_id,
+            actor_type="user",
+            actor_id=requesting_user_id,
+            payload={
+                "albion_guild_id": guild_id,
+                "guild_name":      resolved_guild_name,
+                "total":           len(members),
+                "imported":        imported,
+                "updated":         updated,
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+    return {
+        "guild_name": resolved_guild_name,
+        "total":      len(members),
+        "imported":   imported,
+        "updated":    updated,
+        "errors":     [],
+    }
+

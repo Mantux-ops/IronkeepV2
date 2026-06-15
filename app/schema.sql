@@ -668,6 +668,53 @@ CREATE INDEX IF NOT EXISTS idx_payout_ledger_participant
     ON payout_ledger_entries(participant_id, guild_workspace_id);
 
 -- ---------------------------------------------------------------------------
+-- Albion guild roster import (Phase 11)
+-- workspace_albion_guilds: tracks Albion guilds linked to a workspace.
+-- workspace_albion_players: Albion players imported from guild rosters.
+--
+-- Design invariants:
+--   workspace_albion_players is keyed by (guild_workspace_id, albion_player_id).
+--   user_id is nullable — populated later when a user claims this identity.
+--   Upsert on import preserves user_id and created_at; never overwritten.
+--   participants.albion_player_id remains write-dark — not touched by roster import.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS workspace_albion_guilds (
+    id                  TEXT PRIMARY KEY,
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    albion_guild_id     TEXT NOT NULL,
+    guild_name          TEXT NOT NULL,
+    alliance_id         TEXT,
+    alliance_name       TEXT,
+    last_imported_at    TEXT,
+    created_at          TEXT NOT NULL,
+    UNIQUE(guild_workspace_id, albion_guild_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_albion_guilds_workspace
+    ON workspace_albion_guilds(guild_workspace_id);
+
+CREATE TABLE IF NOT EXISTS workspace_albion_players (
+    id                    TEXT PRIMARY KEY,
+    guild_workspace_id    TEXT NOT NULL REFERENCES guild_workspaces(id),
+    albion_player_id      TEXT NOT NULL,
+    character_name        TEXT NOT NULL,
+    -- nullable: set when the player later claims their Ironkeep identity
+    user_id               TEXT REFERENCES users(id),
+    -- nullable FK to the guild whose last import produced/updated this row
+    source_guild_id       TEXT REFERENCES workspace_albion_guilds(id),
+    last_seen_in_guild_at TEXT,
+    created_at            TEXT NOT NULL,
+    updated_at            TEXT NOT NULL,
+    UNIQUE(guild_workspace_id, albion_player_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_albion_players_workspace
+    ON workspace_albion_players(guild_workspace_id);
+
+CREATE INDEX IF NOT EXISTS idx_workspace_albion_players_user
+    ON workspace_albion_players(user_id);
+
+-- ---------------------------------------------------------------------------
 -- Scheduler runs  (observability log — one row per job execution)
 -- A row with finished_at IS NULL and status='running' indicates a crash.
 -- Rows are never deleted automatically.

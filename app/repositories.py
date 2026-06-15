@@ -3387,3 +3387,153 @@ def count_pending_ledger_entries_for_workspace(
         (guild_workspace_id,),
     ).fetchone()
     return row[0] if row else 0
+
+
+# ---------------------------------------------------------------------------
+# Workspace Albion Guilds  (Phase 11 — roster import)
+# ---------------------------------------------------------------------------
+
+def upsert_workspace_albion_guild(
+    db: sqlite3.Connection,
+    record: dict,
+) -> None:
+    """
+    Insert a workspace_albion_guilds row, or update guild_name / alliance fields
+    and last_imported_at on conflict.
+
+    created_at is preserved from the original insert (not updated on conflict).
+    """
+    db.execute(
+        """
+        INSERT INTO workspace_albion_guilds
+            (id, guild_workspace_id, albion_guild_id, guild_name,
+             alliance_id, alliance_name, last_imported_at, created_at)
+        VALUES
+            (:id, :guild_workspace_id, :albion_guild_id, :guild_name,
+             :alliance_id, :alliance_name, :last_imported_at, :created_at)
+        ON CONFLICT (guild_workspace_id, albion_guild_id) DO UPDATE SET
+            guild_name       = excluded.guild_name,
+            alliance_id      = excluded.alliance_id,
+            alliance_name    = excluded.alliance_name,
+            last_imported_at = excluded.last_imported_at
+        """,
+        record,
+    )
+
+
+def get_workspace_albion_guild(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    albion_guild_id: str,
+) -> dict | None:
+    """Return a workspace_albion_guilds row by (workspace, albion_guild_id), or None."""
+    return _row(
+        db.execute(
+            """
+            SELECT * FROM workspace_albion_guilds
+            WHERE guild_workspace_id = ? AND albion_guild_id = ?
+            """,
+            (guild_workspace_id, albion_guild_id),
+        ).fetchone()
+    )
+
+
+def list_workspace_albion_guilds(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return all linked Albion guilds for a workspace, ordered by guild_name."""
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM workspace_albion_guilds
+            WHERE guild_workspace_id = ?
+            ORDER BY guild_name
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Workspace Albion Players  (Phase 11 — roster import)
+# ---------------------------------------------------------------------------
+
+def upsert_workspace_albion_player(
+    db: sqlite3.Connection,
+    record: dict,
+) -> None:
+    """
+    Insert a workspace_albion_players row, or update character_name /
+    source_guild_id / last_seen_in_guild_at / updated_at on conflict.
+
+    user_id and created_at are preserved from the original insert — never
+    overwritten on re-import.  This preserves existing Ironkeep identity links.
+    """
+    db.execute(
+        """
+        INSERT INTO workspace_albion_players
+            (id, guild_workspace_id, albion_player_id, character_name,
+             user_id, source_guild_id, last_seen_in_guild_at,
+             created_at, updated_at)
+        VALUES
+            (:id, :guild_workspace_id, :albion_player_id, :character_name,
+             :user_id, :source_guild_id, :last_seen_in_guild_at,
+             :created_at, :updated_at)
+        ON CONFLICT (guild_workspace_id, albion_player_id) DO UPDATE SET
+            character_name        = excluded.character_name,
+            source_guild_id       = excluded.source_guild_id,
+            last_seen_in_guild_at = excluded.last_seen_in_guild_at,
+            updated_at            = excluded.updated_at
+        """,
+        record,
+    )
+
+
+def get_workspace_albion_player(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    albion_player_id: str,
+) -> dict | None:
+    """Return a workspace_albion_players row by (workspace, albion_player_id), or None."""
+    return _row(
+        db.execute(
+            """
+            SELECT * FROM workspace_albion_players
+            WHERE guild_workspace_id = ? AND albion_player_id = ?
+            """,
+            (guild_workspace_id, albion_player_id),
+        ).fetchone()
+    )
+
+
+def list_workspace_albion_players(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return all imported Albion players for a workspace, ordered by character_name."""
+    return _rows(
+        db.execute(
+            """
+            SELECT p.*, g.guild_name AS source_guild_name
+            FROM workspace_albion_players p
+            LEFT JOIN workspace_albion_guilds g ON g.id = p.source_guild_id
+            WHERE p.guild_workspace_id = ?
+            ORDER BY p.character_name
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    )
+
+
+def get_existing_albion_player_ids(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> set[str]:
+    """Return the set of albion_player_ids already imported for this workspace."""
+    rows = db.execute(
+        "SELECT albion_player_id FROM workspace_albion_players WHERE guild_workspace_id = ?",
+        (guild_workspace_id,),
+    ).fetchall()
+    return {row["albion_player_id"] for row in rows}
+

@@ -15,7 +15,10 @@
   <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
     <h2 style="margin:0">Workspace members</h2>
     {% if can_manage_members %}
-    <a href="/workspaces/{{ workspace.slug }}/members/add" class="btn btn-sm btn-primary">+ Add Member</a>
+    <div style="display:flex;gap:0.5rem">
+      <a href="/workspaces/{{ workspace.slug }}/members/import-guilds" class="btn btn-sm">Import Guilds</a>
+      <a href="/workspaces/{{ workspace.slug }}/members/add" class="btn btn-sm btn-primary">+ Add Member</a>
+    </div>
     {% endif %}
   </div>
   <div class="card-body">
@@ -116,4 +119,64 @@
     {% endif %}
   </div>
 </div>
+
+{% if imported_players %}
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
+    <h2 style="margin:0">Imported Albion Players</h2>
+    {% if can_manage_members %}
+    <a href="/workspaces/{{ workspace.slug }}/members/import-guilds" class="btn btn-sm">Manage</a>
+    {% endif %}
+  </div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Character</th>
+            <th>Source guild</th>
+            <th>Last seen in guild</th>
+            <th>Linked user</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for p in imported_players %}
+          <tr>
+            <td><strong>{{ p.character_name }}</strong></td>
+            <td>
+              {% if p.source_guild_name %}
+                <span class="text-muted">{{ p.source_guild_name }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td class="text-muted" style="font-size:0.9em">
+              {% if p.last_seen_in_guild_at %}{{ p.last_seen_in_guild_at[:10] }}{% else %}—{% endif %}
+            </td>
+            <td style="font-size:0.9em">
+              {% set linked_member = members_by_user_id.get(p.user_id) if p.user_id else none %}
+              {% if linked_member %}
+                <span style="color:var(--green,#22c55e)">&#10003;</span>
+                {{ linked_member.display_name }}
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% elif can_manage_members %}
+<div class="card" style="margin-top:1.5rem">
+  <div class="card-body">
+    <p class="empty-state">
+      No imported Albion players yet.
+      <a href="/workspaces/{{ workspace.slug }}/members/import-guilds">Import a guild roster</a> to populate this workspace.
+    </p>
+  </div>
+</div>
+{% endif %}
 {% endblock %}

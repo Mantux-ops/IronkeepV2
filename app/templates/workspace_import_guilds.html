@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}Import Guild Roster — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'members' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+{% set title = 'Import Guild Roster — ' ~ workspace.name %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2 style="margin:0">Import Albion Guild Roster</h2>
+  </div>
+  <div class="card-body">
+
+    {% if not preview_guilds %}
+    {# ─── Step 1: input form ─────────────────────────────────────────── #}
+    <p class="text-muted" style="margin-bottom:1rem">
+      Enter one or more Albion guild names or guild IDs, one per line.
+      Ironkeep will resolve each guild and show you a preview before importing.
+    </p>
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/members/import-guilds/preview"
+          class="form">
+      <div class="form-group">
+        <label for="guild_names">Guild names / IDs (one per line)</label>
+        <textarea id="guild_names" name="guild_names" rows="5"
+                  placeholder="Iron Keep&#10;Shadow Syndicate"
+                  style="font-family:monospace;width:100%"></textarea>
+      </div>
+      <div class="action-bar">
+        <input type="submit" value="Resolve Guilds" class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/members" class="btn">Cancel</a>
+      </div>
+    </form>
+
+    {% else %}
+    {# ─── Step 2: preview + confirm ──────────────────────────────────── #}
+    <p class="text-muted" style="margin-bottom:1rem">
+      Review the resolved guilds below, then confirm to import their rosters.
+    </p>
+
+    <div class="table-wrap" style="margin-bottom:1.25rem">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Guild name</th>
+            <th>Alliance</th>
+            <th>Members</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in preview_guilds %}
+          <tr>
+            <td><strong>{{ g.guild_name }}</strong></td>
+            <td>
+              {% if g.alliance_name %}
+                <span class="text-muted">{{ g.alliance_name }}</span>
+              {% else %}
+                <span class="text-muted">—</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if g.member_count %}{{ g.member_count }}{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td>
+              {% if g.error %}
+                <span class="badge badge-error" style="font-size:0.8em">{{ g.error }}</span>
+              {% else %}
+                <span class="badge badge-officer" style="font-size:0.8em">Ready</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    {% set resolved = preview_guilds | selectattr("albion_guild_id") | list %}
+    {% if resolved %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/members/import-guilds/confirm"
+          class="form">
+      {% for g in resolved %}
+      <input type="hidden" name="albion_guild_id" value="{{ g.albion_guild_id }}">
+      <input type="hidden" name="guild_name"      value="{{ g.guild_name }}">
+      <input type="hidden" name="alliance_id"     value="{{ g.alliance_id or '' }}">
+      <input type="hidden" name="alliance_name"   value="{{ g.alliance_name or '' }}">
+      {% endfor %}
+      <div class="action-bar">
+        <input type="submit"
+               value="Import {{ resolved | length }} Guild{% if resolved | length != 1 %}s{% endif %}"
+               class="btn btn-primary">
+        <a href="/workspaces/{{ workspace.slug }}/members/import-guilds" class="btn">Start Over</a>
+      </div>
+    </form>
+    {% else %}
+    <div class="action-bar">
+      <a href="/workspaces/{{ workspace.slug }}/members/import-guilds" class="btn">Try Again</a>
+    </div>
+    {% endif %}
+    {% endif %}
+
+  </div>
+</div>
+
+{% if linked_guilds %}
+<div class="card">
+  <div class="card-header">
+    <h2 style="margin:0">Linked Guilds</h2>
+  </div>
+  <div class="card-body">
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Guild</th>
+            <th>Alliance</th>
+            <th>Last imported</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in linked_guilds %}
+          <tr>
+            <td><strong>{{ g.guild_name }}</strong></td>
+            <td>
+              {% if g.alliance_name %}{{ g.alliance_name }}{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="text-muted" style="font-size:0.9em">
+              {% if g.last_imported_at %}{{ g.last_imported_at[:19] | replace("T", " ") }} UTC{% else %}—{% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

@@ -89,6 +89,55 @@ def _normalise_player(raw: dict) -> dict:
 # Public API
 # ---------------------------------------------------------------------------
 
+def _normalise_guild(raw: dict) -> dict:
+    """Convert a raw API guild record to a clean internal dict."""
+    return {
+        "albion_guild_id": raw.get("Id") or raw.get("id") or "",
+        "guild_name":      raw.get("Name") or raw.get("name") or "",
+        "alliance_id":     raw.get("AllianceId") or raw.get("allianceId") or None,
+        "alliance_name":   raw.get("AllianceName") or raw.get("allianceName") or None,
+        "member_count":    raw.get("MemberCount") or raw.get("memberCount") or 0,
+        "extra_json":      json.dumps(raw),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Public API — guild endpoints
+# ---------------------------------------------------------------------------
+
+def search_albion_guilds(name: str) -> list[dict]:
+    """
+    Search for Albion guilds by (partial) name.
+
+    Returns a list of normalised guild dicts — may be empty.
+    Raises AlbionApiError on HTTP error or timeout.
+    """
+    raw = _get("/guilds/search", params={"q": name})
+    if not isinstance(raw, list):
+        return []
+    return [_normalise_guild(g) for g in raw if g.get("Id") or g.get("id")]
+
+
+def fetch_albion_guild_members(guild_id: str) -> list[dict]:
+    """
+    Fetch all current members of an Albion guild by stable guild ID.
+
+    Returns a list of normalised player dicts — may be empty for guilds
+    that exist but have no members.
+    Raises AlbionApiError on HTTP error, timeout, or unexpected response.
+    """
+    raw = _get(f"/guilds/{guild_id}/members")
+    if not isinstance(raw, list):
+        raise AlbionApiError(
+            f"Unexpected response type for guild members {guild_id}"
+        )
+    return [_normalise_player(p) for p in raw if p.get("Id") or p.get("id")]
+
+
+# ---------------------------------------------------------------------------
+# Public API — player endpoints
+# ---------------------------------------------------------------------------
+
 def search_albion_characters(name: str) -> list[dict]:
     """
     Search for Albion players by (partial) name.

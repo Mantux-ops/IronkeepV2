@@ -1003,6 +1003,7 @@ def get_workspace_members(request: Request, slug: str):
             )
             albion_pids     = [c["albion_player_id"] for c in albion_claims]
             albion_cache    = repositories.get_albion_character_cache_many(db, albion_pids)
+            imported_players = repositories.list_workspace_albion_players(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1016,6 +1017,7 @@ def get_workspace_members(request: Request, slug: str):
     }
     claims_by_user_id  = {c["user_id"]: c for c in albion_claims}
     cache_by_player_id = {c["albion_player_id"]: c for c in albion_cache}
+    members_by_user_id = {m["user_id"]: m for m in members}
 
     return templates.TemplateResponse(
         request,
@@ -1027,6 +1029,8 @@ def get_workspace_members(request: Request, slug: str):
             "participant_id_by_name": participant_id_by_name,
             "claims_by_user_id":    claims_by_user_id,
             "cache_by_player_id":   cache_by_player_id,
+            "imported_players":     imported_players,
+            "members_by_user_id":   members_by_user_id,
             "error":                error,
             "success":              success,
             "current_user":         user,
@@ -1184,8 +1188,182 @@ async def post_add_workspace_member(request: Request, slug: str):
 
 
 # ---------------------------------------------------------------------------
-# Discord settings routes
+# Guild roster import routes  (Phase 11)
 # ---------------------------------------------------------------------------
+
+_IMPORT_GUILDS_URL = "/workspaces/{slug}/members/import-guilds"
+
+
+@router.get("/workspaces/{slug}/members/import-guilds")
+def get_import_guilds(request: Request, slug: str):
+    """Show the guild roster import form + list of already-linked guilds."""
+    error   = request.query_params.get("error")
+    success = request.query_params.get("success")
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_manage_members"]:
+                raise PermissionDenied("Only owners and officers can import guild rosters.")
+            linked_guilds = repositories.list_workspace_albion_guilds(db, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    return templates.TemplateResponse(
+        request,
+        "workspace_import_guilds.html",
+        {
+            "workspace":      ws,
+            "current_user":   user,
+            "linked_guilds":  linked_guilds,
+            "preview_guilds": None,
+            "error":          error,
+            "success":        success,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/members/import-guilds/preview")
+async def post_import_guilds_preview(request: Request, slug: str):
+    """
+    Resolve one or more guild names/IDs from the Albion API without writing to DB.
+    Renders the import form with the resolved guilds for officer confirmation.
+    """
+    import_url = _IMPORT_GUILDS_URL.format(slug=slug)
+    form = await request.form()
+    guild_lines = form.get("guild_names", "").strip()
+
+    if not guild_lines:
+        return _err_redirect(import_url, "Please enter at least one guild name or ID.")
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        linked_guilds = []
+        with database.transaction() as db:
+            linked_guilds = repositories.list_workspace_albion_guilds(db, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    names = [line.strip() for line in guild_lines.splitlines() if line.strip()]
+    preview_guilds = []
+    for name in names:
+        try:
+            result = use_cases.resolve_albion_guild_preview(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=user["id"],
+                guild_name_or_id=name,
+            )
+        except IronkeepError as exc:
+            result = {
+                "albion_guild_id": None,
+                "guild_name":      name,
+                "alliance_id":     None,
+                "alliance_name":   None,
+                "member_count":    0,
+                "error":           str(exc),
+            }
+        preview_guilds.append(result)
+
+    return templates.TemplateResponse(
+        request,
+        "workspace_import_guilds.html",
+        {
+            "workspace":      ws,
+            "current_user":   user,
+            "linked_guilds":  linked_guilds,
+            "preview_guilds": preview_guilds,
+            "error":          None,
+            "success":        None,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/members/import-guilds/confirm")
+async def post_import_guilds_confirm(request: Request, slug: str):
+    """
+    Import confirmed guild IDs into the workspace roster.
+    Accepts a list of albion_guild_id[] form fields (one per guild to import).
+    Redirects to the import page with a success summary or per-guild errors.
+    """
+    import_url = _IMPORT_GUILDS_URL.format(slug=slug)
+    form = await request.form()
+
+    guild_ids    = form.getlist("albion_guild_id")
+    guild_names  = form.getlist("guild_name")
+    alliance_ids = form.getlist("alliance_id")
+    alliance_names = form.getlist("alliance_name")
+
+    if not guild_ids:
+        return _err_redirect(import_url, "No guilds selected for import.")
+
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    total_imported = 0
+    total_updated  = 0
+    guilds_linked  = 0
+    errors         = []
+
+    for i, guild_id in enumerate(guild_ids):
+        if not guild_id:
+            continue
+        g_name  = guild_names[i]  if i < len(guild_names)  else ""
+        a_id    = alliance_ids[i] if i < len(alliance_ids)  else None
+        a_name  = alliance_names[i] if i < len(alliance_names) else None
+        try:
+            result = use_cases.import_albion_guild_roster(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=user["id"],
+                albion_guild_id=guild_id,
+                guild_name_hint=g_name or "",
+                alliance_id_hint=a_id or None,
+                alliance_name_hint=a_name or None,
+            )
+            total_imported += result["imported"]
+            total_updated  += result["updated"]
+            guilds_linked  += 1
+        except IronkeepError as exc:
+            errors.append(f"{g_name or guild_id}: {exc}")
+
+    if errors and not guilds_linked:
+        return _err_redirect(import_url, "; ".join(errors))
+
+    parts = []
+    if guilds_linked:
+        parts.append(f"{guilds_linked} guild(s) linked")
+    if total_imported:
+        parts.append(f"{total_imported} players imported")
+    if total_updated:
+        parts.append(f"{total_updated} players updated")
+    if errors:
+        parts.append(f"{len(errors)} guild error(s)")
+
+    msg = ", ".join(parts) if parts else "Import complete."
+    return _ok_redirect(import_url, msg)
+
+
+
 
 _DISCORD_SETTINGS_URL = "/workspaces/{slug}/settings/discord"
 
