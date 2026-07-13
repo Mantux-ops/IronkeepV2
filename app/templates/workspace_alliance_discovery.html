@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Alliance Discovery — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'members' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block content %}
+{% set title = 'Alliance Discovery — ' ~ workspace.name %}
+{% include "page_header.html" %}
+
+{# ─── Back link ─────────────────────────────────────────────────────── #}
+<p style="margin-bottom:1.25rem">
+  <a href="/workspaces/{{ workspace.slug }}/members/import-guilds"
+     class="text-muted" style="font-size:0.9em">
+    ← Back to Import Guilds
+  </a>
+</p>
+
+{# ─── Error state ────────────────────────────────────────────────────── #}
+{% if alliance_error %}
+<div class="card">
+  <div class="card-body">
+    <p style="color:var(--error-text,#991b1b);margin:0">
+      {{ alliance_error }}
+    </p>
+    <p style="margin:0.5rem 0 0">
+      <a href="/workspaces/{{ workspace.slug }}/members/import-guilds">
+        Return to Import Guilds
+      </a>
+    </p>
+  </div>
+</div>
+
+{% elif alliance %}
+
+{# ─── Alliance header card ───────────────────────────────────────────── #}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2 style="margin:0">
+      {% if alliance.alliance_tag %}[{{ alliance.alliance_tag }}]{% endif %}
+      {{ alliance.alliance_name or 'Unknown Alliance' }}
+    </h2>
+  </div>
+  <div class="card-body">
+    <dl style="display:grid;grid-template-columns:max-content 1fr;gap:0.25rem 1.5rem;margin:0">
+      <dt class="text-muted" style="font-size:0.85em">Alliance ID</dt>
+      <dd style="font-family:monospace;font-size:0.82em;margin:0">{{ alliance.alliance_id }}</dd>
+      <dt class="text-muted" style="font-size:0.85em">Server</dt>
+      <dd style="margin:0">{{ albion_servers.get(server, server) | capitalize }}</dd>
+      <dt class="text-muted" style="font-size:0.85em">Guilds</dt>
+      <dd style="margin:0">{{ alliance.guilds | length }}</dd>
+      {% if alliance.num_players %}
+      <dt class="text-muted" style="font-size:0.85em">Total members</dt>
+      <dd style="margin:0">{{ alliance.num_players }}</dd>
+      {% endif %}
+    </dl>
+    <p class="text-muted" style="font-size:0.82em;margin:0.75rem 0 0">
+      <strong>Discovery only.</strong>
+      Viewing an alliance does not link it to this workspace or verify ownership.
+      Use the Import button below to add individual guilds.
+    </p>
+  </div>
+</div>
+
+{# ─── Member guilds ──────────────────────────────────────────────────── #}
+<div class="card">
+  <div class="card-header">
+    <h2 style="margin:0">Member Guilds</h2>
+  </div>
+  <div class="card-body" style="padding:0">
+
+    {% if alliance.guilds %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Guild</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in alliance.guilds %}
+          <tr>
+            <td>
+              <strong>{{ g.guild_name }}</strong>
+              <br><span class="text-muted" style="font-size:0.78em;font-family:monospace">{{ g.albion_guild_id }}</span>
+            </td>
+            <td>
+              {% if g.already_linked %}
+                <span class="badge badge-officer" style="font-size:0.8em">✓ Already linked</span>
+              {% else %}
+                <span class="text-muted" style="font-size:0.85em">Not linked</span>
+              {% endif %}
+            </td>
+            <td>
+              {% if not g.already_linked %}
+              <form method="post"
+                    action="/workspaces/{{ workspace.slug }}/members/import-guilds/confirm"
+                    class="inline-form">
+                <input type="hidden" name="albion_guild_id" value="{{ g.albion_guild_id }}">
+                <input type="hidden" name="guild_name"      value="{{ g.guild_name }}">
+                <input type="hidden" name="server"          value="{{ server }}">
+                <input type="hidden" name="alliance_id"     value="{{ alliance.alliance_id }}">
+                <input type="hidden" name="alliance_name"   value="{{ alliance.alliance_name or '' }}">
+                <button type="submit" class="btn btn-sm btn-primary"
+                        onclick="return confirm('Import {{ g.guild_name }} roster? This links the guild for roster visibility only — not as a verified owner.')">
+                  Import
+                </button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <div style="padding:1.25rem">
+      <p class="text-muted" style="margin:0">No member guilds found for this alliance.</p>
+    </div>
+    {% endif %}
+
+  </div>
+</div>
+
+{% endif %}
+{% endblock %}

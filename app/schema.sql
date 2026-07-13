@@ -677,17 +677,34 @@ CREATE INDEX IF NOT EXISTS idx_payout_ledger_participant
 --   user_id is nullable — populated later when a user claims this identity.
 --   Upsert on import preserves user_id and created_at; never overwritten.
 --   participants.albion_player_id remains write-dark — not touched by roster import.
+--
+-- Guild identity: (guild_workspace_id, server, albion_guild_id).
+--   Same albion_guild_id on different Albion servers is a distinct guild.
+--   server must be one of: europe | americas | asia
 -- ---------------------------------------------------------------------------
 CREATE TABLE IF NOT EXISTS workspace_albion_guilds (
     id                  TEXT PRIMARY KEY,
     guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
     albion_guild_id     TEXT NOT NULL,
     guild_name          TEXT NOT NULL,
+    -- Albion server this guild belongs to.  Part of guild identity.
+    -- Allowed values: europe | americas | asia
+    server              TEXT NOT NULL DEFAULT 'europe',
     alliance_id         TEXT,
     alliance_name       TEXT,
     last_imported_at    TEXT,
-    created_at          TEXT NOT NULL,
-    UNIQUE(guild_workspace_id, albion_guild_id)
+    -- Ownership / anti-stealing model.
+    -- verification_status is ALWAYS 'unverified' for roster-import links.
+    -- 'verified' requires an explicit future admin/officer approval step that
+    -- is NOT implemented yet.  Do not treat 'unverified' as implied ownership.
+    -- Allowed values: unverified | verified | rejected
+    verification_status   TEXT NOT NULL DEFAULT 'unverified',
+    verified_at           TEXT,
+    verified_by_user_id   TEXT REFERENCES users(id),
+    -- Free-text description of how verification was established (future use).
+    verification_method   TEXT,
+    created_at            TEXT NOT NULL,
+    UNIQUE(guild_workspace_id, server, albion_guild_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_workspace_albion_guilds_workspace

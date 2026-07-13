@@ -26,6 +26,7 @@
   <a href="/workspaces/{{ workspace.slug }}/builds/new" class="btn btn-primary">+ New Build</a>
   <a href="/workspaces/{{ workspace.slug }}/builds/import" class="btn btn-sm">Import CSV</a>
   {% endif %}
+  <a href="/workspaces/{{ workspace.slug }}/builds/editor" class="btn btn-sm btn-secondary">⚙ Visual Editor</a>
   {% if not show_retired and retired_count > 0 %}
   <a href="?show_retired=1" class="btn btn-sm btn-muted">Show {{ retired_count }} retired</a>
   {% elif show_retired %}

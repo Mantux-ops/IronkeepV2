@@ -195,7 +195,83 @@ _COLUMN_MIGRATIONS: list[str] = [
     # Phase 11 Slice 3: stale marking for imported Albion guild roster players.
     # NULL = active; non-NULL = ISO timestamp when player was first marked stale.
     "ALTER TABLE workspace_albion_players ADD COLUMN stale_at TEXT NULL",
+    # Phase 11 Slice 4: guild ownership / anti-stealing model.
+    # All linked guilds default to 'unverified'.  Verified guilds require an
+    # explicit future admin/officer approval step — not yet implemented.
+    "ALTER TABLE workspace_albion_guilds ADD COLUMN verification_status TEXT NOT NULL DEFAULT 'unverified'",
+    "ALTER TABLE workspace_albion_guilds ADD COLUMN verified_at TEXT NULL",
+    "ALTER TABLE workspace_albion_guilds ADD COLUMN verified_by_user_id TEXT NULL REFERENCES users(id)",
+    "ALTER TABLE workspace_albion_guilds ADD COLUMN verification_method TEXT NULL",
 ]
+
+
+def _migrate_workspace_albion_guilds_add_server(conn: sqlite3.Connection) -> None:
+    """
+    Add the *server* column to workspace_albion_guilds and update the UNIQUE
+    constraint from (guild_workspace_id, albion_guild_id) to
+    (guild_workspace_id, server, albion_guild_id).
+
+    Idempotent: no-op if *server* column already exists (fresh DB created from
+    the updated schema.sql already has the right schema).
+
+    Migration strategy (SQLite cannot ALTER a UNIQUE constraint):
+      1. Create workspace_albion_guilds_v2 with the new schema.
+      2. Copy every existing row, backfilling server = 'europe'.
+      3. DROP the old table.
+      4. RENAME the new table.
+      5. Recreate the workspace-scoped index.
+    Foreign-key enforcement is disabled for the duration of the rename.
+    """
+    cols = {row[1] for row in conn.execute(
+        "PRAGMA table_info(workspace_albion_guilds)"
+    ).fetchall()}
+    if "server" in cols:
+        return  # Already migrated — nothing to do.
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute("""
+        CREATE TABLE workspace_albion_guilds_v2 (
+            id                    TEXT PRIMARY KEY,
+            guild_workspace_id    TEXT NOT NULL REFERENCES guild_workspaces(id),
+            albion_guild_id       TEXT NOT NULL,
+            guild_name            TEXT NOT NULL,
+            server                TEXT NOT NULL DEFAULT 'europe',
+            alliance_id           TEXT,
+            alliance_name         TEXT,
+            last_imported_at      TEXT,
+            verification_status   TEXT NOT NULL DEFAULT 'unverified',
+            verified_at           TEXT,
+            verified_by_user_id   TEXT REFERENCES users(id),
+            verification_method   TEXT,
+            created_at            TEXT NOT NULL,
+            UNIQUE(guild_workspace_id, server, albion_guild_id)
+        )
+    """)
+    conn.execute("""
+        INSERT INTO workspace_albion_guilds_v2
+            (id, guild_workspace_id, albion_guild_id, guild_name, server,
+             alliance_id, alliance_name, last_imported_at,
+             verification_status, verified_at, verified_by_user_id,
+             verification_method, created_at)
+        SELECT
+            id, guild_workspace_id, albion_guild_id, guild_name, 'europe',
+            alliance_id, alliance_name, last_imported_at,
+            COALESCE(verification_status, 'unverified'),
+            verified_at, verified_by_user_id, verification_method,
+            created_at
+        FROM workspace_albion_guilds
+    """)
+    conn.execute("DROP TABLE workspace_albion_guilds")
+    conn.execute(
+        "ALTER TABLE workspace_albion_guilds_v2 "
+        "RENAME TO workspace_albion_guilds"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_workspace_albion_guilds_workspace "
+        "ON workspace_albion_guilds(guild_workspace_id)"
+    )
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
 
 
 def init_schema() -> None:
@@ -228,5 +304,6 @@ def init_schema() -> None:
                 conn.commit()
             except sqlite3.OperationalError as exc:
                 _log.warning("Data migration skipped (%s): %.120s", exc, stmt.strip())
+        _migrate_workspace_albion_guilds_add_server(conn)
     finally:
         conn.close()

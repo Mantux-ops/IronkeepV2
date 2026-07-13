@@ -3970,6 +3970,7 @@ def resolve_albion_guild_preview(
     guild_workspace_id: str,
     requesting_user_id: str,
     guild_name_or_id: str,
+    server: str = "europe",
 ) -> dict:
     """
     Resolve an Albion guild by name (or direct ID) without writing to the DB.
@@ -3980,6 +3981,7 @@ def resolve_albion_guild_preview(
         {
           "albion_guild_id": str | None,
           "guild_name":      str,
+          "server":          str,
           "alliance_id":     str | None,
           "alliance_name":   str | None,
           "member_count":    int,
@@ -3997,6 +3999,7 @@ def resolve_albion_guild_preview(
         return {
             "albion_guild_id": None,
             "guild_name":      guild_name_or_id,
+            "server":          server,
             "alliance_id":     None,
             "alliance_name":   None,
             "member_count":    0,
@@ -4019,11 +4022,12 @@ def resolve_albion_guild_preview(
     from app.albion.rest_client import AlbionApiError, search_albion_guilds
 
     try:
-        results = search_albion_guilds(value)
+        results = search_albion_guilds(value, server=server)
     except AlbionApiError as exc:
         return {
             "albion_guild_id": None,
             "guild_name":      value,
+            "server":          server,
             "alliance_id":     None,
             "alliance_name":   None,
             "member_count":    0,
@@ -4034,6 +4038,7 @@ def resolve_albion_guild_preview(
         return {
             "albion_guild_id": None,
             "guild_name":      value,
+            "server":          server,
             "alliance_id":     None,
             "alliance_name":   None,
             "member_count":    0,
@@ -4044,6 +4049,7 @@ def resolve_albion_guild_preview(
     return {
         "albion_guild_id": best["albion_guild_id"],
         "guild_name":      best["guild_name"],
+        "server":          best.get("server", server),
         "alliance_id":     best.get("alliance_id"),
         "alliance_name":   best.get("alliance_name"),
         "member_count":    best.get("member_count", 0),
@@ -4059,6 +4065,7 @@ def import_albion_guild_roster(
     guild_name_hint: str = "",
     alliance_id_hint: str | None = None,
     alliance_name_hint: str | None = None,
+    server: str = "europe",
 ) -> dict:
     """
     Import all current members of an Albion guild into the workspace roster.
@@ -4142,6 +4149,7 @@ def import_albion_guild_roster(
             "guild_workspace_id": guild_workspace_id,
             "albion_guild_id":   guild_id,
             "guild_name":        resolved_guild_name,
+            "server":            server,
             "alliance_id":       resolved_alliance_id,
             "alliance_name":     resolved_alliance_name,
             "last_imported_at":  now,
@@ -4300,6 +4308,7 @@ def refresh_all_guild_rosters(
                 "guild_workspace_id": guild_workspace_id,
                 "albion_guild_id":    guild_row["albion_guild_id"],
                 "guild_name":         guild_row["guild_name"],
+                "server":             guild_row.get("server", "europe"),
                 "alliance_id":        guild_row["alliance_id"],
                 "alliance_name":      guild_row["alliance_name"],
                 "last_imported_at":   now,

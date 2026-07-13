@@ -1196,9 +1196,28 @@ _IMPORT_GUILDS_URL = "/workspaces/{slug}/members/import-guilds"
 
 @router.get("/workspaces/{slug}/members/import-guilds")
 def get_import_guilds(request: Request, slug: str):
-    """Show the guild roster import form + list of already-linked guilds."""
+    """
+    Show the guild roster import page.
+
+    Optional query params:
+      q      — guild name to search for
+      server — albion server key: europe | americas | asia (default: europe)
+
+    When *q* is present the route calls the Albion API and enriches each result
+    with:
+      already_linked          — bool, guild already linked to this workspace
+      verified_elsewhere      — dict | None, another workspace verified this guild
+    """
     error   = request.query_params.get("error")
     success = request.query_params.get("success")
+    search_query  = request.query_params.get("q", "").strip()
+    search_server = request.query_params.get("server", "europe").strip()
+
+    # Normalise unknown server keys to "europe"
+    from app.albion.rest_client import ALBION_SERVERS, ALBION_SERVER_LABELS
+    if search_server not in ALBION_SERVERS:
+        search_server = "europe"
+
     try:
         with database.transaction() as db:
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
@@ -1212,16 +1231,46 @@ def get_import_guilds(request: Request, slug: str):
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
+    linked_pairs = {
+        (g["albion_guild_id"], g.get("server", "europe")) for g in linked_guilds
+    }
+
+    search_results: list[dict] = []
+    search_error: str | None = None
+
+    if search_query:
+        from app.albion.rest_client import AlbionApiError, search_albion_guilds as _search
+        try:
+            raw = _search(search_query, server=search_server)
+        except AlbionApiError as exc:
+            search_error = f"Albion API error: {exc}"
+            raw = []
+
+        with database.transaction() as db:
+            for g in raw:
+                g["already_linked"] = (
+                    g["albion_guild_id"], g.get("server", "europe")
+                ) in linked_pairs
+                g["verified_elsewhere"] = repositories.get_albion_guild_verified_elsewhere(
+                    db, g["albion_guild_id"], ws["id"]
+                )
+            search_results = raw
+
     return templates.TemplateResponse(
         request,
         "workspace_import_guilds.html",
         {
-            "workspace":      ws,
-            "current_user":   user,
-            "linked_guilds":  linked_guilds,
-            "preview_guilds": None,
-            "error":          error,
-            "success":        success,
+            "workspace":       ws,
+            "current_user":    user,
+            "linked_guilds":   linked_guilds,
+            "preview_guilds":  None,
+            "error":           error,
+            "success":         success,
+            "search_query":    search_query,
+            "search_server":   search_server,
+            "search_results":  search_results,
+            "search_error":    search_error,
+            "albion_servers":  ALBION_SERVER_LABELS,
             **access,
         },
     )
@@ -1263,11 +1312,13 @@ async def post_import_guilds_preview(request: Request, slug: str):
                 guild_workspace_id=ws["id"],
                 requesting_user_id=user["id"],
                 guild_name_or_id=name,
+                server="europe",
             )
         except IronkeepError as exc:
             result = {
                 "albion_guild_id": None,
                 "guild_name":      name,
+                "server":          "europe",
                 "alliance_id":     None,
                 "alliance_name":   None,
                 "member_count":    0,
@@ -1285,6 +1336,11 @@ async def post_import_guilds_preview(request: Request, slug: str):
             "preview_guilds": preview_guilds,
             "error":          None,
             "success":        None,
+            "search_query":   "",
+            "search_server":  "europe",
+            "search_results": [],
+            "search_error":   None,
+            "albion_servers": {"europe": "Europe", "americas": "Americas", "asia": "Asia"},
             **access,
         },
     )
@@ -1302,6 +1358,7 @@ async def post_import_guilds_confirm(request: Request, slug: str):
 
     guild_ids    = form.getlist("albion_guild_id")
     guild_names  = form.getlist("guild_name")
+    guild_servers = form.getlist("server")
     alliance_ids = form.getlist("alliance_id")
     alliance_names = form.getlist("alliance_name")
 
@@ -1329,6 +1386,7 @@ async def post_import_guilds_confirm(request: Request, slug: str):
         if not guild_id:
             continue
         g_name  = guild_names[i]  if i < len(guild_names)  else ""
+        g_server = guild_servers[i] if i < len(guild_servers) else "europe"
         a_id    = alliance_ids[i] if i < len(alliance_ids)  else None
         a_name  = alliance_names[i] if i < len(alliance_names) else None
         try:
@@ -1339,6 +1397,7 @@ async def post_import_guilds_confirm(request: Request, slug: str):
                 guild_name_hint=g_name or "",
                 alliance_id_hint=a_id or None,
                 alliance_name_hint=a_name or None,
+                server=g_server or "europe",
             )
             total_imported += result["imported"]
             total_updated  += result["updated"]
@@ -1403,6 +1462,71 @@ async def post_refresh_guild_rosters(request: Request, slug: str):
         + "."
     )
     return _ok_redirect(import_url, msg)
+
+
+@router.get("/workspaces/{slug}/members/import-guilds/alliance/{alliance_id}")
+def get_alliance_discovery(request: Request, slug: str, alliance_id: str):
+    """
+    Alliance discovery view — read-only.
+
+    Fetches alliance metadata and its member guild list from the Albion API.
+    Enriches each member guild with an already_linked flag so officers can
+    identify which guilds are already in their workspace before importing.
+
+    Query params:
+      server — albion server key: europe | americas | asia (default: europe)
+
+    No DB writes are performed.  Import follows the existing confirm workflow.
+    """
+    server = request.query_params.get("server", "europe").strip()
+    from app.albion.rest_client import ALBION_SERVERS, ALBION_SERVER_LABELS
+    if server not in ALBION_SERVERS:
+        server = "europe"
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            if not access["can_manage_members"]:
+                raise PermissionDenied(
+                    "Only owners and officers can browse alliance rosters."
+                )
+            linked_guilds = repositories.list_workspace_albion_guilds(db, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    linked_pairs = {
+        (g["albion_guild_id"], g.get("server", "europe")) for g in linked_guilds
+    }
+
+    from app.albion.rest_client import AlbionApiError, fetch_albion_alliance
+    alliance_error: str | None = None
+    alliance: dict | None = None
+
+    try:
+        alliance = fetch_albion_alliance(alliance_id, server=server)
+        for g in alliance["guilds"]:
+            g["server"] = server
+            g["already_linked"] = (g["albion_guild_id"], server) in linked_pairs
+    except AlbionApiError as exc:
+        alliance_error = f"Could not load alliance data: {exc}"
+
+    return templates.TemplateResponse(
+        request,
+        "workspace_alliance_discovery.html",
+        {
+            "workspace":      ws,
+            "current_user":   user,
+            "alliance":       alliance,
+            "alliance_error": alliance_error,
+            "server":         server,
+            "albion_servers": ALBION_SERVER_LABELS,
+            **access,
+        },
+    )
 
 
 
@@ -1898,6 +2022,32 @@ def get_builds_list(request: Request, slug: str):
             "success":         success,
             "role_filter":     role_filter,
             "available_roles": available_roles,
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/builds/editor")
+def get_build_editor(request: Request, slug: str):
+    """Render the visual build editor (Phase 12.2).
+
+    The editor is client-side only — no build is persisted here.
+    Any authenticated workspace member can open the editor to explore builds.
+    """
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    return templates.TemplateResponse(
+        request,
+        "build_editor.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
             **access,
         },
     )

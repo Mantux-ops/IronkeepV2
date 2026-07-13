@@ -11,24 +11,136 @@
 {% include "page_header.html" %}
 {% include "flash_messages.html" %}
 
+{# ─── Search card ──────────────────────────────────────────────────── #}
 <div class="card" style="margin-bottom:1.5rem">
   <div class="card-header">
-    <h2 style="margin:0">Import Albion Guild Roster</h2>
+    <h2 style="margin:0">Find an Albion Guild</h2>
   </div>
   <div class="card-body">
 
-    {% if not preview_guilds %}
-    {# ─── Step 1: input form ─────────────────────────────────────────── #}
     <p class="text-muted" style="margin-bottom:1rem">
-      Enter one or more Albion guild names or guild IDs, one per line.
-      Ironkeep will resolve each guild and show you a preview before importing.
+      Search by guild name.  Select the server your guild plays on, then click <strong>Search</strong>.
     </p>
+
+    <form method="get"
+          action="/workspaces/{{ workspace.slug }}/members/import-guilds"
+          class="form">
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:1rem">
+        <div class="form-group" style="margin:0;flex:0 0 auto">
+          <label for="server-select" style="font-size:0.85em">Server</label>
+          <select id="server-select" name="server">
+            {% for key, label in albion_servers.items() %}
+            <option value="{{ key }}" {% if search_server == key %}selected{% endif %}>{{ label }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-group" style="margin:0;flex:1;min-width:200px">
+          <label for="guild-search" style="font-size:0.85em">Guild name</label>
+          <input id="guild-search" type="text" name="q"
+                 value="{{ search_query }}"
+                 placeholder="Iron Keep"
+                 autocomplete="off"
+                 style="width:100%">
+        </div>
+        <button type="submit" class="btn btn-primary" style="align-self:flex-end">Search</button>
+      </div>
+    </form>
+
+    <p class="text-muted" style="font-size:0.85em;margin-bottom:0">
+      <strong>Note:</strong> Importing a guild roster is for <em>roster visibility only</em>.
+      It does <strong>not</strong> verify ownership of or official affiliation with this guild.
+    </p>
+
+    {% if search_error %}
+    <div style="margin-top:0.75rem;padding:0.6rem 0.8rem;background:var(--error-bg,#fef2f2);border:1px solid var(--error-border,#fca5a5);border-radius:4px;color:var(--error-text,#991b1b);font-size:0.9em">
+      {{ search_error }}
+    </div>
+    {% endif %}
+
+    {% if search_results %}
+    <div class="table-wrap" style="margin-top:1.25rem">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Guild</th>
+            <th>Alliance</th>
+            <th>Members</th>
+            <th>Server</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for g in search_results %}
+          <tr>
+            <td>
+              <strong>{{ g.guild_name }}</strong>
+              <br><span class="text-muted" style="font-size:0.78em;font-family:monospace">{{ g.albion_guild_id }}</span>
+              {% if g.verified_elsewhere %}
+              <br><span class="badge badge-locked" style="font-size:0.75em"
+                        title="Verified by another Ironkeep workspace">
+                ⚠ Claimed by another workspace
+              </span>
+              {% endif %}
+            </td>
+            <td>{{ g.alliance_name or '—' }}</td>
+            <td>{{ g.member_count or '—' }}</td>
+            <td><span class="text-muted">{{ albion_servers.get(g.server, g.server) }}</span></td>
+            <td>
+              {% if g.already_linked %}
+                <span class="badge badge-officer" style="font-size:0.8em">Already linked</span>
+              {% else %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/members/import-guilds/confirm"
+                      class="inline-form">
+                  <input type="hidden" name="albion_guild_id" value="{{ g.albion_guild_id }}">
+                  <input type="hidden" name="guild_name"      value="{{ g.guild_name }}">
+                  <input type="hidden" name="server"          value="{{ g.server or 'europe' }}">
+                  <input type="hidden" name="alliance_id"     value="{{ g.alliance_id or '' }}">
+                  <input type="hidden" name="alliance_name"   value="{{ g.alliance_name or '' }}">
+                  <button type="submit" class="btn btn-sm btn-primary"
+                          onclick="return confirm('Import {{ g.guild_name }} roster? This links the guild for roster visibility only — not as a verified owner.')">
+                    Import
+                  </button>
+                </form>
+              {% endif %}
+              {% if g.alliance_id %}
+              <a href="/workspaces/{{ workspace.slug }}/members/import-guilds/alliance/{{ g.alliance_id }}?server={{ g.server or 'europe' }}"
+                 class="btn btn-sm" style="margin-top:0.3rem;display:inline-block">
+                View Alliance
+              </a>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% elif search_query and not search_error %}
+    <p class="text-muted" style="margin-top:1rem">
+      No guilds found for <strong>{{ search_query }}</strong> on {{ albion_servers.get(search_server, search_server) }}.
+    </p>
+    {% endif %}
+
+  </div>
+</div>
+
+{# ─── Preview flow (manual / fallback) ─────────────────────────────── #}
+<div class="card" style="margin-bottom:1.5rem">
+  <div class="card-header">
+    <h2 style="margin:0">Manual Import</h2>
+  </div>
+  <div class="card-body">
+    <p class="text-muted" style="margin-bottom:1rem;font-size:0.9em">
+      If search does not find your guild, paste guild names or IDs below (one per line).
+    </p>
+
+    {% if not preview_guilds %}
     <form method="post"
           action="/workspaces/{{ workspace.slug }}/members/import-guilds/preview"
           class="form">
       <div class="form-group">
         <label for="guild_names">Guild names / IDs (one per line)</label>
-        <textarea id="guild_names" name="guild_names" rows="5"
+        <textarea id="guild_names" name="guild_names" rows="4"
                   placeholder="Iron Keep&#10;Shadow Syndicate"
                   style="font-family:monospace;width:100%"></textarea>
       </div>
@@ -39,11 +151,10 @@
     </form>
 
     {% else %}
-    {# ─── Step 2: preview + confirm ──────────────────────────────────── #}
+    {# ─── Preview + confirm ──────────────────────────────────────────── #}
     <p class="text-muted" style="margin-bottom:1rem">
       Review the resolved guilds below, then confirm to import their rosters.
     </p>
-
     <div class="table-wrap" style="margin-bottom:1.25rem">
       <table class="data-table">
         <thead>
@@ -59,11 +170,7 @@
           <tr>
             <td><strong>{{ g.guild_name }}</strong></td>
             <td>
-              {% if g.alliance_name %}
-                <span class="text-muted">{{ g.alliance_name }}</span>
-              {% else %}
-                <span class="text-muted">—</span>
-              {% endif %}
+              {% if g.alliance_name %}<span class="text-muted">{{ g.alliance_name }}</span>{% else %}<span class="text-muted">—</span>{% endif %}
             </td>
             <td>
               {% if g.member_count %}{{ g.member_count }}{% else %}<span class="text-muted">—</span>{% endif %}
@@ -89,6 +196,7 @@
       {% for g in resolved %}
       <input type="hidden" name="albion_guild_id" value="{{ g.albion_guild_id }}">
       <input type="hidden" name="guild_name"      value="{{ g.guild_name }}">
+      <input type="hidden" name="server"          value="{{ g.server or 'europe' }}">
       <input type="hidden" name="alliance_id"     value="{{ g.alliance_id or '' }}">
       <input type="hidden" name="alliance_name"   value="{{ g.alliance_name or '' }}">
       {% endfor %}
@@ -109,6 +217,7 @@
   </div>
 </div>
 
+{# ─── Linked guilds ─────────────────────────────────────────────────── #}
 {% if linked_guilds %}
 <div class="card">
   <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;gap:1rem">
@@ -123,12 +232,18 @@
     </form>
   </div>
   <div class="card-body">
+    <p class="text-muted" style="font-size:0.85em;margin-bottom:0.75rem">
+      Linked guilds are for <strong>roster visibility only</strong>.
+      Linking does not constitute verified ownership or official affiliation.
+    </p>
     <div class="table-wrap">
       <table class="data-table">
         <thead>
           <tr>
             <th>Guild</th>
             <th>Alliance</th>
+            <th>Server</th>
+            <th>Ownership</th>
             <th>Last imported</th>
           </tr>
         </thead>
@@ -138,6 +253,21 @@
             <td><strong>{{ g.guild_name }}</strong></td>
             <td>
               {% if g.alliance_name %}{{ g.alliance_name }}{% else %}<span class="text-muted">—</span>{% endif %}
+            </td>
+            <td class="text-muted" style="font-size:0.85em">
+              {{ albion_servers.get(g.server, g.server or 'europe') | capitalize }}
+            </td>
+            <td>
+              {% if g.verification_status == 'verified' %}
+                <span class="badge badge-officer" style="font-size:0.8em">Verified</span>
+                {% if g.verified_at %}
+                <span class="text-muted" style="font-size:0.8em"> {{ g.verified_at[:10] }}</span>
+                {% endif %}
+              {% elif g.verification_status == 'rejected' %}
+                <span class="badge badge-error" style="font-size:0.8em">Rejected</span>
+              {% else %}
+                <span class="text-muted" style="font-size:0.85em">Roster import only</span>
+              {% endif %}
             </td>
             <td class="text-muted" style="font-size:0.9em">
               {% if g.last_imported_at %}{{ g.last_imported_at[:19] | replace("T", " ") }} UTC{% else %}—{% endif %}

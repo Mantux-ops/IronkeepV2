@@ -3401,17 +3401,32 @@ def upsert_workspace_albion_guild(
     Insert a workspace_albion_guilds row, or update guild_name / alliance fields
     and last_imported_at on conflict.
 
-    created_at is preserved from the original insert (not updated on conflict).
+    Guild identity is (guild_workspace_id, server, albion_guild_id).
+    created_at, server, and all verification_* fields are preserved from the
+    original insert — not updated on re-import.
+
+    Callers that pre-date the server column receive server='europe' by default
+    (backward-compatible via setdefault).
     """
+    record = dict(record)
+    record.setdefault("server", "europe")
+    record.setdefault("verification_status", "unverified")
+    record.setdefault("verified_at", None)
+    record.setdefault("verified_by_user_id", None)
+    record.setdefault("verification_method", None)
     db.execute(
         """
         INSERT INTO workspace_albion_guilds
-            (id, guild_workspace_id, albion_guild_id, guild_name,
-             alliance_id, alliance_name, last_imported_at, created_at)
+            (id, guild_workspace_id, albion_guild_id, guild_name, server,
+             alliance_id, alliance_name, last_imported_at,
+             verification_status, verified_at, verified_by_user_id,
+             verification_method, created_at)
         VALUES
-            (:id, :guild_workspace_id, :albion_guild_id, :guild_name,
-             :alliance_id, :alliance_name, :last_imported_at, :created_at)
-        ON CONFLICT (guild_workspace_id, albion_guild_id) DO UPDATE SET
+            (:id, :guild_workspace_id, :albion_guild_id, :guild_name, :server,
+             :alliance_id, :alliance_name, :last_imported_at,
+             :verification_status, :verified_at, :verified_by_user_id,
+             :verification_method, :created_at)
+        ON CONFLICT (guild_workspace_id, server, albion_guild_id) DO UPDATE SET
             guild_name       = excluded.guild_name,
             alliance_id      = excluded.alliance_id,
             alliance_name    = excluded.alliance_name,
@@ -3452,6 +3467,38 @@ def list_workspace_albion_guilds(
             """,
             (guild_workspace_id,),
         ).fetchall()
+    )
+
+
+def get_albion_guild_verified_elsewhere(
+    db: sqlite3.Connection,
+    albion_guild_id: str,
+    own_workspace_id: str,
+) -> dict | None:
+    """
+    Return the first workspace_albion_guilds row (joined with guild name) where
+    this albion_guild_id is 'verified' by a workspace OTHER than own_workspace_id.
+
+    Returns None if the guild is not verified by any other workspace.
+
+    Used to surface ownership-conflict warnings when an officer links a guild
+    that another workspace has already verified.  In Slice 4 all guilds are
+    'unverified', so this returns None for every call — the infrastructure is
+    in place for when real verification is introduced.
+    """
+    return _row(
+        db.execute(
+            """
+            SELECT g.*, w.name AS verifying_workspace_name
+            FROM workspace_albion_guilds g
+            JOIN guild_workspaces w ON w.id = g.guild_workspace_id
+            WHERE g.albion_guild_id       = ?
+              AND g.guild_workspace_id   != ?
+              AND g.verification_status   = 'verified'
+            LIMIT 1
+            """,
+            (albion_guild_id, own_workspace_id),
+        ).fetchone()
     )
 
 

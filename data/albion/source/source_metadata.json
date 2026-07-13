@@ -1,0 +1,17 @@
+{
+  "source": "ao-bin-dumps",
+  "source_repository": "https://github.com/ao-data/ao-bin-dumps",
+  "source_file": "formatted/items.txt",
+  "source_commit": "a49c3dd2efef4ccd952d57e8bcb180f17d6c0b6e",
+  "source_commit_date": "2026-06-29",
+  "source_fetched_date": "2026-07-13",
+  "source_sha256": "3ed74ae095b607785b099abdbbec048834be3ff564c4ba4fd82d94c0b1d0d041",
+  "catalog_schema_version": 2,
+  "notes": [
+    "source_commit is the latest commit that touched formatted/items.txt, not the HEAD of ao-bin-dumps.",
+    "source_sha256 is the SHA-256 of the downloaded formatted/items.txt file.",
+    "Run scripts/fetch_albion_snapshot.py to update the snapshot.",
+    "Run scripts/import_albion_catalog.py to regenerate app/albion/data/items_t7_t8.json.",
+    "Run scripts/import_albion_catalog.py --check to verify the catalog is up to date."
+  ]
+}

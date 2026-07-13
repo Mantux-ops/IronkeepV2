@@ -48,3 +48,6 @@ backups/
 # Ruff / mypy caches
 .ruff_cache/
 .mypy_cache/
+
+# Albion snapshot — tracked intentionally; do NOT ignore
+# data/albion/source/ is version-controlled

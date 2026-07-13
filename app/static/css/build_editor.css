@@ -1,0 +1,582 @@
+/* ==========================================================
+   IronkeepV2 — Visual Build Editor  (Phase 12.2)
+   Namespace: .vbe-*
+
+   Layout hierarchy:
+     .vbe-page                 — page wrapper, centers the panel
+     .vbe-equip-panel          — card containing the equipment grid
+     .vbe-equip-grid           — named-area CSS grid, Albion-style layout
+     .vbe-slot                 — single equipment slot tile (button)
+       .vbe-slot__icon-wrap    — wraps placeholder or real icon
+       .vbe-slot__placeholder  — dashed gray square when empty
+       .vbe-slot__icon         — real Albion item icon (<img>)
+       .vbe-slot__badges       — tier + enchant overlay badges
+       .vbe-slot__label        — slot name text below icon area
+     .vbe-slot--filled         — slot has an item selected
+     .vbe-slot--disabled       — off-hand locked by two-handed weapon
+     .vbe-equip-hint           — notice below grid (e.g. two-handed warning)
+
+     .vbe-modal-backdrop       — full-screen dimmed overlay
+     .vbe-modal                — picker dialog panel
+       .vbe-modal__header      — title + close button
+       .vbe-modal__body        — filters + scrollable results
+     .vbe-filters              — filter bar
+       .vbe-search             — live search input
+       .vbe-filter-row         — row of filter groups
+       .vbe-filter-group       — label + chip strip
+       .vbe-chips              — chip strip
+       .vbe-chip               — toggle filter chip
+       .vbe-chip--active       — selected chip
+     .vbe-results-wrap         — scrollable container
+     .vbe-results              — auto-fill grid of item cards
+     .vbe-item-card            — one item result card
+       .vbe-item-card__icon    — item icon
+       .vbe-item-card__body    — name + meta
+       .vbe-item-card__name    — display name
+       .vbe-item-card__meta    — tier/enchant badges + 2H tag
+
+   Tier / enchant badges (.vbe-tier-badge, .vbe-ench-badge) are shared
+   between slot tiles and item cards.
+
+   Responsive breakpoints:
+     > 640px:  full picker side-by-side layout
+     ≤ 640px:  filter row stacks, picker takes full viewport height
+   ========================================================== */
+
+/* ── Page wrapper ───────────────────────────────────────── */
+
+.vbe-page {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-4);
+  padding-bottom: var(--space-6);
+}
+
+/* ── Equipment panel ────────────────────────────────────── */
+
+.vbe-equip-panel {
+  width: 100%;
+  max-width: 400px;
+}
+
+.vbe-equip-panel .card-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.vbe-equip-panel .card-header__title {
+  font-size: var(--text-base);
+  font-weight: 700;
+  margin: 0;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+/* ── Equipment grid — Albion-style named-area layout ────── */
+
+.vbe-equip-grid {
+  display: grid;
+  grid-template-columns: 100px 100px 100px;
+  grid-template-rows: auto;
+  grid-template-areas:
+    ".    head   ."
+    "main chest  off"
+    ".    shoes  ."
+    "cape .      bag"
+    ".    mount  ."
+    "food .      potion";
+  gap: 10px;
+  justify-content: center;
+  padding: var(--space-4) 0;
+}
+
+/* ── Slot tiles ─────────────────────────────────────────── */
+
+.vbe-slot {
+  /* layout */
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 6px 4px 8px;
+  width: 100px;
+  min-height: 116px;
+  /* styling */
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  color: inherit;
+  font-family: inherit;
+  /* transition */
+  transition: border-color 0.14s, background 0.14s, box-shadow 0.14s;
+}
+
+.vbe-slot:hover:not(.vbe-slot--disabled) {
+  border-color: var(--accent);
+  background: var(--surface-3);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.vbe-slot:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.vbe-slot--filled {
+  border-color: var(--border-strong);
+}
+
+.vbe-slot--filled:hover {
+  border-color: var(--accent);
+}
+
+.vbe-slot--disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* ── Slot icon area ─────────────────────────────────────── */
+
+.vbe-slot__icon-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+}
+
+.vbe-slot__placeholder {
+  width: 64px;
+  height: 64px;
+  border: 2px dashed var(--border);
+  border-radius: 8px;
+  background: var(--surface-3);
+  flex-shrink: 0;
+}
+
+.vbe-slot__icon {
+  width: 68px;
+  height: 68px;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+}
+
+/* ── Tier + enchant overlay badges ──────────────────────── */
+
+.vbe-slot__badges {
+  position: absolute;
+  bottom: -2px;
+  right: -2px;
+  display: flex;
+  gap: 2px;
+}
+
+.vbe-tier-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--accent-dim);
+  color: var(--accent);
+  border-radius: 3px;
+  padding: 2px 4px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.vbe-ench-badge {
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--core-bg);
+  color: var(--core-text);
+  border-radius: 3px;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+/* Hide .vbe-ench-badge when enchantment is 0 (done via JS class) */
+.vbe-ench-badge:empty {
+  display: none;
+}
+
+/* ── Slot label ─────────────────────────────────────────── */
+
+.vbe-slot__label {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--text-faint);
+  font-weight: 600;
+  text-align: center;
+  line-height: 1;
+}
+
+.vbe-slot--filled .vbe-slot__label {
+  color: var(--text-muted);
+}
+
+/* ── Two-handed / equipment hint ────────────────────────── */
+
+.vbe-equip-hint {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--accent-dim);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  font-size: var(--text-sm);
+  color: var(--accent);
+  margin-top: var(--space-3);
+}
+
+.vbe-notice-icon {
+  font-size: 1rem;
+  flex-shrink: 0;
+}
+
+/* ── Modal backdrop ─────────────────────────────────────── */
+
+.vbe-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: rgba(0, 0, 0, 0.72);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding: var(--space-5) var(--space-4);
+  overflow-y: auto;
+  /* fade-in transition — initial state is opacity 0 */
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.vbe-modal-backdrop--visible {
+  opacity: 1;
+}
+
+/* ── Modal panel ─────────────────────────────────────────── */
+
+.vbe-modal {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-md);
+  width: 100%;
+  max-width: 820px;
+  /* fixed height so results scroll independently */
+  max-height: calc(100vh - 80px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  /* slide-up entry */
+  transform: translateY(12px);
+  transition: transform 0.18s ease;
+}
+
+.vbe-modal-backdrop--visible .vbe-modal {
+  transform: translateY(0);
+}
+
+/* ── Modal header ────────────────────────────────────────── */
+
+.vbe-modal__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-5);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-shrink: 0;
+}
+
+.vbe-modal__title {
+  font-size: var(--text-lg);
+  font-weight: 700;
+  margin: 0;
+  color: var(--text);
+}
+
+.vbe-modal__close {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: var(--space-1) var(--space-2);
+  border-radius: var(--radius-sm);
+  transition: color 0.12s, background 0.12s;
+}
+
+.vbe-modal__close:hover {
+  color: var(--text);
+  background: var(--surface-3);
+}
+
+.vbe-modal__close:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Modal body (filters + results) ─────────────────────── */
+
+.vbe-modal__body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* ── Filters ─────────────────────────────────────────────── */
+
+.vbe-filters {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+.vbe-search-wrap {
+  width: 100%;
+}
+
+.vbe-search {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  color: var(--text);
+  font-size: var(--text-base);
+  font-family: inherit;
+  box-sizing: border-box;
+}
+
+.vbe-search::placeholder {
+  color: var(--text-faint);
+}
+
+.vbe-search:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: var(--shadow-focus-sm);
+}
+
+.vbe-filter-row {
+  display: flex;
+  gap: var(--space-4);
+  flex-wrap: wrap;
+  align-items: flex-start;
+}
+
+.vbe-filter-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.vbe-filter-group__label {
+  font-size: var(--text-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+
+.vbe-chips {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.vbe-chip {
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-family: inherit;
+  transition: border-color 0.12s, color 0.12s, background 0.12s;
+  line-height: 1.4;
+}
+
+.vbe-chip:hover:not(.vbe-chip--active) {
+  border-color: var(--border-strong);
+  color: var(--text);
+}
+
+.vbe-chip--active {
+  background: var(--accent-dim);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.vbe-chip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Results scroll area ─────────────────────────────────── */
+
+.vbe-results-wrap {
+  flex: 1;
+  overflow-y: auto;
+  padding: var(--space-3) var(--space-4);
+  min-height: 0;
+}
+
+/* ── Item card grid ──────────────────────────────────────── */
+
+.vbe-results {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+  gap: var(--space-2);
+}
+
+/* Loading / empty / error states span the full grid width */
+.vbe-loading,
+.vbe-empty,
+.vbe-error {
+  grid-column: 1 / -1;
+  text-align: center;
+  padding: var(--space-5);
+  color: var(--text-muted);
+  font-size: var(--text-sm);
+  margin: 0;
+}
+
+.vbe-error {
+  color: var(--danger-text);
+}
+
+/* ── Item card ───────────────────────────────────────────── */
+
+.vbe-item-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--space-2) var(--space-1);
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  text-align: center;
+  font-family: inherit;
+  color: inherit;
+  transition: border-color 0.12s, background 0.12s, transform 0.1s;
+}
+
+.vbe-item-card:hover {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+  transform: translateY(-1px);
+}
+
+.vbe-item-card:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.vbe-item-card:active {
+  transform: translateY(0);
+}
+
+.vbe-item-card__icon {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+  border-radius: 4px;
+  display: block;
+  flex-shrink: 0;
+}
+
+.vbe-item-card__body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+}
+
+.vbe-item-card__name {
+  font-size: 0.7rem;
+  color: var(--text);
+  line-height: 1.3;
+  font-weight: 500;
+  word-break: break-word;
+}
+
+.vbe-item-card__meta {
+  display: flex;
+  gap: 3px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+
+/* Two-handed tag on item cards */
+.vbe-2h-tag {
+  font-size: 0.6rem;
+  font-weight: 700;
+  line-height: 1;
+  background: var(--warning-bg);
+  color: var(--warning-text);
+  border: 1px solid var(--warning-border);
+  border-radius: 3px;
+  padding: 2px 4px;
+  white-space: nowrap;
+}
+
+/* ── Responsive ──────────────────────────────────────────── */
+
+@media (max-width: 640px) {
+  .vbe-modal-backdrop {
+    padding: 0;
+    align-items: flex-end;
+  }
+
+  .vbe-modal {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+    max-height: 90vh;
+  }
+
+  .vbe-filter-row {
+    gap: var(--space-3);
+  }
+
+  .vbe-results {
+    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
+  }
+}
+
+@media (max-width: 380px) {
+  .vbe-equip-grid {
+    grid-template-columns: 88px 88px 88px;
+  }
+
+  .vbe-slot {
+    width: 88px;
+    min-height: 104px;
+  }
+}

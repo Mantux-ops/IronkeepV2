@@ -1,0 +1,495 @@
+{% extends "base.html" %}
+{% block title %}Build Editor — {{ workspace.name }}{% endblock %}
+
+{% block head_extra %}
+<link rel="stylesheet" href="/static/css/build_editor.css">
+{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Visual Editor</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'Build Editor' %}
+{% set meta = 'Click any slot to select an item — state is temporary and not saved' %}
+{% include "page_header.html" %}
+
+<div class="vbe-page">
+
+  <!-- ── Equipment grid panel ───────────────────────────── -->
+  <div class="vbe-equip-panel card">
+    <div class="card-header">
+      <h2 class="card-header__title">Equipment</h2>
+      <span class="text-muted" style="font-size:var(--text-xs)">Click a slot to pick an item</span>
+    </div>
+    <div class="card-body">
+      <div class="vbe-equip-grid" id="vbe-equip-grid">
+        {# Slot tiles are injected by initGrid() below — JS required #}
+      </div>
+      <div class="vbe-equip-hint" id="vbe-two-handed-notice" hidden>
+        <span class="vbe-notice-icon" aria-hidden="true">⚔</span>
+        Two-handed weapon — Off Hand slot is disabled.
+      </div>
+    </div>
+  </div>
+
+  <div class="action-bar">
+    <a href="/workspaces/{{ workspace.slug }}/builds" class="btn btn-sm">
+      ← Back to builds
+    </a>
+    <button type="button" class="btn btn-sm btn-ghost" id="vbe-reset-btn">
+      Reset all slots
+    </button>
+  </div>
+
+</div>
+
+<!-- ── Item picker modal ─────────────────────────────────── -->
+<div class="vbe-modal-backdrop" id="vbe-backdrop" hidden aria-hidden="true">
+  <div class="vbe-modal" role="dialog" aria-modal="true" aria-labelledby="vbe-modal-title">
+
+    <div class="vbe-modal__header">
+      <h2 class="vbe-modal__title" id="vbe-modal-title">Select Item</h2>
+      <button type="button" class="vbe-modal__close" id="vbe-close" aria-label="Close item picker">✕</button>
+    </div>
+
+    <div class="vbe-modal__body">
+
+      <!-- Filters -->
+      <div class="vbe-filters">
+
+        <div class="vbe-search-wrap">
+          <input
+            type="search"
+            id="vbe-search"
+            class="vbe-search"
+            placeholder="Search items…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Search items"
+          >
+        </div>
+
+        <div class="vbe-filter-row">
+
+          <div class="vbe-filter-group">
+            <span class="vbe-filter-group__label">Tier</span>
+            <div class="vbe-chips" id="vbe-tier-chips">
+              <button type="button" class="vbe-chip vbe-chip--active" data-tier="7">T7</button>
+              <button type="button" class="vbe-chip vbe-chip--active" data-tier="8">T8</button>
+            </div>
+          </div>
+
+          <div class="vbe-filter-group">
+            <span class="vbe-filter-group__label">Enchantment</span>
+            <div class="vbe-chips" id="vbe-ench-chips">
+              <button type="button" class="vbe-chip vbe-chip--active" data-ench="0">.0</button>
+              <button type="button" class="vbe-chip vbe-chip--active" data-ench="1">.1</button>
+              <button type="button" class="vbe-chip vbe-chip--active" data-ench="2">.2</button>
+              <button type="button" class="vbe-chip vbe-chip--active" data-ench="3">.3</button>
+            </div>
+          </div>
+
+          <div class="vbe-filter-group" id="vbe-2h-filter-group" hidden>
+            <span class="vbe-filter-group__label">Weapon type</span>
+            <div class="vbe-chips" id="vbe-2h-chips">
+              <button type="button" class="vbe-chip vbe-chip--active" data-2h="any">Any</button>
+              <button type="button" class="vbe-chip" data-2h="1h">One-handed</button>
+              <button type="button" class="vbe-chip" data-2h="2h">Two-handed</button>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Results grid -->
+      <div class="vbe-results-wrap">
+        <div class="vbe-results" id="vbe-results" role="list" aria-label="Item results">
+          <p class="vbe-loading" id="vbe-loading" role="status">Loading…</p>
+        </div>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- ── Visual Build Editor JS ────────────────────────────── -->
+<script>
+/* ── Visual Build Editor — Phase 12.2 ──────────────────────────────────────
+   Architecture:
+   - SLOTS: static slot metadata (key, label, grid-area name)
+   - BUILD: ephemeral client-side state { slot_key: item | null }
+   - _cache: in-memory fetch cache per slot to avoid redundant API calls
+   - openPicker / closePicker: modal lifecycle
+   - _loadItems: fetch from /api/catalog/items?slot=…  (cached)
+   - renderResults: apply active filters, build DOM, append to results grid
+   - selectItem: update BUILD + slot tile + apply two-handed logic
+   - applyTwoHandedLogic: lock/unlock off_hand based on weapon type
+   ─────────────────────────────────────────────────────────────────────── */
+'use strict';
+
+// ── Slot definitions — order is irrelevant; grid-area controls position ──
+const SLOTS = [
+  { key: 'main_hand', label: 'Main Hand', area: 'main'   },
+  { key: 'off_hand',  label: 'Off Hand',  area: 'off'    },
+  { key: 'head',      label: 'Head',      area: 'head'   },
+  { key: 'chest',     label: 'Chest',     area: 'chest'  },
+  { key: 'shoes',     label: 'Shoes',     area: 'shoes'  },
+  { key: 'cape',      label: 'Cape',      area: 'cape'   },
+  { key: 'bag',       label: 'Bag',       area: 'bag'    },
+  { key: 'mount',     label: 'Mount',     area: 'mount'  },
+  { key: 'food',      label: 'Food',      area: 'food'   },
+  { key: 'potion',    label: 'Potion',    area: 'potion' },
+];
+
+// ── Ephemeral build state ──────────────────────────────────────────────────
+const BUILD = Object.fromEntries(SLOTS.map(s => [s.key, null]));
+
+// ── Item fetch cache ───────────────────────────────────────────────────────
+const _cache = {};
+
+// ── Picker state ───────────────────────────────────────────────────────────
+let _slot        = null;   // currently open slot key
+let _allItems    = [];     // all items loaded for current slot
+let _activeTiers = new Set([7, 8]);
+let _activeEnchs = new Set([0, 1, 2, 3]);
+let _active2h    = 'any'; // 'any' | '1h' | '2h'
+
+// ── DOM shortcuts ──────────────────────────────────────────────────────────
+const $  = id => document.getElementById(id);
+const backdrop        = $('vbe-backdrop');
+const closeBtn        = $('vbe-close');
+const searchInp       = $('vbe-search');
+const resultsEl       = $('vbe-results');
+const loadingEl       = $('vbe-loading');
+const twoHandedNotice = $('vbe-two-handed-notice');
+const filter2hGroup   = $('vbe-2h-filter-group');
+const resetBtn        = $('vbe-reset-btn');
+
+// ── Grid initialisation ────────────────────────────────────────────────────
+function initGrid() {
+  const grid = $('vbe-equip-grid');
+  for (const slot of SLOTS) {
+    grid.appendChild(_createTile(slot));
+  }
+}
+
+function _createTile(slot) {
+  const btn = document.createElement('button');
+  btn.type      = 'button';
+  btn.id        = `vbe-slot-${slot.key}`;
+  btn.className = 'vbe-slot';
+  btn.style.gridArea = slot.area;
+  btn.setAttribute('aria-label', `${slot.label} — empty, click to select`);
+  btn.dataset.slot = slot.key;
+
+  btn.innerHTML = `
+    <div class="vbe-slot__icon-wrap">
+      <div class="vbe-slot__placeholder" aria-hidden="true"></div>
+      <img class="vbe-slot__icon" src="" alt="" loading="lazy" hidden>
+      <div class="vbe-slot__badges" hidden>
+        <span class="vbe-tier-badge"></span>
+        <span class="vbe-ench-badge"></span>
+      </div>
+    </div>
+    <span class="vbe-slot__label">${slot.label}</span>
+  `;
+
+  btn.addEventListener('click', () => {
+    if (btn.dataset.disabled === 'true') return;
+    openPicker(slot.key);
+  });
+
+  return btn;
+}
+
+// ── Slot tile update ───────────────────────────────────────────────────────
+function updateTile(slotKey, item) {
+  const btn = $(`vbe-slot-${slotKey}`);
+  if (!btn) return;
+
+  const placeholder = btn.querySelector('.vbe-slot__placeholder');
+  const icon        = btn.querySelector('.vbe-slot__icon');
+  const badges      = btn.querySelector('.vbe-slot__badges');
+  const tierBadge   = btn.querySelector('.vbe-tier-badge');
+  const enchBadge   = btn.querySelector('.vbe-ench-badge');
+  const label       = btn.querySelector('.vbe-slot__label');
+  const slotMeta    = SLOTS.find(s => s.key === slotKey);
+
+  if (item) {
+    placeholder.hidden = true;
+    icon.src           = item.icon_url;
+    icon.alt           = item.display_name;
+    icon.hidden        = false;
+    tierBadge.textContent = `T${item.tier}`;
+    enchBadge.textContent = item.enchantment > 0 ? `.${item.enchantment}` : '';
+    badges.hidden = false;
+    btn.classList.add('vbe-slot--filled');
+    btn.setAttribute('aria-label', `${slotMeta.label} — ${item.display_name} T${item.tier}.${item.enchantment}, click to change`);
+  } else {
+    placeholder.hidden = false;
+    icon.hidden        = true;
+    icon.src           = '';
+    badges.hidden      = true;
+    btn.classList.remove('vbe-slot--filled');
+    btn.setAttribute('aria-label', `${slotMeta.label} — empty, click to select`);
+  }
+}
+
+// ── Two-handed logic ───────────────────────────────────────────────────────
+function applyTwoHandedLogic(weaponItem) {
+  const offBtn = $('vbe-slot-off_hand');
+  if (!offBtn) return;
+
+  if (weaponItem && weaponItem.is_two_handed) {
+    BUILD['off_hand'] = null;
+    updateTile('off_hand', null);
+    offBtn.dataset.disabled = 'true';
+    offBtn.classList.add('vbe-slot--disabled');
+    offBtn.setAttribute('aria-disabled', 'true');
+    twoHandedNotice.hidden = false;
+  } else {
+    offBtn.dataset.disabled = 'false';
+    offBtn.classList.remove('vbe-slot--disabled');
+    offBtn.removeAttribute('aria-disabled');
+    twoHandedNotice.hidden = true;
+  }
+}
+
+// ── Picker: open ───────────────────────────────────────────────────────────
+function openPicker(slotKey) {
+  _slot = slotKey;
+  const slotMeta = SLOTS.find(s => s.key === slotKey);
+  $('vbe-modal-title').textContent = `Select — ${slotMeta.label}`;
+
+  // Show weapon-type filter only for main_hand and off_hand
+  filter2hGroup.hidden = (slotKey !== 'main_hand' && slotKey !== 'off_hand');
+
+  // Clear search field without triggering a re-render yet
+  searchInp.value = '';
+
+  // Show modal
+  backdrop.hidden = false;
+  backdrop.removeAttribute('aria-hidden');
+  // rAF lets the browser paint the element before applying the transition class
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => backdrop.classList.add('vbe-modal-backdrop--visible'));
+  });
+
+  // Show loading state
+  resultsEl.innerHTML = '';
+  loadingEl.hidden = false;
+  resultsEl.appendChild(loadingEl);
+
+  _loadItems(slotKey).then(() => {
+    loadingEl.hidden = true;
+    renderResults();
+    searchInp.focus({ preventScroll: true });
+  });
+}
+
+// ── Picker: close ──────────────────────────────────────────────────────────
+function closePicker() {
+  backdrop.classList.remove('vbe-modal-backdrop--visible');
+  setTimeout(() => {
+    backdrop.hidden = true;
+    backdrop.setAttribute('aria-hidden', 'true');
+    _slot = null;
+  }, 200);
+}
+
+// ── Item fetch ─────────────────────────────────────────────────────────────
+async function _loadItems(slotKey) {
+  if (_cache[slotKey]) {
+    _allItems = _cache[slotKey];
+    return;
+  }
+  try {
+    const res = await fetch(`/api/catalog/items?slot=${encodeURIComponent(slotKey)}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    _allItems = await res.json();
+    _cache[slotKey] = _allItems;
+  } catch (_err) {
+    _allItems = [];
+    resultsEl.innerHTML = '<p class="vbe-error">Failed to load items. Please refresh the page.</p>';
+  }
+}
+
+// ── Filter + render results ────────────────────────────────────────────────
+function _getFilteredItems() {
+  const raw   = searchInp.value;
+  const words = raw.trim().toLowerCase().replace(/\s+/g, ' ').split(' ').filter(Boolean);
+
+  return _allItems.filter(item => {
+    if (!_activeTiers.has(item.tier)) return false;
+    if (!_activeEnchs.has(item.enchantment)) return false;
+    if (_active2h === '1h' && item.is_two_handed)  return false;
+    if (_active2h === '2h' && !item.is_two_handed) return false;
+    if (words.length > 0) {
+      const name = item.display_name.toLowerCase();
+      if (!words.every(w => name.includes(w))) return false;
+    }
+    return true;
+  });
+}
+
+function renderResults() {
+  const items = _getFilteredItems();
+  resultsEl.innerHTML = '';
+
+  if (items.length === 0) {
+    const p = document.createElement('p');
+    p.className = 'vbe-empty';
+    p.textContent = 'No items match your filters.';
+    resultsEl.appendChild(p);
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  for (const item of items) {
+    frag.appendChild(_createItemCard(item));
+  }
+  resultsEl.appendChild(frag);
+}
+
+function _createItemCard(item) {
+  const card = document.createElement('button');
+  card.type      = 'button';
+  card.className = 'vbe-item-card';
+  card.setAttribute('role', 'listitem');
+
+  const tierLabel = `T${item.tier}${item.enchantment > 0 ? '.' + item.enchantment : ''}`;
+  const twoHHtml  = item.is_two_handed
+    ? '<span class="vbe-2h-tag">2H</span>'
+    : '';
+
+  card.setAttribute('aria-label', `${item.display_name} ${tierLabel}${item.is_two_handed ? ' two-handed' : ''}`);
+
+  card.innerHTML = `
+    <img class="vbe-item-card__icon" src="${_escAttr(item.icon_url)}" alt="" loading="lazy">
+    <div class="vbe-item-card__body">
+      <span class="vbe-item-card__name">${_escHtml(item.display_name)}</span>
+      <div class="vbe-item-card__meta">
+        <span class="vbe-tier-badge">${_escHtml(tierLabel)}</span>
+        ${twoHHtml}
+      </div>
+    </div>
+  `;
+
+  card.addEventListener('click', () => selectItem(item));
+  return card;
+}
+
+// ── Item selection ─────────────────────────────────────────────────────────
+function selectItem(item) {
+  if (!_slot) return;
+  BUILD[_slot] = item;
+  updateTile(_slot, item);
+
+  if (_slot === 'main_hand') {
+    applyTwoHandedLogic(item);
+  }
+
+  closePicker();
+}
+
+// ── Filter chip interactivity ──────────────────────────────────────────────
+function initFilterChips() {
+  // Tier chips — at least one must remain active
+  $('vbe-tier-chips').addEventListener('click', e => {
+    const btn = e.target.closest('[data-tier]');
+    if (!btn) return;
+    const t = parseInt(btn.dataset.tier, 10);
+    if (_activeTiers.has(t)) {
+      if (_activeTiers.size === 1) return;
+      _activeTiers.delete(t);
+      btn.classList.remove('vbe-chip--active');
+    } else {
+      _activeTiers.add(t);
+      btn.classList.add('vbe-chip--active');
+    }
+    renderResults();
+  });
+
+  // Enchantment chips — at least one must remain active
+  $('vbe-ench-chips').addEventListener('click', e => {
+    const btn = e.target.closest('[data-ench]');
+    if (!btn) return;
+    const en = parseInt(btn.dataset.ench, 10);
+    if (_activeEnchs.has(en)) {
+      if (_activeEnchs.size === 1) return;
+      _activeEnchs.delete(en);
+      btn.classList.remove('vbe-chip--active');
+    } else {
+      _activeEnchs.add(en);
+      btn.classList.add('vbe-chip--active');
+    }
+    renderResults();
+  });
+
+  // Two-handed chips — radio-like single selection
+  $('vbe-2h-chips').addEventListener('click', e => {
+    const btn = e.target.closest('[data-2h]');
+    if (!btn) return;
+    _active2h = btn.dataset['2h'];
+    $('vbe-2h-chips')
+      .querySelectorAll('.vbe-chip')
+      .forEach(c => c.classList.toggle('vbe-chip--active', c === btn));
+    renderResults();
+  });
+}
+
+// ── Live search ────────────────────────────────────────────────────────────
+let _searchDebounce = null;
+searchInp.addEventListener('input', () => {
+  clearTimeout(_searchDebounce);
+  _searchDebounce = setTimeout(renderResults, 110);
+});
+
+// ── Modal close events ─────────────────────────────────────────────────────
+closeBtn.addEventListener('click', closePicker);
+
+backdrop.addEventListener('mousedown', e => {
+  // Close when clicking the backdrop itself, not the modal panel
+  if (e.target === backdrop) closePicker();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape' && _slot !== null) closePicker();
+});
+
+// ── Reset all slots ────────────────────────────────────────────────────────
+resetBtn.addEventListener('click', () => {
+  for (const slot of SLOTS) {
+    BUILD[slot.key] = null;
+    updateTile(slot.key, null);
+  }
+  applyTwoHandedLogic(null);
+});
+
+// ── Utility: safe HTML / attribute escaping ────────────────────────────────
+function _escHtml(str) {
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+function _escAttr(str) {
+  return String(str).replace(/"/g, '&quot;');
+}
+
+// ── Bootstrap ──────────────────────────────────────────────────────────────
+initGrid();
+initFilterChips();
+</script>
+{% endblock %}

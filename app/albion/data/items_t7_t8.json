@@ -1,0 +1,1557 @@
+[
+  {
+    "_comment": "IronkeepV2 Albion item catalog seed — auto-generated from ao-bin-dumps (data/albion/source/items_snapshot.txt). Schema version 2. Regenerate: python scripts/import_albion_catalog.py. Verify: python scripts/import_albion_catalog.py --check."
+  },
+  {
+    "_comment": "Two-handed weapons — slot: main_hand, is_two_handed: true",
+    "_section": "two-handed_weapons"
+  },
+  {
+    "item_type": "2H_ARCANESTAFF",
+    "display_name": "Great Arcane Staff"
+  },
+  {
+    "item_type": "2H_ARCANESTAFF_CRYSTAL",
+    "display_name": "Astral Staff"
+  },
+  {
+    "item_type": "2H_ARCANESTAFF_HELL",
+    "display_name": "Occult Staff"
+  },
+  {
+    "item_type": "2H_ARCANE_RINGPAIR_AVALON",
+    "display_name": "Evensong"
+  },
+  {
+    "item_type": "2H_AXE",
+    "display_name": "Greataxe"
+  },
+  {
+    "item_type": "2H_AXE_AVALON",
+    "display_name": "Realmbreaker"
+  },
+  {
+    "item_type": "2H_BOW",
+    "display_name": "Bow"
+  },
+  {
+    "item_type": "2H_BOW_AVALON",
+    "display_name": "Mistpiercer"
+  },
+  {
+    "item_type": "2H_BOW_CRYSTAL",
+    "display_name": "Skystrider Bow"
+  },
+  {
+    "item_type": "2H_BOW_HELL",
+    "display_name": "Wailing Bow"
+  },
+  {
+    "item_type": "2H_BOW_KEEPER",
+    "display_name": "Bow of Badon"
+  },
+  {
+    "item_type": "2H_CLAWPAIR",
+    "display_name": "Claws"
+  },
+  {
+    "item_type": "2H_CLAYMORE",
+    "display_name": "Claymore"
+  },
+  {
+    "item_type": "2H_CLAYMORE_AVALON",
+    "display_name": "Kingmaker"
+  },
+  {
+    "item_type": "2H_CLEAVER_HELL",
+    "display_name": "Carving Sword"
+  },
+  {
+    "item_type": "2H_COMBATSTAFF_MORGANA",
+    "display_name": "Black Monk Staff"
+  },
+  {
+    "item_type": "2H_CROSSBOW",
+    "display_name": "Crossbow"
+  },
+  {
+    "item_type": "2H_CROSSBOWLARGE",
+    "display_name": "Heavy Crossbow"
+  },
+  {
+    "item_type": "2H_CROSSBOWLARGE_MORGANA",
+    "display_name": "Siegebow"
+  },
+  {
+    "item_type": "2H_CROSSBOW_CANNON_AVALON",
+    "display_name": "Energy Shaper"
+  },
+  {
+    "item_type": "2H_CURSEDSTAFF",
+    "display_name": "Great Cursed Staff"
+  },
+  {
+    "item_type": "2H_CURSEDSTAFF_MORGANA",
+    "display_name": "Damnation Staff"
+  },
+  {
+    "item_type": "2H_DAGGERPAIR",
+    "display_name": "Dagger Pair"
+  },
+  {
+    "item_type": "2H_DAGGERPAIR_CRYSTAL",
+    "display_name": "Twin Slayers"
+  },
+  {
+    "item_type": "2H_DAGGER_KATAR_AVALON",
+    "display_name": "Bridled Fury"
+  },
+  {
+    "item_type": "2H_DEMONICSTAFF",
+    "display_name": "Demonic Staff"
+  },
+  {
+    "item_type": "2H_DIVINESTAFF",
+    "display_name": "Divine Staff"
+  },
+  {
+    "item_type": "2H_DOUBLEBLADEDSTAFF",
+    "display_name": "Double Bladed Staff"
+  },
+  {
+    "item_type": "2H_DOUBLEBLADEDSTAFF_CRYSTAL",
+    "display_name": "Phantom Twinblade"
+  },
+  {
+    "item_type": "2H_DUALAXE_KEEPER",
+    "display_name": "Bear Paws"
+  },
+  {
+    "item_type": "2H_DUALCROSSBOW_CRYSTAL",
+    "display_name": "Arclight Blasters"
+  },
+  {
+    "item_type": "2H_DUALCROSSBOW_HELL",
+    "display_name": "Boltcasters"
+  },
+  {
+    "item_type": "2H_DUALHAMMER_HELL",
+    "display_name": "Forge Hammers"
+  },
+  {
+    "item_type": "2H_DUALMACE_AVALON",
+    "display_name": "Oathkeepers"
+  },
+  {
+    "item_type": "2H_DUALSCIMITAR_UNDEAD",
+    "display_name": "Galatine Pair"
+  },
+  {
+    "item_type": "2H_DUALSICKLE_UNDEAD",
+    "display_name": "Deathgivers"
+  },
+  {
+    "item_type": "2H_DUALSWORD",
+    "display_name": "Dual Swords"
+  },
+  {
+    "item_type": "2H_ENIGMATICORB_MORGANA",
+    "display_name": "Malevolent Locus"
+  },
+  {
+    "item_type": "2H_ENIGMATICSTAFF",
+    "display_name": "Enigmatic Staff"
+  },
+  {
+    "item_type": "2H_FIRESTAFF",
+    "display_name": "Great Fire Staff"
+  },
+  {
+    "item_type": "2H_FIRESTAFF_HELL",
+    "display_name": "Brimstone Staff"
+  },
+  {
+    "item_type": "2H_FIRE_RINGPAIR_AVALON",
+    "display_name": "Dawnsong"
+  },
+  {
+    "item_type": "2H_FLAIL",
+    "display_name": "Morning Star"
+  },
+  {
+    "item_type": "2H_FROSTSTAFF",
+    "display_name": "Great Frost Staff"
+  },
+  {
+    "item_type": "2H_FROSTSTAFF_CRYSTAL",
+    "display_name": "Arctic Staff"
+  },
+  {
+    "item_type": "2H_GLACIALSTAFF",
+    "display_name": "Glacial Staff"
+  },
+  {
+    "item_type": "2H_GLAIVE",
+    "display_name": "Glaive"
+  },
+  {
+    "item_type": "2H_GLAIVE_CRYSTAL",
+    "display_name": "Rift Glaive"
+  },
+  {
+    "item_type": "2H_HALBERD",
+    "display_name": "Halberd"
+  },
+  {
+    "item_type": "2H_HALBERD_MORGANA",
+    "display_name": "Carrioncaller"
+  },
+  {
+    "item_type": "2H_HAMMER",
+    "display_name": "Great Hammer"
+  },
+  {
+    "item_type": "2H_HAMMER_AVALON",
+    "display_name": "Hand of Justice"
+  },
+  {
+    "item_type": "2H_HAMMER_CRYSTAL",
+    "display_name": "Truebolt Hammer"
+  },
+  {
+    "item_type": "2H_HAMMER_UNDEAD",
+    "display_name": "Tombhammer"
+  },
+  {
+    "item_type": "2H_HARPOON_HELL",
+    "display_name": "Spirithunter"
+  },
+  {
+    "item_type": "2H_HOLYSTAFF",
+    "display_name": "Great Holy Staff"
+  },
+  {
+    "item_type": "2H_HOLYSTAFF_CRYSTAL",
+    "display_name": "Exalted Staff"
+  },
+  {
+    "item_type": "2H_HOLYSTAFF_HELL",
+    "display_name": "Fallen Staff"
+  },
+  {
+    "item_type": "2H_HOLYSTAFF_UNDEAD",
+    "display_name": "Redemption Staff"
+  },
+  {
+    "item_type": "2H_ICECRYSTAL_UNDEAD",
+    "display_name": "Permafrost Prism"
+  },
+  {
+    "item_type": "2H_ICEGAUNTLETS_HELL",
+    "display_name": "Icicle Staff"
+  },
+  {
+    "item_type": "2H_INFERNOSTAFF",
+    "display_name": "Infernal Staff"
+  },
+  {
+    "item_type": "2H_INFERNOSTAFF_MORGANA",
+    "display_name": "Blazing Staff"
+  },
+  {
+    "item_type": "2H_IRONCLADEDSTAFF",
+    "display_name": "Iron-clad Staff"
+  },
+  {
+    "item_type": "2H_IRONGAUNTLETS_HELL",
+    "display_name": "Black Hands"
+  },
+  {
+    "item_type": "2H_KNUCKLES_AVALON",
+    "display_name": "Fists of Avalon"
+  },
+  {
+    "item_type": "2H_KNUCKLES_CRYSTAL",
+    "display_name": "Forcepulse Bracers"
+  },
+  {
+    "item_type": "2H_KNUCKLES_HELL",
+    "display_name": "Hellfire Hands"
+  },
+  {
+    "item_type": "2H_KNUCKLES_KEEPER",
+    "display_name": "Ursine Maulers"
+  },
+  {
+    "item_type": "2H_KNUCKLES_MORGANA",
+    "display_name": "Ravenstrike Cestus"
+  },
+  {
+    "item_type": "2H_KNUCKLES_SET1",
+    "display_name": "Brawler Gloves"
+  },
+  {
+    "item_type": "2H_KNUCKLES_SET2",
+    "display_name": "Battle Bracers"
+  },
+  {
+    "item_type": "2H_KNUCKLES_SET3",
+    "display_name": "Spiked Gauntlets"
+  },
+  {
+    "item_type": "2H_LONGBOW",
+    "display_name": "Longbow"
+  },
+  {
+    "item_type": "2H_LONGBOW_UNDEAD",
+    "display_name": "Whispering Bow"
+  },
+  {
+    "item_type": "2H_MACE",
+    "display_name": "Heavy Mace"
+  },
+  {
+    "item_type": "2H_MACE_MORGANA",
+    "display_name": "Camlann Mace"
+  },
+  {
+    "item_type": "2H_NATURESTAFF",
+    "display_name": "Great Nature Staff"
+  },
+  {
+    "item_type": "2H_NATURESTAFF_HELL",
+    "display_name": "Blight Staff"
+  },
+  {
+    "item_type": "2H_NATURESTAFF_KEEPER",
+    "display_name": "Rampant Staff"
+  },
+  {
+    "item_type": "2H_POLEHAMMER",
+    "display_name": "Polehammer"
+  },
+  {
+    "item_type": "2H_QUARTERSTAFF",
+    "display_name": "Quarterstaff"
+  },
+  {
+    "item_type": "2H_QUARTERSTAFF_AVALON",
+    "display_name": "Grailseeker"
+  },
+  {
+    "item_type": "2H_RAM_KEEPER",
+    "display_name": "Grovekeeper"
+  },
+  {
+    "item_type": "2H_REPEATINGCROSSBOW_UNDEAD",
+    "display_name": "Weeping Repeater"
+  },
+  {
+    "item_type": "2H_ROCKSTAFF_KEEPER",
+    "display_name": "Staff of Balance"
+  },
+  {
+    "item_type": "2H_SCYTHE_CRYSTAL",
+    "display_name": "Crystal Reaper"
+  },
+  {
+    "item_type": "2H_SCYTHE_HELL",
+    "display_name": "Infernal Scythe"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_AVALON",
+    "display_name": "Lightcaller"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_CRYSTAL",
+    "display_name": "Stillgaze Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_HELL",
+    "display_name": "Hellspawn Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_KEEPER",
+    "display_name": "Earthrune Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_MORGANA",
+    "display_name": "Bloodmoon Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_SET1",
+    "display_name": "Prowling Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_SET2",
+    "display_name": "Rootbound Staff"
+  },
+  {
+    "item_type": "2H_SHAPESHIFTER_SET3",
+    "display_name": "Primal Staff"
+  },
+  {
+    "item_type": "2H_SKULLORB_HELL",
+    "display_name": "Cursed Skull"
+  },
+  {
+    "item_type": "2H_SPEAR",
+    "display_name": "Pike"
+  },
+  {
+    "item_type": "2H_TRIDENT_UNDEAD",
+    "display_name": "Trinity Spear"
+  },
+  {
+    "item_type": "2H_TWINSCYTHE_HELL",
+    "display_name": "Soulscythe"
+  },
+  {
+    "item_type": "2H_WARBOW",
+    "display_name": "Warbow"
+  },
+  {
+    "item_type": "2H_WILDSTAFF",
+    "display_name": "Wild Staff"
+  },
+  {
+    "_comment": "One-handed weapons — slot: main_hand, is_two_handed: false",
+    "_section": "one-handed_weapons"
+  },
+  {
+    "item_type": "MAIN_1HCROSSBOW",
+    "display_name": "Light Crossbow"
+  },
+  {
+    "item_type": "MAIN_ARCANESTAFF",
+    "display_name": "Arcane Staff"
+  },
+  {
+    "item_type": "MAIN_ARCANESTAFF_UNDEAD",
+    "display_name": "Witchwork Staff"
+  },
+  {
+    "item_type": "MAIN_AXE",
+    "display_name": "Battleaxe"
+  },
+  {
+    "item_type": "MAIN_CURSEDSTAFF",
+    "display_name": "Cursed Staff"
+  },
+  {
+    "item_type": "MAIN_CURSEDSTAFF_AVALON",
+    "display_name": "Shadowcaller"
+  },
+  {
+    "item_type": "MAIN_CURSEDSTAFF_CRYSTAL",
+    "display_name": "Rotcaller Staff"
+  },
+  {
+    "item_type": "MAIN_CURSEDSTAFF_UNDEAD",
+    "display_name": "Lifecurse Staff"
+  },
+  {
+    "item_type": "MAIN_DAGGER",
+    "display_name": "Dagger"
+  },
+  {
+    "item_type": "MAIN_DAGGER_HELL",
+    "display_name": "Demonfang"
+  },
+  {
+    "item_type": "MAIN_FIRESTAFF",
+    "display_name": "Fire Staff"
+  },
+  {
+    "item_type": "MAIN_FIRESTAFF_CRYSTAL",
+    "display_name": "Flamewalker Staff"
+  },
+  {
+    "item_type": "MAIN_FIRESTAFF_KEEPER",
+    "display_name": "Wildfire Staff"
+  },
+  {
+    "item_type": "MAIN_FROSTSTAFF",
+    "display_name": "Frost Staff"
+  },
+  {
+    "item_type": "MAIN_FROSTSTAFF_AVALON",
+    "display_name": "Chillhowl"
+  },
+  {
+    "item_type": "MAIN_FROSTSTAFF_KEEPER",
+    "display_name": "Hoarfrost Staff"
+  },
+  {
+    "item_type": "MAIN_HAMMER",
+    "display_name": "Hammer"
+  },
+  {
+    "item_type": "MAIN_HOLYSTAFF",
+    "display_name": "Holy Staff"
+  },
+  {
+    "item_type": "MAIN_HOLYSTAFF_AVALON",
+    "display_name": "Hallowfall"
+  },
+  {
+    "item_type": "MAIN_HOLYSTAFF_MORGANA",
+    "display_name": "Lifetouch Staff"
+  },
+  {
+    "item_type": "MAIN_MACE",
+    "display_name": "Mace"
+  },
+  {
+    "item_type": "MAIN_MACE_CRYSTAL",
+    "display_name": "Dreadstorm Monarch"
+  },
+  {
+    "item_type": "MAIN_MACE_HELL",
+    "display_name": "Incubus Mace"
+  },
+  {
+    "item_type": "MAIN_NATURESTAFF",
+    "display_name": "Nature Staff"
+  },
+  {
+    "item_type": "MAIN_NATURESTAFF_AVALON",
+    "display_name": "Ironroot Staff"
+  },
+  {
+    "item_type": "MAIN_NATURESTAFF_CRYSTAL",
+    "display_name": "Forgebark Staff"
+  },
+  {
+    "item_type": "MAIN_NATURESTAFF_KEEPER",
+    "display_name": "Druidic Staff"
+  },
+  {
+    "item_type": "MAIN_RAPIER_MORGANA",
+    "display_name": "Bloodletter"
+  },
+  {
+    "item_type": "MAIN_ROCKMACE_KEEPER",
+    "display_name": "Bedrock Mace"
+  },
+  {
+    "item_type": "MAIN_SCIMITAR_MORGANA",
+    "display_name": "Clarent Blade"
+  },
+  {
+    "item_type": "MAIN_SPEAR",
+    "display_name": "Spear"
+  },
+  {
+    "item_type": "MAIN_SPEAR_KEEPER",
+    "display_name": "Heron Spear"
+  },
+  {
+    "item_type": "MAIN_SPEAR_LANCE_AVALON",
+    "display_name": "Daybreaker"
+  },
+  {
+    "item_type": "MAIN_SWORD",
+    "display_name": "Broadsword"
+  },
+  {
+    "item_type": "MAIN_SWORD_CRYSTAL",
+    "display_name": "Infinity Blade"
+  },
+  {
+    "_comment": "Off-hand items — slot: off_hand",
+    "_section": "off-hand_items"
+  },
+  {
+    "item_type": "OFF_BOOK",
+    "display_name": "Tome of Spells"
+  },
+  {
+    "item_type": "OFF_CENSER_AVALON",
+    "display_name": "Celestial Censer"
+  },
+  {
+    "item_type": "OFF_DEMONSKULL_HELL",
+    "display_name": "Muisak"
+  },
+  {
+    "item_type": "OFF_HORN_KEEPER",
+    "display_name": "Mistcaller"
+  },
+  {
+    "item_type": "OFF_JESTERCANE_HELL",
+    "display_name": "Leering Cane"
+  },
+  {
+    "item_type": "OFF_LAMP_UNDEAD",
+    "display_name": "Cryptcandle"
+  },
+  {
+    "item_type": "OFF_ORB_MORGANA",
+    "display_name": "Eye of Secrets"
+  },
+  {
+    "item_type": "OFF_SHIELD",
+    "display_name": "Shield"
+  },
+  {
+    "item_type": "OFF_SHIELD_AVALON",
+    "display_name": "Astral Aegis"
+  },
+  {
+    "item_type": "OFF_SHIELD_CRYSTAL",
+    "display_name": "Unbreakable Ward"
+  },
+  {
+    "item_type": "OFF_SHIELD_HELL",
+    "display_name": "Caitiff Shield"
+  },
+  {
+    "item_type": "OFF_SPIKEDSHIELD_MORGANA",
+    "display_name": "Facebreaker"
+  },
+  {
+    "item_type": "OFF_TALISMAN_AVALON",
+    "display_name": "Sacred Scepter"
+  },
+  {
+    "item_type": "OFF_TOME_CRYSTAL",
+    "display_name": "Timelocked Grimoire"
+  },
+  {
+    "item_type": "OFF_TORCH",
+    "display_name": "Torch"
+  },
+  {
+    "item_type": "OFF_TORCH_CRYSTAL",
+    "display_name": "Blueflame Torch"
+  },
+  {
+    "item_type": "OFF_TOTEM_KEEPER",
+    "display_name": "Taproot"
+  },
+  {
+    "item_type": "OFF_TOWERSHIELD_UNDEAD",
+    "display_name": "Sarcophagus"
+  },
+  {
+    "_comment": "Head armour — slot: head",
+    "_section": "head_armour"
+  },
+  {
+    "item_type": "HEAD_CLOTH_AVALON",
+    "display_name": "Cowl of Purity"
+  },
+  {
+    "item_type": "HEAD_CLOTH_FEY",
+    "display_name": "Feyscale Hat"
+  },
+  {
+    "item_type": "HEAD_CLOTH_HELL",
+    "display_name": "Fiend Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_KEEPER",
+    "display_name": "Druid Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_MORGANA",
+    "display_name": "Cultist Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_ROYAL",
+    "display_name": "Royal Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_SET1",
+    "display_name": "Scholar Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_SET2",
+    "display_name": "Cleric Cowl"
+  },
+  {
+    "item_type": "HEAD_CLOTH_SET3",
+    "display_name": "Mage Cowl"
+  },
+  {
+    "item_type": "HEAD_GATHERER_FIBER",
+    "display_name": "Harvester Cap"
+  },
+  {
+    "item_type": "HEAD_GATHERER_FISH",
+    "display_name": "Fisherman Cap"
+  },
+  {
+    "item_type": "HEAD_GATHERER_HIDE",
+    "display_name": "Skinner Cap"
+  },
+  {
+    "item_type": "HEAD_GATHERER_ORE",
+    "display_name": "Miner Cap"
+  },
+  {
+    "item_type": "HEAD_GATHERER_ROCK",
+    "display_name": "Quarrier Cap"
+  },
+  {
+    "item_type": "HEAD_GATHERER_WOOD",
+    "display_name": "Lumberjack Cap"
+  },
+  {
+    "item_type": "HEAD_LEATHER_AVALON",
+    "display_name": "Hood of Tenacity"
+  },
+  {
+    "item_type": "HEAD_LEATHER_FEY",
+    "display_name": "Mistwalker Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_HELL",
+    "display_name": "Hellion Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_MORGANA",
+    "display_name": "Stalker Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_ROYAL",
+    "display_name": "Royal Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_SET1",
+    "display_name": "Mercenary Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_SET2",
+    "display_name": "Hunter Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_SET3",
+    "display_name": "Assassin Hood"
+  },
+  {
+    "item_type": "HEAD_LEATHER_UNDEAD",
+    "display_name": "Specter Hood"
+  },
+  {
+    "item_type": "HEAD_PLATE_AVALON",
+    "display_name": "Helmet of Valor"
+  },
+  {
+    "item_type": "HEAD_PLATE_FEY",
+    "display_name": "Duskweaver Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_HELL",
+    "display_name": "Demon Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_KEEPER",
+    "display_name": "Judicator Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_ROYAL",
+    "display_name": "Royal Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_SET1",
+    "display_name": "Soldier Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_SET2",
+    "display_name": "Knight Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_SET3",
+    "display_name": "Guardian Helmet"
+  },
+  {
+    "item_type": "HEAD_PLATE_UNDEAD",
+    "display_name": "Graveguard Helmet"
+  },
+  {
+    "_comment": "Chest armour — slot: chest",
+    "_section": "chest_armour"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_AVALON",
+    "display_name": "Robe of Purity"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_FEY",
+    "display_name": "Feyscale Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_HELL",
+    "display_name": "Fiend Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_KEEPER",
+    "display_name": "Druid Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_MORGANA",
+    "display_name": "Cultist Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_ROYAL",
+    "display_name": "Royal Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_SET1",
+    "display_name": "Scholar Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_SET2",
+    "display_name": "Cleric Robe"
+  },
+  {
+    "item_type": "ARMOR_CLOTH_SET3",
+    "display_name": "Mage Robe"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_FIBER",
+    "display_name": "Harvester Garb"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_FISH",
+    "display_name": "Fisherman Garb"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_HIDE",
+    "display_name": "Skinner Garb"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_ORE",
+    "display_name": "Miner Garb"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_ROCK",
+    "display_name": "Quarrier Garb"
+  },
+  {
+    "item_type": "ARMOR_GATHERER_WOOD",
+    "display_name": "Lumberjack Garb"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_AVALON",
+    "display_name": "Jacket of Tenacity"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_FEY",
+    "display_name": "Mistwalker Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_HELL",
+    "display_name": "Hellion Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_MORGANA",
+    "display_name": "Stalker Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_ROYAL",
+    "display_name": "Royal Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_SET1",
+    "display_name": "Mercenary Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_SET2",
+    "display_name": "Hunter Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_SET3",
+    "display_name": "Assassin Jacket"
+  },
+  {
+    "item_type": "ARMOR_LEATHER_UNDEAD",
+    "display_name": "Specter Jacket"
+  },
+  {
+    "item_type": "ARMOR_PLATE_AVALON",
+    "display_name": "Armor of Valor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_FEY",
+    "display_name": "Duskweaver Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_HELL",
+    "display_name": "Demon Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_KEEPER",
+    "display_name": "Judicator Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_ROYAL",
+    "display_name": "Royal Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_SET1",
+    "display_name": "Soldier Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_SET2",
+    "display_name": "Knight Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_SET3",
+    "display_name": "Guardian Armor"
+  },
+  {
+    "item_type": "ARMOR_PLATE_UNDEAD",
+    "display_name": "Graveguard Armor"
+  },
+  {
+    "_comment": "Shoes — slot: shoes",
+    "_section": "shoes"
+  },
+  {
+    "item_type": "SHOES_CLOTH_AVALON",
+    "display_name": "Sandals of Purity"
+  },
+  {
+    "item_type": "SHOES_CLOTH_FEY",
+    "display_name": "Feyscale Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_HELL",
+    "display_name": "Fiend Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_KEEPER",
+    "display_name": "Druid Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_MORGANA",
+    "display_name": "Cultist Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_ROYAL",
+    "display_name": "Royal Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_SET1",
+    "display_name": "Scholar Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_SET2",
+    "display_name": "Cleric Sandals"
+  },
+  {
+    "item_type": "SHOES_CLOTH_SET3",
+    "display_name": "Mage Sandals"
+  },
+  {
+    "item_type": "SHOES_GATHERER_FIBER",
+    "display_name": "Harvester Workboots"
+  },
+  {
+    "item_type": "SHOES_GATHERER_FISH",
+    "display_name": "Fisherman Workboots"
+  },
+  {
+    "item_type": "SHOES_GATHERER_HIDE",
+    "display_name": "Skinner Workboots"
+  },
+  {
+    "item_type": "SHOES_GATHERER_ORE",
+    "display_name": "Miner Workboots"
+  },
+  {
+    "item_type": "SHOES_GATHERER_ROCK",
+    "display_name": "Quarrier Workboots"
+  },
+  {
+    "item_type": "SHOES_GATHERER_WOOD",
+    "display_name": "Lumberjack Workboots"
+  },
+  {
+    "item_type": "SHOES_LEATHER_AVALON",
+    "display_name": "Shoes of Tenacity"
+  },
+  {
+    "item_type": "SHOES_LEATHER_FEY",
+    "display_name": "Mistwalker Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_HELL",
+    "display_name": "Hellion Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_MORGANA",
+    "display_name": "Stalker Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_ROYAL",
+    "display_name": "Royal Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_SET1",
+    "display_name": "Mercenary Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_SET2",
+    "display_name": "Hunter Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_SET3",
+    "display_name": "Assassin Shoes"
+  },
+  {
+    "item_type": "SHOES_LEATHER_UNDEAD",
+    "display_name": "Specter Shoes"
+  },
+  {
+    "item_type": "SHOES_PLATE_AVALON",
+    "display_name": "Boots of Valor"
+  },
+  {
+    "item_type": "SHOES_PLATE_FEY",
+    "display_name": "Duskweaver Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_HELL",
+    "display_name": "Demon Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_KEEPER",
+    "display_name": "Judicator Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_ROYAL",
+    "display_name": "Royal Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_SET1",
+    "display_name": "Soldier Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_SET2",
+    "display_name": "Knight Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_SET3",
+    "display_name": "Guardian Boots"
+  },
+  {
+    "item_type": "SHOES_PLATE_UNDEAD",
+    "display_name": "Graveguard Boots"
+  },
+  {
+    "_comment": "Capes — slot: cape",
+    "_section": "capes"
+  },
+  {
+    "item_type": "CAPE",
+    "display_name": "Cape"
+  },
+  {
+    "item_type": "CAPEITEM_AVALON",
+    "display_name": "Avalonian Cape"
+  },
+  {
+    "item_type": "CAPEITEM_DEMON",
+    "display_name": "Demon Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_BRECILIEN",
+    "display_name": "Brecilien Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_BRIDGEWATCH",
+    "display_name": "Bridgewatch Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_CAERLEON",
+    "display_name": "Caerleon Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_FORTSTERLING",
+    "display_name": "Fort Sterling Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_LYMHURST",
+    "display_name": "Lymhurst Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_MARTLOCK",
+    "display_name": "Martlock Cape"
+  },
+  {
+    "item_type": "CAPEITEM_FW_THETFORD",
+    "display_name": "Thetford Cape"
+  },
+  {
+    "item_type": "CAPEITEM_HERETIC",
+    "display_name": "Heretic Cape"
+  },
+  {
+    "item_type": "CAPEITEM_KEEPER",
+    "display_name": "Keeper Cape"
+  },
+  {
+    "item_type": "CAPEITEM_MORGANA",
+    "display_name": "Morgana Cape"
+  },
+  {
+    "item_type": "CAPEITEM_SMUGGLER",
+    "display_name": "Smuggler Cape"
+  },
+  {
+    "item_type": "CAPEITEM_UNDEAD",
+    "display_name": "Undead Cape"
+  },
+  {
+    "item_type": "CAPE_ARENA_BANNER",
+    "display_name": "Arena Veteran's Large Banner",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "_comment": "Bags — slot: bag",
+    "_section": "bags"
+  },
+  {
+    "item_type": "BAG",
+    "display_name": "Bag"
+  },
+  {
+    "item_type": "BAG_INSIGHT",
+    "display_name": "Satchel of Insight"
+  },
+  {
+    "_comment": "Mounts — slot: mount, generate_enchants: false",
+    "_section": "mounts"
+  },
+  {
+    "item_type": "MOUNT_ARMORED_HORSE",
+    "display_name": "Armored Horse",
+    "generate_enchants": false
+  },
+  {
+    "item_type": "MOUNT_ARMORED_SWAMPDRAGON_BATTLE",
+    "display_name": "Venom Basilisk",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_DIREBEAR",
+    "display_name": "Saddled Direbear",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_DIREBEAR_FW_FORTSTERLING_ELITE",
+    "display_name": "Elite Winter Bear",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_DIREBOAR",
+    "display_name": "Saddled Direboar",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_DIREBOAR_FW_LYMHURST_ELITE",
+    "display_name": "Elite Wild Boar",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_GREYWOLF_FW_CAERLEON_ELITE",
+    "display_name": "Elite Greywolf",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_HORSE",
+    "display_name": "Riding Horse",
+    "generate_enchants": false
+  },
+  {
+    "item_type": "MOUNT_HUSKY_ADC",
+    "display_name": "Snow Husky",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_MAMMOTH_TRANSPORT",
+    "display_name": "Transport Mammoth",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_MOABIRD_FW_BRIDGEWATCH_ELITE",
+    "display_name": "Elite Terrorbird",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_MONITORLIZARD_ADC",
+    "display_name": "Pest Lizard",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_OWL_FW_BRECILIEN_ELITE",
+    "display_name": "Elite Mystic Owl",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_OX",
+    "display_name": "Transport Ox",
+    "generate_enchants": false
+  },
+  {
+    "item_type": "MOUNT_RABBIT_EASTER",
+    "display_name": "Spring Cottontail",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_RAM_FW_MARTLOCK_ELITE",
+    "display_name": "Elite Bighorn Ram",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_SPIDER_HELL",
+    "display_name": "Soulspinner",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_SWAMPDRAGON",
+    "display_name": "Saddled Swamp Dragon",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_SWAMPDRAGON_AVALON_BASILISK",
+    "display_name": "Avalonian Basilisk",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_SWAMPDRAGON_BATTLE",
+    "display_name": "Flame Basilisk",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MOUNT_SWAMPDRAGON_FW_THETFORD_ELITE",
+    "display_name": "Elite Swamp Salamander",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MOUNT_TERRORBIRD_ADC",
+    "display_name": "Saddled Terrorbird",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "_comment": "Food — slot: food",
+    "_section": "food"
+  },
+  {
+    "item_type": "FISH_FRESHWATER_ALL_COMMON",
+    "display_name": "Danglemouth Catfish",
+    "generate_enchants": false
+  },
+  {
+    "item_type": "FISH_FRESHWATER_AVALON_RARE",
+    "display_name": "Puremist Snapper",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_FRESHWATER_FOREST_RARE",
+    "display_name": "Deadwater Eel",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_FRESHWATER_HIGHLANDS_RARE",
+    "display_name": "Thunderfall Lurcher",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_FRESHWATER_MOUNTAIN_RARE",
+    "display_name": "Frostpeak Deadeye",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_FRESHWATER_STEPPE_RARE",
+    "display_name": "Dusthole Crab",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_FRESHWATER_SWAMP_RARE",
+    "display_name": "Blackbog Clam",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "FISH_SALTWATER_ALL_BOSS_SHARK",
+    "display_name": "Shark",
+    "generate_enchants": false,
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "FISH_SALTWATER_ALL_COMMON",
+    "display_name": "Bluefin Tuna",
+    "generate_enchants": false
+  },
+  {
+    "item_type": "FISH_SALTWATER_ALL_RARE",
+    "display_name": "Deepwater Kraken",
+    "generate_enchants": false,
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_OMELETTE",
+    "display_name": "Pork Omelette",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_OMELETTE_AVALON",
+    "display_name": "Avalonian Pork Omelette",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_OMELETTE_FISH",
+    "display_name": "Dusthole Crab Omelette",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_PIE",
+    "display_name": "Pork Pie",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_PIE_FISH",
+    "display_name": "Frostpeak Deadeye Pie",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_ROAST",
+    "display_name": "Roast Pork",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_ROAST_FISH",
+    "display_name": "Roasted Puremist Snapper",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "MEAL_SANDWICH",
+    "display_name": "Beef Sandwich",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MEAL_SANDWICH_AVALON",
+    "display_name": "Avalonian Beef Sandwich",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MEAL_SANDWICH_FISH",
+    "display_name": "Thunderfall Lurcher Sandwich",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MEAL_STEW",
+    "display_name": "Beef Stew",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MEAL_STEW_AVALON",
+    "display_name": "Avalonian Beef Stew",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "MEAL_STEW_FISH",
+    "display_name": "Deadwater Eel Stew",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "_comment": "Potions — slot: potion",
+    "_section": "potions"
+  },
+  {
+    "item_type": "POTION_ACID",
+    "display_name": "Major Acid Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_BERSERK",
+    "display_name": "Major Berserk Potion",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "POTION_CLEANSE",
+    "display_name": "Invisibility Potion",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "POTION_CLEANSE2",
+    "display_name": "Major Cleansing Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_COOLDOWN",
+    "display_name": "Major Poison Potion",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "POTION_GATHER",
+    "display_name": "Major Gathering Potion",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "POTION_LAVA",
+    "display_name": "Major Hellfire Potion",
+    "tiers": [
+      8
+    ]
+  },
+  {
+    "item_type": "POTION_MOB_RESET",
+    "display_name": "Major Calming Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_REVIVE",
+    "display_name": "Major Gigantify Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_SLOWFIELD",
+    "display_name": "Major Sticky Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_STONESKIN",
+    "display_name": "Major Resistance Potion",
+    "tiers": [
+      7
+    ]
+  },
+  {
+    "item_type": "POTION_TORNADO",
+    "display_name": "Major Tornado in a Bottle",
+    "tiers": [
+      8
+    ]
+  }
+]

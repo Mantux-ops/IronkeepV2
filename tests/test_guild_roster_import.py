@@ -139,7 +139,7 @@ class TestGuildRestClient:
              "MemberCount": 80},
         ]
         from app.albion import rest_client
-        with patch.object(rest_client, "_get", return_value=raw):
+        with patch.object(rest_client, "_get_from", return_value=raw):
             with patch.object(rest_client, "_rate_limit"):
                 results = rest_client.search_albion_guilds("Iron Keep")
         assert len(results) == 1
@@ -150,14 +150,14 @@ class TestGuildRestClient:
 
     def test_search_empty_list_returns_empty(self):
         from app.albion import rest_client
-        with patch.object(rest_client, "_get", return_value=[]):
+        with patch.object(rest_client, "_get_from", return_value=[]):
             with patch.object(rest_client, "_rate_limit"):
                 results = rest_client.search_albion_guilds("Unknown")
         assert results == []
 
     def test_search_non_list_response_returns_empty(self):
         from app.albion import rest_client
-        with patch.object(rest_client, "_get", return_value={"error": "bad"}):
+        with patch.object(rest_client, "_get_from", return_value={"error": "bad"}):
             with patch.object(rest_client, "_rate_limit"):
                 results = rest_client.search_albion_guilds("x")
         assert results == []
