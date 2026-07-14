@@ -377,3 +377,116 @@ class TestBuildsListEditorLink:
         html = client.get(f"/workspaces/{ws['slug']}/builds").text
         assert f"/workspaces/{ws['slug']}/builds/editor" in html
         assert "Visual Editor" in html
+
+
+# ---------------------------------------------------------------------------
+# 12. Phase 12.2b — JavaScript is extracted to external file
+# ---------------------------------------------------------------------------
+
+class TestExternalJavaScript:
+    def test_external_js_file_referenced(self):
+        """JS must be loaded from /static/js/build_editor.js, not inline."""
+        client = TestClient(app, raise_server_exceptions=True)
+        owner = make_user("EditorOwner27")
+        ws    = make_workspace(owner_user_id=owner["id"])
+        _login(client, owner["display_name"])
+
+        html = client.get(_editor_url(ws["slug"])).text
+        assert "build_editor.js" in html
+
+    def test_no_large_inline_script_in_template(self):
+        """The template must not contain a large inline script block."""
+        client = TestClient(app, raise_server_exceptions=True)
+        owner = make_user("EditorOwner28")
+        ws    = make_workspace(owner_user_id=owner["id"])
+        _login(client, owner["display_name"])
+
+        html = client.get(_editor_url(ws["slug"])).text
+        # A large inline script would contain function definitions
+        # After extraction, only server-injected config or tiny helpers are acceptable.
+        # openPicker is a function that should only be in the external file now.
+        assert "function openPicker" not in html
+        assert "function initGrid" not in html
+
+    def test_external_js_file_is_served(self):
+        """The static JS file must be accessible at its declared URL."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/static/js/build_editor.js")
+        assert resp.status_code == 200
+        assert "build_editor" in resp.text or "openPicker" in resp.text
+
+    def test_js_file_has_defer_attribute(self):
+        """The <script> tag must use defer to avoid blocking the render."""
+        client = TestClient(app, raise_server_exceptions=True)
+        owner = make_user("EditorOwner29")
+        ws    = make_workspace(owner_user_id=owner["id"])
+        _login(client, owner["display_name"])
+
+        html = client.get(_editor_url(ws["slug"])).text
+        import re
+        script_tags = re.findall(r'<script[^>]*build_editor\.js[^>]*>', html)
+        assert len(script_tags) == 1
+        assert "defer" in script_tags[0]
+
+
+# ---------------------------------------------------------------------------
+# 13. Phase 12.2b — Catalog API responses include correct fields
+# ---------------------------------------------------------------------------
+
+class TestCatalogAPIForEditor:
+    def test_catalog_items_have_required_fields(self):
+        """Items returned by the catalog API include all fields the editor needs."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=head&tier=8&enchantment=3")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) > 0
+        required = {"item_id", "display_name", "tier", "enchantment", "slot",
+                    "is_two_handed", "icon_url"}
+        for item in items[:5]:
+            missing = required - set(item.keys())
+            assert not missing, f"Item missing fields: {missing}"
+
+    def test_mount_has_only_enchantment_zero(self):
+        """Mount catalog must only return .0 items — drives chip disable logic."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=mount")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert all(i["enchantment"] == 0 for i in items), \
+            "Mount items should all have enchantment 0"
+
+    def test_main_hand_exceeds_render_limit(self):
+        """main_hand must have > 100 items, confirming the render-limit feature is needed."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=main_hand")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) > 100, \
+            f"Expected > 100 main_hand items for render-limit test, got {len(items)}"
+
+    def test_main_hand_has_two_handed_items(self):
+        """Catalog must return is_two_handed=True items for main_hand."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=main_hand")
+        assert resp.status_code == 200
+        items = resp.json()
+        two_h = [i for i in items if i["is_two_handed"]]
+        assert len(two_h) > 0, "Expected at least one two-handed weapon in main_hand"
+
+    def test_claymore_found_by_search(self):
+        """The live search feature depends on the catalog returning Claymore items."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=main_hand&q=Claymore")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) > 0
+        assert all("claymore" in i["display_name"].lower() for i in items)
+
+    def test_t8_3_claymore_exists(self):
+        """Acceptance criteria requires T8.3 Claymore to be selectable."""
+        client = TestClient(app, raise_server_exceptions=True)
+        resp = client.get("/api/catalog/items?slot=main_hand&tier=8&enchantment=3&q=Claymore")
+        assert resp.status_code == 200
+        items = resp.json()
+        assert len(items) > 0, "T8.3 Claymore must exist in the catalog"

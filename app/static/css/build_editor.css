@@ -43,6 +43,23 @@
      ≤ 640px:  filter row stacks, picker takes full viewport height
    ========================================================== */
 
+/* ── [hidden] safety override ───────────────────────────── */
+/*
+   Flex / grid display rules on .vbe-* elements can silently override the
+   native HTML `hidden` attribute because the user-agent [hidden]{display:none}
+   rule has the same specificity as an author class rule.
+   This blanket override restores the expected behaviour.
+*/
+.vbe-modal-backdrop[hidden],
+.vbe-equip-hint[hidden],
+.vbe-filter-group[hidden],
+.vbe-slot__badges[hidden],
+.vbe-slot__icon[hidden],
+.vbe-slot__clear[hidden],
+.vbe-loading[hidden] {
+  display: none;
+}
+
 /* ── Page wrapper ───────────────────────────────────────── */
 
 .vbe-page {
@@ -546,6 +563,107 @@
   border-radius: 3px;
   padding: 2px 4px;
   white-space: nowrap;
+}
+
+/* ── Slot clear button ───────────────────────────────────── */
+
+/* Absolute top-right × button; appears only when a slot is filled */
+.vbe-slot__clear {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--surface-3);
+  border: 1px solid var(--border-strong);
+  color: var(--text-muted);
+  font-size: 0.55rem;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+  z-index: 2;
+}
+
+.vbe-slot__clear:hover {
+  background: var(--danger-bg);
+  color: var(--danger-text);
+  border-color: var(--danger-border);
+}
+
+.vbe-slot__clear:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ── Unavailable filter chip ─────────────────────────────── */
+
+/* Shown when the current slot has no items for a given enchantment */
+.vbe-chip--unavailable {
+  opacity: 0.35;
+  cursor: not-allowed;
+  text-decoration: line-through;
+}
+
+.vbe-chip--unavailable:hover {
+  background: var(--surface-3);
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+
+/* ── Results limit notice ────────────────────────────────── */
+
+.vbe-results-limit {
+  grid-column: 1 / -1;
+  text-align: center;
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  padding: var(--space-2) var(--space-3);
+  border-top: 1px solid var(--border);
+  margin: var(--space-1) 0 0;
+}
+
+/* ── State wrappers (empty / error) ──────────────────────── */
+
+.vbe-state-wrap {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-5);
+  text-align: center;
+}
+
+/* ── Item card icon fallback (image load failure) ────────── */
+
+.vbe-item-card__icon-fallback {
+  width: 56px;
+  height: 56px;
+  background: var(--surface-3);
+  border: 1px dashed var(--border);
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+/* ── Reduced motion ──────────────────────────────────────── */
+
+@media (prefers-reduced-motion: reduce) {
+  .vbe-modal-backdrop,
+  .vbe-modal {
+    transition: none;
+  }
+
+  .vbe-slot,
+  .vbe-item-card,
+  .vbe-slot__clear,
+  .vbe-chip {
+    transition: none;
+  }
 }
 
 /* ── Responsive ──────────────────────────────────────────── */
