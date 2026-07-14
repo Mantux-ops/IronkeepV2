@@ -622,6 +622,74 @@ CREATE INDEX IF NOT EXISTS idx_reminder_deliveries_status
     ON operation_reminder_deliveries(status, guild_workspace_id);
 
 -- ---------------------------------------------------------------------------
+-- Versioned build system  (Phase 12.3)
+-- Normalized model: Build (albion_builds, expanded) → BuildVersion → BuildSlotItem
+--
+-- albion_builds gains new nullable/default columns via ALTER TABLE migrations
+-- in database.py (_COLUMN_MIGRATIONS).  The flat legacy columns (weapon_name,
+-- offhand_name, …) are preserved for backward compatibility with compositions
+-- and operation_slots that depend on them via text snapshots.
+--
+-- Circular FK invariant: albion_builds.current_version_id → albion_build_versions.id
+-- and albion_build_versions.build_id → albion_builds.id.
+-- Resolved atomically:
+--   1. INSERT build with current_version_id = NULL
+--   2. INSERT version (references build — valid)
+--   3. UPDATE build SET current_version_id = new version id
+-- ---------------------------------------------------------------------------
+
+CREATE TABLE IF NOT EXISTS albion_build_versions (
+    id                  TEXT PRIMARY KEY,
+    build_id            TEXT NOT NULL REFERENCES albion_builds(id),
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    version_number      INTEGER NOT NULL,
+    change_summary      TEXT,
+    created_at          TEXT NOT NULL,
+    created_by          TEXT NOT NULL REFERENCES users(id),
+    -- version_number is unique per build — prevents concurrent duplicate numbering
+    UNIQUE (build_id, version_number)
+);
+
+CREATE INDEX IF NOT EXISTS idx_build_versions_build
+    ON albion_build_versions(build_id, guild_workspace_id, version_number);
+
+-- ---------------------------------------------------------------------------
+-- BuildSlotItem — one row per item per slot per version.
+-- Phase 12.3: one primary item per slot maximum.
+-- is_primary=1 marks the canonical item; additional alternatives can be added
+-- later without schema changes (is_primary=0).
+--
+-- Constraints enforced in SQL where SQLite allows:
+--   tier IN (7,8), enchantment 0–3, is_primary boolean,
+--   no duplicate item_id per slot+version.
+-- Partial unique index enforces at most one primary per slot per version.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS albion_build_slot_items (
+    id                    TEXT PRIMARY KEY,
+    build_version_id      TEXT NOT NULL REFERENCES albion_build_versions(id),
+    guild_workspace_id    TEXT NOT NULL REFERENCES guild_workspaces(id),
+    slot                  TEXT NOT NULL,
+    item_id               TEXT NOT NULL,
+    display_name_snapshot TEXT NOT NULL,
+    tier                  INTEGER NOT NULL CHECK (tier IN (7, 8)),
+    enchantment           INTEGER NOT NULL CHECK (enchantment BETWEEN 0 AND 3),
+    is_primary            INTEGER NOT NULL DEFAULT 1 CHECK (is_primary IN (0, 1)),
+    priority              INTEGER NOT NULL DEFAULT 0 CHECK (priority >= 0),
+    notes                 TEXT,
+    minimum_enchantment   INTEGER NOT NULL DEFAULT 0
+                          CHECK (minimum_enchantment BETWEEN 0 AND 3),
+    UNIQUE (build_version_id, slot, item_id)
+);
+
+-- At most one primary item per slot per version
+CREATE UNIQUE INDEX IF NOT EXISTS idx_build_slot_one_primary
+    ON albion_build_slot_items(build_version_id, slot)
+    WHERE is_primary = 1;
+
+CREATE INDEX IF NOT EXISTS idx_build_slot_items_version
+    ON albion_build_slot_items(build_version_id, guild_workspace_id, slot);
+
+-- ---------------------------------------------------------------------------
 -- Payout ledger entries  (regear/payout/adjustment tracking per operation)
 --
 -- Each entry is linked to a workspace + operation + participant.

@@ -731,5 +731,92 @@ function initEvents() {
 
 /* §14 — Bootstrap ───────────────────────────────────────── */
 
+/* §15 — Phase 12.3: Save form integration ───────────────── */
+
+/**
+ * Serialize filled slots to a JSON array for the hidden form field.
+ * Only the item_id and slot are sent; server re-derives all other fields
+ * from the catalog (display_name, tier, enchantment, is_two_handed).
+ */
+function serializeSlots() {
+  const items = [];
+  for (const def of SLOT_DEFS) {
+    const item = state.slots[def.key];
+    if (item) {
+      items.push({
+        slot:       def.key,
+        item_id:    item.item_id,
+        is_primary: true,
+      });
+    }
+  }
+  return JSON.stringify(items);
+}
+
+/**
+ * Load initial slot items into state and update all tiles.
+ * Called in edit mode from data embedded in a <script type="application/json">
+ * tag with id="vbe-initial-slots".
+ */
+function loadInitialSlots() {
+  const el = document.getElementById('vbe-initial-slots');
+  if (!el) return;
+
+  let items;
+  try {
+    items = JSON.parse(el.textContent);
+  } catch (e) {
+    console.error('[VBE] Failed to parse initial slots JSON:', e);
+    return;
+  }
+
+  if (!Array.isArray(items)) return;
+
+  for (const item of items) {
+    const def = SLOT_DEFS.find(s => s.key === item.slot);
+    if (!def) continue;
+    state.slots[item.slot] = item;
+  }
+
+  // Re-render all tiles with loaded data
+  for (const def of SLOT_DEFS) {
+    updateTile(def.key, state.slots[def.key]);
+  }
+
+  // Apply two-handed logic if a 2H main weapon is loaded
+  const mainItem = state.slots['main_hand'];
+  if (mainItem && mainItem.is_two_handed) {
+    state.offHandLocked = true;
+    updateTile('off_hand', null);  // disable
+    const tile = document.querySelector(`[data-slot="off_hand"]`);
+    if (tile) {
+      tile.classList.add('vbe-slot--disabled');
+      tile.setAttribute('disabled', '');
+      tile.setAttribute('aria-disabled', 'true');
+    }
+    if (elNotice) elNotice.removeAttribute('hidden');
+  }
+}
+
+/**
+ * Wire up the save form:
+ * - On submit, serialize current slot state into the hidden JSON field.
+ * - Prevent submission if the form is invalid per HTML5 constraints.
+ */
+function initSaveForm() {
+  const form = document.getElementById('vbe-save-form');
+  if (!form) return;
+
+  form.addEventListener('submit', e => {
+    const hiddenField = document.getElementById('vbe-slot-items-json');
+    if (hiddenField) {
+      hiddenField.value = serializeSlots();
+    }
+    // HTML5 validation handles required fields; no extra JS needed here.
+  });
+}
+
 initGrid();
 initEvents();
+loadInitialSlots();
+initSaveForm();

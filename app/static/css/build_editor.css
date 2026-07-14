@@ -698,3 +698,73 @@
     min-height: 104px;
   }
 }
+
+/* ── Phase 12.3: Save panel & metadata form ──────────────── */
+
+.vbe-meta-panel {
+  margin-top: var(--space-4);
+}
+
+.vbe-meta-row {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.vbe-meta-row .form-group {
+  flex: 1;
+  min-width: 140px;
+}
+
+.vbe-status-group {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+}
+
+.vbe-status-label {
+  font-weight: 600;
+  font-size: 0.9rem;
+  color: var(--text-2);
+  flex-shrink: 0;
+}
+
+.vbe-status-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  cursor: pointer;
+  font-size: 0.9rem;
+}
+
+.vbe-status-option input[type="radio"] {
+  cursor: pointer;
+}
+
+/* ── Build v2 detail — slot grid ─────────────────────────── */
+
+.bld-v2-slots {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: var(--space-2) var(--space-4);
+}
+
+.bld-v2-slot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bld-v2-slot__label {
+  font-size: 0.75rem;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.bld-v2-slot__item {
+  font-size: 0.9rem;
+  color: var(--text-1);
+  font-weight: 500;
+}

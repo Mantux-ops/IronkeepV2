@@ -1156,6 +1156,618 @@ def retire_albion_build(
         repositories.insert_operational_event(db, event)
 
 
+# ---------------------------------------------------------------------------
+# Phase 12.3 — Versioned build system
+# ---------------------------------------------------------------------------
+
+def _can_manage_builds(membership: dict) -> bool:
+    """Return True when the membership role may create/edit/archive builds."""
+    return membership["role"] in ("owner", "officer")
+
+
+def _parse_slot_items_json(raw: str) -> list[dict]:
+    """Parse the slot_items_json string from the editor form.
+
+    Returns a list of dicts with at minimum 'slot' and 'item_id' keys.
+    Raises ValidationError on malformed JSON.
+    """
+    import json
+    from app.errors import ValidationError as _VE
+    if not raw or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise _VE(f"slot_items_json is not valid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise _VE("slot_items_json must be a JSON array.")
+    return data
+
+
+def _validate_and_resolve_slots(
+    slot_items_raw: list[dict],
+    status: str,
+) -> list[dict]:
+    """Look up each slot item in the catalog, validate and return enriched dicts.
+
+    The catalog is the authoritative source for display_name, tier, enchantment,
+    is_two_handed, and slot classification.  Client-supplied values for these
+    fields are ignored.  Only item_id and slot are taken from the client.
+
+    Raises ValidationError for unknown item IDs, slot mismatches, or
+    failed invariants (duplicate primary, two-handed + off_hand, published
+    minimum slots).
+    """
+    from app.albion.item_catalog import get_catalog, VALID_SLOTS
+    from app.domain import build_version as bv_domain
+    from app.errors import ValidationError as _VE
+
+    catalog = get_catalog()
+    resolved: list[dict] = []
+
+    for raw in slot_items_raw:
+        slot = (raw.get("slot") or "").strip()
+        if not slot:
+            raise _VE("A slot item is missing the 'slot' field.")
+        if slot not in VALID_SLOTS:
+            raise _VE(f"Unknown slot '{slot}'.")
+
+        item_id = (raw.get("item_id") or "").strip().upper()
+        if not item_id:
+            raise _VE(f"Slot '{slot}' has an empty item_id.")
+
+        cat_item = catalog.get_item(item_id)
+        if cat_item is None:
+            raise _VE(
+                f"Item '{item_id}' is not in the T7/T8 catalog. "
+                "Save rejected — only catalog-validated items are allowed."
+            )
+
+        # Catalog-authoritative: slot classification check
+        if cat_item["slot"] != slot:
+            raise _VE(
+                f"Item '{item_id}' belongs to slot '{cat_item['slot']}', "
+                f"but was submitted for slot '{slot}'."
+            )
+
+        resolved.append({
+            "slot":         slot,
+            "item_id":      cat_item["item_id"],
+            "display_name": cat_item["display_name"],
+            "tier":         cat_item["tier"],
+            "enchantment":  cat_item["enchantment"],
+            "is_two_handed": cat_item["is_two_handed"],
+            "is_primary":   bool(raw.get("is_primary", True)),
+        })
+
+    bv_domain.validate_slot_items(resolved, status)
+    return resolved
+
+
+def create_build(
+    guild_workspace_id: str,
+    actor_user_id: str,
+    name: str,
+    description: str,
+    role: str,
+    event_type: str,
+    minimum_ip: int,
+    status: str,
+    slot_items_json: str,
+    change_summary: str = "",
+) -> dict:
+    """Create a new versioned build with version 1 atomically.
+
+    Steps performed in one transaction:
+    1. Validate metadata and slot items.
+    2. INSERT albion_builds with current_version_id = NULL.
+    3. INSERT albion_build_versions (version 1).
+    4. INSERT albion_build_slot_items.
+    5. UPDATE albion_builds SET current_version_id = version.id.
+    6. Emit build_created and version_created events.
+
+    Returns the new build dict.
+    """
+    from app.domain import build_version as bv_domain
+
+    meta = {
+        "name":           name,
+        "description":    description,
+        "role":           role,
+        "event_type":     event_type,
+        "minimum_ip":     minimum_ip,
+        "status":         status,
+        "change_summary": change_summary,
+    }
+    bv_domain.validate_build_meta(meta)
+
+    slot_items_raw = _parse_slot_items_json(slot_items_json)
+    resolved_slots = _validate_and_resolve_slots(slot_items_raw, status)
+
+    with database.transaction() as db:
+        member = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not member:
+            raise NotFoundError("Workspace not found.")
+        if not _can_manage_builds(member):
+            raise PermissionDenied("Only owners and officers can create builds.")
+
+        now = _now()
+        build_id   = str(uuid.uuid4())
+        version_id = str(uuid.uuid4())
+
+        build_row = {
+            "id":                 build_id,
+            "guild_workspace_id": guild_workspace_id,
+            "name":               name.strip(),
+            "description":        description.strip() if description else None,
+            "role":               role.strip(),
+            "event_type":         event_type.strip(),
+            "minimum_ip":         int(minimum_ip),
+            "status":             status,
+            "current_version_id": None,  # set after version insert
+            "notes":              None,
+            "doctrine_role":      None,
+            # Legacy flat equipment fields — empty string for v2 builds.
+            # weapon_name is NOT NULL in the legacy schema; v2 builds don't use it
+            # but must satisfy the constraint.
+            "weapon_name":        "",
+            "offhand_name":       None,
+            "head_name":          None,
+            "armor_name":         None,
+            "shoes_name":         None,
+            "cape_name":          None,
+            "food_name":          None,
+            "potion_name":        None,
+            "created_at":         now,
+            "updated_at":         now,
+            "created_by":         actor_user_id,
+            "updated_by":         actor_user_id,
+            "archived_at":        None,
+            "archived_by":        None,
+            "retired_at":         None,
+        }
+        repositories.insert_albion_build_v2(db, build_row)
+
+        version_row = {
+            "id":                 version_id,
+            "build_id":           build_id,
+            "guild_workspace_id": guild_workspace_id,
+            "version_number":     1,
+            "change_summary":     change_summary.strip() if change_summary else None,
+            "created_at":         now,
+            "created_by":         actor_user_id,
+        }
+        repositories.insert_build_version(db, version_row)
+
+        slot_rows = [
+            {
+                "id":                    str(uuid.uuid4()),
+                "build_version_id":      version_id,
+                "guild_workspace_id":    guild_workspace_id,
+                "slot":                  item["slot"],
+                "item_id":               item["item_id"],
+                "display_name_snapshot": item["display_name"],
+                "tier":                  item["tier"],
+                "enchantment":           item["enchantment"],
+                "is_primary":            1 if item["is_primary"] else 0,
+                "priority":              0,
+                "notes":                 None,
+                "minimum_enchantment":   0,
+            }
+            for item in resolved_slots
+        ]
+        if slot_rows:
+            repositories.insert_build_slot_items(db, slot_rows)
+
+        repositories.set_build_current_version(
+            db, build_id, guild_workspace_id, version_id, now, actor_user_id
+        )
+
+        _emit(db, guild_workspace_id, None, "build_created", "albion_build",
+              build_id, actor_user_id, {"name": name, "version": 1})
+        _emit(db, guild_workspace_id, None, "build_version_created",
+              "albion_build_version", version_id, actor_user_id,
+              {"build_id": build_id, "version_number": 1})
+
+    return repositories.get_albion_build(
+        _get_db_direct(), build_id, guild_workspace_id
+    ) or {"id": build_id}
+
+
+def _get_db_direct():
+    """Open a read-only connection for post-commit reads."""
+    return database.get_connection()
+
+
+def _emit(
+    db,
+    guild_workspace_id: str,
+    guild_operation_id,
+    event_type: str,
+    entity_type: str,
+    entity_id: str,
+    actor_user_id: str,
+    payload: dict,
+) -> None:
+    """Helper to emit an operational event within an open transaction."""
+    event = operational_events.make_event(
+        guild_workspace_id=guild_workspace_id,
+        guild_operation_id=guild_operation_id,
+        event_type=event_type,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        actor_type="user",
+        actor_id=actor_user_id,
+        payload=payload,
+    )
+    repositories.insert_operational_event(db, event)
+
+
+def create_build_version(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+    slot_items_json: str,
+    change_summary: str = "",
+    intended_status: str = "draft",
+    expected_current_version_id: str | None = None,
+    name: str | None = None,
+    description: str | None = None,
+    role: str | None = None,
+    event_type: str | None = None,
+    minimum_ip: int | None = None,
+) -> dict:
+    """Save changes to an existing build as a new immutable version.
+
+    Concurrency protection: if expected_current_version_id is provided and
+    does not match build.current_version_id, raises ConflictError (409).
+
+    No-change detection: if the metadata and slot state are identical to the
+    current version, returns the existing version without creating a new one.
+
+    Returns a dict with keys:
+        build:    updated build row
+        version:  the new (or unchanged) version row
+        created:  True if a new version was created, False if unchanged
+    """
+    from app.domain import build_version as bv_domain
+
+    slot_items_raw = _parse_slot_items_json(slot_items_json)
+
+    with database.transaction() as db:
+        member = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not member:
+            raise NotFoundError("Workspace not found.")
+        if not _can_manage_builds(member):
+            raise PermissionDenied("Only owners and officers can save build versions.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("retired_at"):
+            raise ConflictError("Legacy retired builds cannot receive new versions.")
+        if build.get("status") == "archived":
+            raise ConflictError(
+                "Archived builds cannot be edited. Restore the build first."
+            )
+
+        # Optimistic concurrency check
+        if (
+            expected_current_version_id is not None
+            and expected_current_version_id != ""
+            and build.get("current_version_id") != expected_current_version_id
+        ):
+            raise ConflictError(
+                "The build was modified by another save since you opened it. "
+                "Please reload and reapply your changes."
+            )
+
+        # Resolve metadata (fall back to existing build values)
+        new_name        = (name        or build["name"]).strip()
+        new_description = (description or build.get("description") or "").strip()
+        new_role        = (role        or build["role"]).strip()
+        new_event_type  = (event_type  or build.get("event_type", "other")).strip()
+        new_minimum_ip  = int(minimum_ip) if minimum_ip is not None else int(build.get("minimum_ip") or 0)
+        new_status      = intended_status or build.get("status", "draft")
+
+        meta = {
+            "name":           new_name,
+            "description":    new_description,
+            "role":           new_role,
+            "event_type":     new_event_type,
+            "minimum_ip":     new_minimum_ip,
+            "status":         new_status,
+            "change_summary": change_summary,
+        }
+        bv_domain.validate_build_meta(meta)
+
+        resolved_slots = _validate_and_resolve_slots(slot_items_raw, new_status)
+
+        # No-change detection against current version
+        current_version = repositories.get_current_build_version(
+            db, build_id, guild_workspace_id
+        )
+        if current_version:
+            current_items = repositories.get_build_slot_items(
+                db, current_version["id"], guild_workspace_id
+            )
+            if _is_identical(build, current_items, meta, resolved_slots):
+                return {
+                    "build":   dict(build),
+                    "version": dict(current_version),
+                    "created": False,
+                }
+
+        now        = _now()
+        version_id = str(uuid.uuid4())
+        next_num   = repositories.get_next_version_number(
+            db, build_id, guild_workspace_id
+        )
+
+        version_row = {
+            "id":                 version_id,
+            "build_id":           build_id,
+            "guild_workspace_id": guild_workspace_id,
+            "version_number":     next_num,
+            "change_summary":     change_summary.strip() if change_summary else None,
+            "created_at":         now,
+            "created_by":         actor_user_id,
+        }
+        repositories.insert_build_version(db, version_row)
+
+        slot_rows = [
+            {
+                "id":                    str(uuid.uuid4()),
+                "build_version_id":      version_id,
+                "guild_workspace_id":    guild_workspace_id,
+                "slot":                  item["slot"],
+                "item_id":               item["item_id"],
+                "display_name_snapshot": item["display_name"],
+                "tier":                  item["tier"],
+                "enchantment":           item["enchantment"],
+                "is_primary":            1 if item["is_primary"] else 0,
+                "priority":              0,
+                "notes":                 None,
+                "minimum_enchantment":   0,
+            }
+            for item in resolved_slots
+        ]
+        if slot_rows:
+            repositories.insert_build_slot_items(db, slot_rows)
+
+        meta_fields = {
+            "name":               new_name,
+            "description":        new_description or None,
+            "role":               new_role,
+            "event_type":         new_event_type,
+            "minimum_ip":         new_minimum_ip,
+            "status":             new_status,
+            "current_version_id": version_id,
+            "updated_by":         actor_user_id,
+        }
+        repositories.update_albion_build_meta_v2(
+            db, build_id, guild_workspace_id, meta_fields, now
+        )
+
+        _emit(db, guild_workspace_id, None, "build_version_created",
+              "albion_build_version", version_id, actor_user_id,
+              {"build_id": build_id, "version_number": next_num})
+
+        updated_build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        return {
+            "build":   dict(updated_build),
+            "version": version_row,
+            "created": True,
+        }
+
+
+def _is_identical(
+    build: dict,
+    current_items: list[dict],
+    new_meta: dict,
+    new_slots: list[dict],
+) -> bool:
+    """Return True when metadata and slot state are identical to the current version."""
+    # Compare metadata
+    if build.get("name") != new_meta["name"]:
+        return False
+    if (build.get("description") or "") != new_meta["description"]:
+        return False
+    if build.get("role") != new_meta["role"]:
+        return False
+    if build.get("event_type", "other") != new_meta["event_type"]:
+        return False
+    if int(build.get("minimum_ip") or 0) != int(new_meta["minimum_ip"]):
+        return False
+    if build.get("status") != new_meta["status"]:
+        return False
+
+    # Compare slot items (order-independent, primary only)
+    current_set = frozenset(
+        (i["slot"], i["item_id"])
+        for i in current_items
+        if i.get("is_primary")
+    )
+    new_set = frozenset(
+        (i["slot"], i["item_id"])
+        for i in new_slots
+        if i.get("is_primary")
+    )
+    return current_set == new_set
+
+
+def get_build(
+    guild_workspace_id: str,
+    build_id: str,
+) -> dict:
+    """Return a versioned build or raise NotFoundError."""
+    with database.transaction() as db:
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+    if not build or build.get("retired_at"):
+        raise NotFoundError(f"Build '{build_id}' not found.")
+    return build
+
+
+def get_current_build_version(
+    guild_workspace_id: str,
+    build_id: str,
+) -> dict | None:
+    with database.transaction() as db:
+        return repositories.get_current_build_version(db, build_id, guild_workspace_id)
+
+
+def list_build_versions(
+    guild_workspace_id: str,
+    build_id: str,
+) -> list[dict]:
+    with database.transaction() as db:
+        return repositories.list_build_versions(db, build_id, guild_workspace_id)
+
+
+def get_build_version(
+    guild_workspace_id: str,
+    build_id: str,
+    version_id: str,
+) -> dict:
+    with database.transaction() as db:
+        v = repositories.get_build_version(db, version_id, build_id, guild_workspace_id)
+    if not v:
+        raise NotFoundError(f"Version '{version_id}' not found.")
+    return v
+
+
+def list_builds_v2(
+    guild_workspace_id: str,
+    include_archived: bool = False,
+) -> list[dict]:
+    with database.transaction() as db:
+        return repositories.get_v2_builds(db, guild_workspace_id, include_archived)
+
+
+def archive_build(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+) -> None:
+    with database.transaction() as db:
+        member = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not member:
+            raise NotFoundError("Workspace not found.")
+        if not _can_manage_builds(member):
+            raise PermissionDenied("Only owners and officers can archive builds.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("status") == "archived":
+            raise ConflictError("Build is already archived.")
+        if not build.get("current_version_id"):
+            raise ConflictError(
+                "Only versioned builds (created via the visual editor) can be archived. "
+                "Legacy builds use the 'retire' action."
+            )
+
+        now = _now()
+        repositories.archive_albion_build_v2(
+            db, build_id, guild_workspace_id, actor_user_id, now
+        )
+        _emit(db, guild_workspace_id, None, "build_archived", "albion_build",
+              build_id, actor_user_id, {"name": build["name"]})
+
+
+def restore_build(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+) -> None:
+    with database.transaction() as db:
+        member = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not member:
+            raise NotFoundError("Workspace not found.")
+        if not _can_manage_builds(member):
+            raise PermissionDenied("Only owners and officers can restore builds.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("status") != "archived":
+            raise ConflictError("Build is not archived.")
+
+        now = _now()
+        repositories.restore_albion_build_v2(
+            db, build_id, guild_workspace_id, actor_user_id, now
+        )
+        _emit(db, guild_workspace_id, None, "build_restored", "albion_build",
+              build_id, actor_user_id, {"name": build["name"]})
+
+
+def publish_build(
+    guild_workspace_id: str,
+    build_id: str,
+    actor_user_id: str,
+) -> None:
+    """Transition a draft build to published status.
+
+    Validates that published minimum slots are filled in the current version.
+    """
+    from app.domain import build_version as bv_domain
+
+    with database.transaction() as db:
+        member = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        if not member:
+            raise NotFoundError("Workspace not found.")
+        if not _can_manage_builds(member):
+            raise PermissionDenied("Only owners and officers can publish builds.")
+
+        build = repositories.get_albion_build(db, build_id, guild_workspace_id)
+        if not build:
+            raise NotFoundError(f"Build '{build_id}' not found.")
+        if build.get("status") == "published":
+            raise ConflictError("Build is already published.")
+        if build.get("status") == "archived":
+            raise ConflictError("Archived builds cannot be published. Restore first.")
+        if not build.get("current_version_id"):
+            raise ConflictError("Only versioned builds can be published.")
+
+        # Validate published slot requirements against current version
+        current_version = repositories.get_current_build_version(
+            db, build_id, guild_workspace_id
+        )
+        if current_version:
+            items = repositories.get_build_slot_items(
+                db, current_version["id"], guild_workspace_id
+            )
+            slot_items_for_validation = [
+                {
+                    "slot":         i["slot"],
+                    "item_id":      i["item_id"],
+                    "tier":         i["tier"],
+                    "enchantment":  i["enchantment"],
+                    "is_primary":   bool(i.get("is_primary")),
+                    "is_two_handed": False,
+                }
+                for i in items
+            ]
+            bv_domain.validate_slot_items(slot_items_for_validation, "published")
+
+        now = _now()
+        repositories.publish_albion_build_v2(
+            db, build_id, guild_workspace_id, actor_user_id, now
+        )
+        _emit(db, guild_workspace_id, None, "build_published", "albion_build",
+              build_id, actor_user_id, {"name": build["name"]})
+
+
 def promote_composition_slot_to_build(
     guild_workspace_id: str,
     composition_id: str,

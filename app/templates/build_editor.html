@@ -1,5 +1,7 @@
 {% extends "base.html" %}
-{% block title %}Build Editor — {{ workspace.name }}{% endblock %}
+{% block title %}
+  {% if edit_build %}Edit — {{ edit_build.name }}{% else %}Build Editor{% endif %} — {{ workspace.name }}
+{% endblock %}
 
 {% block head_extra %}
 <link rel="stylesheet" href="/static/css/build_editor.css">
@@ -14,44 +16,157 @@
 {% block nav_extra %}
   <span class="sep">›</span>
   <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  {% if edit_build %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ edit_build.id }}">{{ edit_build.name }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Edit</span>
+  {% else %}
   <span class="sep">›</span>
   <span class="crumb-current">Visual Editor</span>
+  {% endif %}
 {% endblock %}
 
 {% block content %}
-{% set title = 'Build Editor' %}
-{% set meta = 'Click any slot to select an item — state is temporary and not saved' %}
+{% set title = 'Edit Build — ' ~ edit_build.name if edit_build else 'New Build — Visual Editor' %}
+{% set meta = 'Click any slot to select an item. Fill in the details below and save.' %}
 {% include "page_header.html" %}
 
-<div class="vbe-page">
+{% if error %}
+<div class="alert alert-error" style="margin-bottom:var(--space-4)">{{ error }}</div>
+{% endif %}
 
-  <!-- ── Equipment grid panel ───────────────────────────── -->
-  <div class="vbe-equip-panel card">
-    <div class="card-header">
-      <h2 class="card-header__title">Equipment</h2>
-      <span class="text-muted" style="font-size:var(--text-xs)">Click a slot to pick an item</span>
-    </div>
-    <div class="card-body">
-      <div class="vbe-equip-grid" id="vbe-equip-grid">
-        {# Slot tiles are injected by build_editor.js — JavaScript required #}
+{# ── Initial slot data for edit mode (consumed by JS) ─────────────────────── #}
+{% if initial_slots_json %}
+<script id="vbe-initial-slots" type="application/json">{{ initial_slots_json | safe }}</script>
+{% endif %}
+
+<form id="vbe-save-form"
+      method="post"
+      action="{{ form_action or '/workspaces/' ~ workspace.slug ~ '/builds' }}">
+
+  <input type="hidden" name="editor_type" value="visual">
+  <input type="hidden" name="slot_items_json" id="vbe-slot-items-json" value="">
+  {% if edit_build and current_version %}
+  <input type="hidden" name="expected_current_version_id" value="{{ current_version.id }}">
+  {% endif %}
+
+  <div class="vbe-page">
+
+    <!-- ── Equipment grid panel ───────────────────────────── -->
+    <div class="vbe-equip-panel card">
+      <div class="card-header">
+        <h2 class="card-header__title">Equipment</h2>
+        <span class="text-muted" style="font-size:var(--text-xs)">Click a slot to pick an item</span>
       </div>
-      <div class="vbe-equip-hint" id="vbe-two-handed-notice" hidden>
-        <span class="vbe-notice-icon" aria-hidden="true">⚔</span>
-        Two-handed weapon — Off Hand slot is disabled.
+      <div class="card-body">
+        <div class="vbe-equip-grid" id="vbe-equip-grid">
+          {# Slot tiles are injected by build_editor.js — JavaScript required #}
+        </div>
+        <div class="vbe-equip-hint" id="vbe-two-handed-notice" hidden>
+          <span class="vbe-notice-icon" aria-hidden="true">⚔</span>
+          Two-handed weapon — Off Hand slot is disabled.
+        </div>
       </div>
     </div>
-  </div>
 
-  <div class="action-bar">
-    <a href="/workspaces/{{ workspace.slug }}/builds" class="btn btn-sm">
-      ← Back to builds
-    </a>
-    <button type="button" class="btn btn-sm btn-ghost" id="vbe-reset-btn">
-      Reset all slots
-    </button>
-  </div>
+    <!-- ── Build metadata panel ───────────────────────────── -->
+    <div class="vbe-meta-panel card">
+      <div class="card-header">
+        <h2 class="card-header__title">Build Details</h2>
+      </div>
+      <div class="card-body">
 
-</div>
+        <div class="form-group">
+          <label for="vbe-name">Build name <span class="form-required">*</span></label>
+          <input type="text" id="vbe-name" name="name" required
+                 value="{{ initial_name or '' }}"
+                 placeholder="e.g. Hallowfall Healer"
+                 autocomplete="off" maxlength="100">
+        </div>
+
+        <div class="form-group">
+          <label for="vbe-description">Description <em>(optional)</em></label>
+          <textarea id="vbe-description" name="description" rows="2"
+                    maxlength="1000"
+                    placeholder="Build purpose, tactics, notes…">{{ initial_description or '' }}</textarea>
+        </div>
+
+        <div class="vbe-meta-row">
+          <div class="form-group">
+            <label for="vbe-role">Role <span class="form-required">*</span></label>
+            <select id="vbe-role" name="role" required>
+              <option value="">— select —</option>
+              {% for r in [('tank','Tank'),('healer','Healer'),('support','Support'),
+                           ('melee_dps','Melee DPS'),('ranged_dps','Ranged DPS'),
+                           ('battlemount','Battlemount'),('utility','Utility')] %}
+              <option value="{{ r[0] }}"{% if initial_role == r[0] %} selected{% endif %}>{{ r[1] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="vbe-event-type">Event type <span class="form-required">*</span></label>
+            <select id="vbe-event-type" name="event_type" required>
+              <option value="">— select —</option>
+              {% for e in [('cta','CTA'),('zvz','ZvZ'),('gank','Gank'),
+                           ('roam','Roam'),('ava','AvA'),('bomb_squad','Bomb Squad'),('other','Other')] %}
+              <option value="{{ e[0] }}"{% if initial_event_type == e[0] %} selected{% endif %}>{{ e[1] }}</option>
+              {% endfor %}
+            </select>
+          </div>
+
+          <div class="form-group">
+            <label for="vbe-min-ip">Minimum IP</label>
+            <input type="number" id="vbe-min-ip" name="minimum_ip"
+                   value="{{ initial_minimum_ip or '0' }}"
+                   min="0" max="99999" step="1">
+          </div>
+        </div>
+
+        {% if edit_build %}
+        <div class="form-group">
+          <label for="vbe-change-summary">Change summary <em>(optional)</em></label>
+          <input type="text" id="vbe-change-summary" name="change_summary"
+                 value="" maxlength="300"
+                 placeholder="What changed in this version?">
+        </div>
+        {% endif %}
+
+        <!-- Status choice -->
+        <div class="form-group vbe-status-group">
+          <span class="vbe-status-label">Save as</span>
+          <label class="vbe-status-option">
+            <input type="radio" name="intended_status" value="draft"
+                   {% if (initial_status or 'draft') == 'draft' %}checked{% endif %}>
+            <span>Draft</span>
+          </label>
+          <label class="vbe-status-option">
+            <input type="radio" name="intended_status" value="published"
+                   {% if initial_status == 'published' %}checked{% endif %}>
+            <span>Published</span>
+            <em class="text-muted" style="font-size:0.8rem">requires main weapon, head, chest, shoes, food, potion</em>
+          </label>
+        </div>
+
+        <!-- Save actions -->
+        <div class="action-bar" style="margin-top:var(--space-4)">
+          <button type="submit" class="btn btn-primary" id="vbe-save-btn">
+            {% if edit_build %}Save as new version{% else %}Save build{% endif %}
+          </button>
+          <button type="button" class="btn btn-sm btn-ghost" id="vbe-reset-btn">
+            Reset all slots
+          </button>
+          <a href="/workspaces/{{ workspace.slug }}/builds{% if edit_build %}/{{ edit_build.id }}{% endif %}"
+             class="btn">Cancel</a>
+        </div>
+
+      </div>
+    </div>
+
+  </div>{# end .vbe-page #}
+
+</form>
 
 <!-- ── Item picker modal ─────────────────────────────────── -->
 <div class="vbe-modal-backdrop" id="vbe-backdrop" hidden aria-hidden="true">

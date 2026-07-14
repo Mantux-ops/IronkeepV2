@@ -202,6 +202,21 @@ _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE workspace_albion_guilds ADD COLUMN verified_at TEXT NULL",
     "ALTER TABLE workspace_albion_guilds ADD COLUMN verified_by_user_id TEXT NULL REFERENCES users(id)",
     "ALTER TABLE workspace_albion_guilds ADD COLUMN verification_method TEXT NULL",
+    # Phase 12.3: Versioned build system — new columns on albion_builds.
+    # Legacy builds (created before Phase 12.3) get safe defaults; their flat
+    # equipment fields (weapon_name, offhand_name, …) are preserved unchanged.
+    # current_version_id is a logical FK to albion_build_versions.id; not
+    # declared as a DB-level FK here to avoid migration ordering issues with
+    # the circular reference — enforced at the application layer instead.
+    "ALTER TABLE albion_builds ADD COLUMN description TEXT NULL",
+    "ALTER TABLE albion_builds ADD COLUMN event_type TEXT NOT NULL DEFAULT 'other'",
+    "ALTER TABLE albion_builds ADD COLUMN minimum_ip INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE albion_builds ADD COLUMN status TEXT NOT NULL DEFAULT 'draft'",
+    "ALTER TABLE albion_builds ADD COLUMN current_version_id TEXT NULL",
+    "ALTER TABLE albion_builds ADD COLUMN created_by TEXT NULL",
+    "ALTER TABLE albion_builds ADD COLUMN updated_by TEXT NULL",
+    "ALTER TABLE albion_builds ADD COLUMN archived_at TEXT NULL",
+    "ALTER TABLE albion_builds ADD COLUMN archived_by TEXT NULL",
 ]
 
 

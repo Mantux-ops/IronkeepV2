@@ -668,6 +668,313 @@ def retire_albion_build(
     )
 
 
+# ---------------------------------------------------------------------------
+# Versioned build system  (Phase 12.3)
+# ---------------------------------------------------------------------------
+
+def insert_albion_build_v2(db: sqlite3.Connection, build: dict) -> None:
+    """Insert a new versioned build row into albion_builds.
+
+    Caller is responsible for setting current_version_id to None initially,
+    then updating it after the first version is created (circular FK strategy).
+    """
+    db.execute(
+        """
+        INSERT INTO albion_builds
+            (id, guild_workspace_id, name, description, role, event_type,
+             minimum_ip, status, current_version_id,
+             notes, doctrine_role,
+             weapon_name, offhand_name, head_name, armor_name, shoes_name,
+             cape_name, food_name, potion_name,
+             created_at, updated_at, created_by, updated_by,
+             archived_at, archived_by, retired_at)
+        VALUES
+            (:id, :guild_workspace_id, :name, :description, :role, :event_type,
+             :minimum_ip, :status, :current_version_id,
+             :notes, :doctrine_role,
+             :weapon_name, :offhand_name, :head_name, :armor_name, :shoes_name,
+             :cape_name, :food_name, :potion_name,
+             :created_at, :updated_at, :created_by, :updated_by,
+             :archived_at, :archived_by, :retired_at)
+        """,
+        build,
+    )
+
+
+def update_albion_build_meta_v2(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    fields: dict,
+    updated_at: str,
+) -> None:
+    """Update versioned build metadata (name, description, role, etc.)."""
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET name               = :name,
+            description        = :description,
+            role               = :role,
+            event_type         = :event_type,
+            minimum_ip         = :minimum_ip,
+            status             = :status,
+            current_version_id = :current_version_id,
+            updated_at         = :updated_at,
+            updated_by         = :updated_by
+        WHERE id = :id AND guild_workspace_id = :guild_workspace_id
+        """,
+        {
+            **fields,
+            "id": build_id,
+            "guild_workspace_id": guild_workspace_id,
+            "updated_at": updated_at,
+        },
+    )
+
+
+def set_build_current_version(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    version_id: str,
+    updated_at: str,
+    updated_by: str,
+) -> None:
+    """Update current_version_id on a build after a new version is created."""
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET current_version_id = ?, updated_at = ?, updated_by = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (version_id, updated_at, updated_by, build_id, guild_workspace_id),
+    )
+
+
+def archive_albion_build_v2(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    actor_id: str,
+    archived_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET status      = 'archived',
+            archived_at = ?,
+            archived_by = ?,
+            updated_at  = ?,
+            updated_by  = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (archived_at, actor_id, archived_at, actor_id, build_id, guild_workspace_id),
+    )
+
+
+def restore_albion_build_v2(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    actor_id: str,
+    updated_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET status      = 'draft',
+            archived_at = NULL,
+            archived_by = NULL,
+            updated_at  = ?,
+            updated_by  = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (updated_at, actor_id, build_id, guild_workspace_id),
+    )
+
+
+def publish_albion_build_v2(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+    actor_id: str,
+    updated_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE albion_builds
+        SET status     = 'published',
+            updated_at = ?,
+            updated_by = ?
+        WHERE id = ? AND guild_workspace_id = ?
+        """,
+        (updated_at, actor_id, build_id, guild_workspace_id),
+    )
+
+
+def get_v2_builds(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    include_archived: bool = False,
+) -> list[dict]:
+    """Return all versioned builds (current_version_id IS NOT NULL).
+
+    Ordered by name.  Archived builds excluded by default.
+    """
+    if include_archived:
+        sql = """
+            SELECT * FROM albion_builds
+            WHERE guild_workspace_id = ? AND current_version_id IS NOT NULL
+                AND retired_at IS NULL
+            ORDER BY name
+        """
+    else:
+        sql = """
+            SELECT * FROM albion_builds
+            WHERE guild_workspace_id = ? AND current_version_id IS NOT NULL
+                AND status != 'archived' AND retired_at IS NULL
+            ORDER BY name
+        """
+    return _rows(db.execute(sql, (guild_workspace_id,)).fetchall())
+
+
+# ---------------------------------------------------------------------------
+# BuildVersion repository
+# ---------------------------------------------------------------------------
+
+def insert_build_version(db: sqlite3.Connection, version: dict) -> None:
+    db.execute(
+        """
+        INSERT INTO albion_build_versions
+            (id, build_id, guild_workspace_id, version_number,
+             change_summary, created_at, created_by)
+        VALUES
+            (:id, :build_id, :guild_workspace_id, :version_number,
+             :change_summary, :created_at, :created_by)
+        """,
+        version,
+    )
+
+
+def get_build_version(
+    db: sqlite3.Connection,
+    version_id: str,
+    build_id: str,
+    guild_workspace_id: str,
+) -> dict | None:
+    return _row(
+        db.execute(
+            """
+            SELECT v.*, u.display_name AS created_by_name
+            FROM albion_build_versions v
+            LEFT JOIN users u ON u.id = v.created_by
+            WHERE v.id = ? AND v.build_id = ? AND v.guild_workspace_id = ?
+            """,
+            (version_id, build_id, guild_workspace_id),
+        ).fetchone()
+    )
+
+
+def get_current_build_version(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+) -> dict | None:
+    """Return the current version of a build via the build's current_version_id."""
+    return _row(
+        db.execute(
+            """
+            SELECT v.*, u.display_name AS created_by_name
+            FROM albion_builds b
+            JOIN albion_build_versions v
+                ON v.id = b.current_version_id
+            LEFT JOIN users u ON u.id = v.created_by
+            WHERE b.id = ? AND b.guild_workspace_id = ?
+            """,
+            (build_id, guild_workspace_id),
+        ).fetchone()
+    )
+
+
+def list_build_versions(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return all versions of a build, newest first."""
+    return _rows(
+        db.execute(
+            """
+            SELECT v.*, u.display_name AS created_by_name
+            FROM albion_build_versions v
+            LEFT JOIN users u ON u.id = v.created_by
+            WHERE v.build_id = ? AND v.guild_workspace_id = ?
+            ORDER BY v.version_number DESC
+            """,
+            (build_id, guild_workspace_id),
+        ).fetchall()
+    )
+
+
+def get_next_version_number(
+    db: sqlite3.Connection,
+    build_id: str,
+    guild_workspace_id: str,
+) -> int:
+    """Return the next version number for a build (MAX + 1, or 1 if none exist)."""
+    row = db.execute(
+        """
+        SELECT COALESCE(MAX(version_number), 0) + 1 AS next_num
+        FROM albion_build_versions
+        WHERE build_id = ? AND guild_workspace_id = ?
+        """,
+        (build_id, guild_workspace_id),
+    ).fetchone()
+    return row["next_num"] if row else 1
+
+
+# ---------------------------------------------------------------------------
+# BuildSlotItem repository
+# ---------------------------------------------------------------------------
+
+def insert_build_slot_items(
+    db: sqlite3.Connection,
+    items: list[dict],
+) -> None:
+    """Bulk-insert slot items for a build version."""
+    db.executemany(
+        """
+        INSERT INTO albion_build_slot_items
+            (id, build_version_id, guild_workspace_id, slot, item_id,
+             display_name_snapshot, tier, enchantment, is_primary, priority,
+             notes, minimum_enchantment)
+        VALUES
+            (:id, :build_version_id, :guild_workspace_id, :slot, :item_id,
+             :display_name_snapshot, :tier, :enchantment, :is_primary, :priority,
+             :notes, :minimum_enchantment)
+        """,
+        items,
+    )
+
+
+def get_build_slot_items(
+    db: sqlite3.Connection,
+    version_id: str,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return all slot items for a version, ordered by slot then priority."""
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM albion_build_slot_items
+            WHERE build_version_id = ? AND guild_workspace_id = ?
+            ORDER BY slot, is_primary DESC, priority
+            """,
+            (version_id, guild_workspace_id),
+        ).fetchall()
+    )
+
+
 def get_build_usage_compositions(
     db: sqlite3.Connection,
     build_id: str,

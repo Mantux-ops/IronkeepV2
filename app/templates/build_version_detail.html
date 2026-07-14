@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}v{{ version.version_number }} — {{ build.name }} — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}">{{ build.name }}</a>
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/versions">Versions</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">v{{ version.version_number }}</span>
+{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div class="page-header__main">
+    <h1>{{ build.name }} — version {{ version.version_number }}</h1>
+    <p class="page-meta">
+      {% if is_current %}
+      <span class="badge badge-success">current version</span>
+      {% else %}
+      <span class="badge badge-muted">historical — read-only</span>
+      {% endif %}
+      &nbsp;·&nbsp;
+      <span class="text-muted">Saved {{ version.created_at[:10] }}</span>
+      {% if version.created_by_name %}
+      &nbsp;·&nbsp;
+      <span class="text-muted">by {{ version.created_by_name }}</span>
+      {% endif %}
+      {% if version.change_summary %}
+      &nbsp;·&nbsp;
+      <span class="text-muted">{{ version.change_summary }}</span>
+      {% endif %}
+    </p>
+  </div>
+</header>
+
+{% if not is_current %}
+<div class="alert alert-info" style="margin-bottom:var(--space-4)">
+  This is an older version. It cannot be edited — create a new version from the
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}">current build</a>.
+</div>
+{% endif %}
+
+{# ── Equipment snapshot ────────────────────────────────────────────────────── #}
+<div class="card bld-detail-card" style="margin-bottom:var(--space-4)">
+  <div class="card-header">
+    <h3 class="card-header__title">Equipment at version {{ version.version_number }}</h3>
+  </div>
+  <div class="card-body">
+    {% if slot_items %}
+    <div class="bld-v2-slots">
+      {% set SLOT_LABELS = {
+        'main_hand': 'Main Hand',
+        'off_hand':  'Off Hand',
+        'head':      'Head',
+        'chest':     'Chest',
+        'shoes':     'Shoes',
+        'cape':      'Cape',
+        'bag':       'Bag',
+        'mount':     'Mount',
+        'food':      'Food',
+        'potion':    'Potion',
+      } %}
+      {% for slot_key in ['main_hand','off_hand','head','chest','shoes','cape','bag','mount','food','potion'] %}
+      {% set items_for_slot = slot_items | selectattr('slot', 'equalto', slot_key) | list %}
+      {% if items_for_slot %}
+      {% set primary = items_for_slot | selectattr('is_primary') | first %}
+      {% if primary %}
+      <div class="bld-v2-slot">
+        <span class="bld-v2-slot__label">{{ SLOT_LABELS[slot_key] }}</span>
+        <span class="bld-v2-slot__item">
+          T{{ primary.tier }}.{{ primary.enchantment }} {{ primary.display_name_snapshot }}
+        </span>
+      </div>
+      {% endif %}
+      {% endif %}
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-muted">No items in this version.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="action-bar">
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/versions" class="btn">← Version history</a>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}" class="btn btn-sm">Current build →</a>
+</div>
+{% endblock %}

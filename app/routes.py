@@ -42,6 +42,7 @@ from app.domain import scout_attendance as scout_attendance_domain
 from app.domain.mass_planner import sort_participants_for_slot
 from app.errors import (
     AuthenticationRequired,
+    ConflictError,
     IronkeepError,
     NotFoundError,
     PermissionDenied,
@@ -2140,9 +2141,72 @@ def get_fork_build(request: Request, slug: str, build_id: str):
 
 @router.post("/workspaces/{slug}/builds")
 async def post_create_build(request: Request, slug: str):
-    """Create a new reusable build entity."""
-    form = await request.form()
-    fields = _build_fields_from_form(form)
+    """Create a new build entity.
+
+    Handles two form variants:
+    * editor_type=visual  → versioned build from the visual editor (Phase 12.3)
+    * (default)           → legacy flat build from builds_new.html
+    """
+    form    = await request.form()
+    user    = None
+
+    if form.get("editor_type") == "visual":
+        # ── Versioned build via visual editor ───────────────────────────────
+        try:
+            with database.transaction() as db:
+                user, ws, access = authz.authorize_workspace_action(
+                    db, request, slug, require_mutator=True
+                )
+            build = use_cases.create_build(
+                guild_workspace_id=ws["id"],
+                actor_user_id=user["id"],
+                name=         form.get("name", "").strip(),
+                description=  form.get("description", "").strip(),
+                role=         form.get("role", "").strip(),
+                event_type=   form.get("event_type", "other").strip(),
+                minimum_ip=   int(form.get("minimum_ip") or 0),
+                status=       form.get("intended_status", "draft").strip(),
+                slot_items_json=form.get("slot_items_json", "[]"),
+                change_summary= form.get("change_summary", "").strip(),
+            )
+        except AuthenticationRequired:
+            return _redirect(authz.login_url(request))
+        except NotFoundError:
+            raise HTTPException(status_code=404, detail="Workspace not found.")
+        except PermissionDenied as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=422, detail="Invalid minimum_ip value.")
+        except IronkeepError as exc:
+            try:
+                with database.transaction() as db:
+                    _, ws2, access2 = authz.resolve_workspace_view(db, request, slug)
+                    initial_slots_json = form.get("slot_items_json", "[]")
+            except Exception:
+                raise HTTPException(status_code=500)
+            return templates.TemplateResponse(
+                request,
+                "build_editor.html",
+                {
+                    "workspace":           ws2,
+                    "current_user":        user,
+                    "edit_build":          None,
+                    "initial_slots_json":  initial_slots_json,
+                    "initial_name":        form.get("name", ""),
+                    "initial_description": form.get("description", ""),
+                    "initial_role":        form.get("role", ""),
+                    "initial_event_type":  form.get("event_type", "other"),
+                    "initial_minimum_ip":  form.get("minimum_ip", "0"),
+                    "initial_status":      form.get("intended_status", "draft"),
+                    "form_action":         f"/workspaces/{slug}/builds",
+                    "error":               str(exc),
+                    **access2,
+                },
+            )
+        return _redirect(f"/workspaces/{slug}/builds/{build['id']}?success=created")
+
+    # ── Legacy flat build from builds_new.html ───────────────────────────────
+    fields   = _build_fields_from_form(form)
     next_url = _safe_next(form.get("next_url", ""))
     if not next_url or next_url == "/workspaces":
         next_url = f"/workspaces/{slug}/builds"
@@ -2319,7 +2383,11 @@ async def post_import_builds_confirm(request: Request, slug: str):
 
 @router.get("/workspaces/{slug}/builds/{build_id}")
 def get_build_detail(request: Request, slug: str, build_id: str):
-    """View a single build's doctrine details."""
+    """View a single build's doctrine details.
+
+    Routes to build_v2_detail.html for versioned builds (current_version_id
+    IS NOT NULL), or the legacy builds_detail.html for flat text builds.
+    """
     success = request.query_params.get("success")
     try:
         with database.transaction() as db:
@@ -2327,6 +2395,36 @@ def get_build_detail(request: Request, slug: str, build_id: str):
             build = repositories.get_albion_build(db, build_id, ws["id"])
             if not build:
                 raise HTTPException(status_code=404, detail="Build not found.")
+
+            if build.get("current_version_id"):
+                # Versioned build — load version + slot items
+                current_version = repositories.get_current_build_version(
+                    db, build_id, ws["id"]
+                )
+                slot_items = (
+                    repositories.get_build_slot_items(
+                        db, current_version["id"], ws["id"]
+                    )
+                    if current_version else []
+                )
+                all_versions = repositories.list_build_versions(
+                    db, build_id, ws["id"]
+                )
+                return templates.TemplateResponse(
+                    request,
+                    "build_v2_detail.html",
+                    {
+                        "workspace":       ws,
+                        "current_user":    user,
+                        "build":           build,
+                        "current_version": current_version,
+                        "slot_items":      slot_items,
+                        "all_versions":    all_versions,
+                        "success":         success,
+                        **access,
+                    },
+                )
+
             used_in = repositories.get_build_usage_compositions(
                 db, build_id, ws["id"]
             )
@@ -2351,7 +2449,13 @@ def get_build_detail(request: Request, slug: str, build_id: str):
 
 @router.get("/workspaces/{slug}/builds/{build_id}/edit")
 def get_edit_build(request: Request, slug: str, build_id: str):
-    """Render the edit-build form."""
+    """Render the edit form for a build.
+
+    For versioned builds (current_version_id IS NOT NULL), serves the visual
+    editor pre-populated with the current version's slot items.
+    For legacy flat builds, serves the old text-field edit form.
+    """
+    import json as _json
     try:
         with database.transaction() as db:
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
@@ -2362,6 +2466,60 @@ def get_edit_build(request: Request, slug: str, build_id: str):
                 raise HTTPException(status_code=404, detail="Build not found.")
             if build.get("retired_at"):
                 raise HTTPException(status_code=403, detail="Retired builds cannot be edited.")
+            if build.get("status") == "archived":
+                raise HTTPException(
+                    status_code=403,
+                    detail="Archived builds cannot be edited. Restore the build first.",
+                )
+
+            if build.get("current_version_id"):
+                # Versioned build — open visual editor in edit mode
+                current_version = repositories.get_current_build_version(
+                    db, build_id, ws["id"]
+                )
+                slot_items_db = (
+                    repositories.get_build_slot_items(
+                        db, current_version["id"], ws["id"]
+                    )
+                    if current_version else []
+                )
+                # Enrich with catalog data for the editor
+                from app.albion.item_catalog import get_catalog
+                catalog = get_catalog()
+                initial_slots = []
+                for si in slot_items_db:
+                    cat_item = catalog.get_item(si["item_id"])
+                    if cat_item:
+                        initial_slots.append({
+                            "slot":         si["slot"],
+                            "item_id":      cat_item["item_id"],
+                            "display_name": cat_item["display_name"],
+                            "tier":         cat_item["tier"],
+                            "enchantment":  cat_item["enchantment"],
+                            "is_two_handed": cat_item["is_two_handed"],
+                            "icon_url":     cat_item["icon_url"],
+                        })
+                return templates.TemplateResponse(
+                    request,
+                    "build_editor.html",
+                    {
+                        "workspace":           ws,
+                        "current_user":        user,
+                        "edit_build":          build,
+                        "current_version":     current_version,
+                        "initial_slots_json":  _json.dumps(initial_slots),
+                        "initial_name":        build.get("name", ""),
+                        "initial_description": build.get("description", "") or "",
+                        "initial_role":        build.get("role", ""),
+                        "initial_event_type":  build.get("event_type", "other"),
+                        "initial_minimum_ip":  str(build.get("minimum_ip") or 0),
+                        "initial_status":      build.get("status", "draft"),
+                        "form_action":         f"/workspaces/{slug}/builds/{build_id}/versions",
+                        "error":               None,
+                        **access,
+                    },
+                )
+
             usage_count = len(
                 repositories.get_build_usage_compositions(db, build_id, ws["id"])
             )
@@ -2454,6 +2612,279 @@ async def post_retire_build(request: Request, slug: str, build_id: str):
             f"/workspaces/{slug}/builds/{build_id}?error={exc}"
         )
     return _redirect(f"/workspaces/{slug}/builds?success=retired")
+
+
+# ---------------------------------------------------------------------------
+# Phase 12.3 — Versioned build routes
+# ---------------------------------------------------------------------------
+
+@router.post("/workspaces/{slug}/builds/{build_id}/versions")
+async def post_create_build_version(request: Request, slug: str, build_id: str):
+    """Save changes to a versioned build as a new immutable version.
+
+    Returns 409 when expected_current_version_id does not match the current
+    version (stale edit conflict).
+    """
+    form = await request.form()
+
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        result = use_cases.create_build_version(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+            slot_items_json=form.get("slot_items_json", "[]"),
+            change_summary= form.get("change_summary", "").strip(),
+            intended_status=form.get("intended_status", "draft").strip(),
+            expected_current_version_id=form.get("expected_current_version_id") or None,
+            name=        form.get("name", "").strip() or None,
+            description= form.get("description", "").strip() or None,
+            role=        form.get("role", "").strip() or None,
+            event_type=  form.get("event_type", "").strip() or None,
+            minimum_ip=  int(form.get("minimum_ip") or 0),
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except ConflictError as exc:
+        # 409 for stale saves, archived build, etc.
+        try:
+            with database.transaction() as db:
+                _, ws2, access2 = authz.resolve_workspace_view(db, request, slug)
+                build2 = repositories.get_albion_build(db, build_id, ws2["id"])
+                from app.albion.item_catalog import get_catalog
+                import json as _json
+                catalog = get_catalog()
+                cv = repositories.get_current_build_version(
+                    db, build_id, ws2["id"]
+                ) if build2 else None
+                si_db = (
+                    repositories.get_build_slot_items(db, cv["id"], ws2["id"])
+                    if cv else []
+                )
+                initial_slots_json = _json.dumps([
+                    {
+                        "slot": si["slot"], "item_id": si["item_id"],
+                        "display_name": catalog.get_item(si["item_id"]) and catalog.get_item(si["item_id"])["display_name"] or si["display_name_snapshot"],
+                        "tier": si["tier"], "enchantment": si["enchantment"],
+                        "is_two_handed": False,
+                        "icon_url": catalog.get_item(si["item_id"]) and catalog.get_item(si["item_id"])["icon_url"] or "",
+                    }
+                    for si in si_db
+                ])
+        except Exception:
+            raise HTTPException(status_code=409, detail=str(exc))
+        return templates.TemplateResponse(
+            request,
+            "build_editor.html",
+            {
+                "workspace":           ws2,
+                "current_user":        None,
+                "edit_build":          build2,
+                "current_version":     cv,
+                "initial_slots_json":  initial_slots_json,
+                "initial_name":        (build2 or {}).get("name", ""),
+                "initial_description": (build2 or {}).get("description", "") or "",
+                "initial_role":        (build2 or {}).get("role", ""),
+                "initial_event_type":  (build2 or {}).get("event_type", "other"),
+                "initial_minimum_ip":  str((build2 or {}).get("minimum_ip") or 0),
+                "initial_status":      (build2 or {}).get("status", "draft"),
+                "form_action":         f"/workspaces/{slug}/builds/{build_id}/versions",
+                "error":               str(exc),
+                **access2,
+            },
+            status_code=409,
+        )
+    except (ValueError, TypeError):
+        raise HTTPException(status_code=422, detail="Invalid minimum_ip value.")
+    except IronkeepError as exc:
+        try:
+            with database.transaction() as db:
+                _, ws2, access2 = authz.resolve_workspace_view(db, request, slug)
+                build2 = repositories.get_albion_build(db, build_id, ws2["id"])
+        except Exception:
+            raise HTTPException(status_code=422, detail=str(exc))
+        return templates.TemplateResponse(
+            request,
+            "build_editor.html",
+            {
+                "workspace":           ws2,
+                "current_user":        None,
+                "edit_build":          build2,
+                "current_version":     None,
+                "initial_slots_json":  form.get("slot_items_json", "[]"),
+                "initial_name":        form.get("name", ""),
+                "initial_description": form.get("description", ""),
+                "initial_role":        form.get("role", ""),
+                "initial_event_type":  form.get("event_type", "other"),
+                "initial_minimum_ip":  form.get("minimum_ip", "0"),
+                "initial_status":      form.get("intended_status", "draft"),
+                "form_action":         f"/workspaces/{slug}/builds/{build_id}/versions",
+                "error":               str(exc),
+                **access2,
+            },
+            status_code=422,
+        )
+
+    if result["created"]:
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}?success=version_saved"
+        )
+    return _redirect(
+        f"/workspaces/{slug}/builds/{build_id}?success=no_changes"
+    )
+
+
+@router.get("/workspaces/{slug}/builds/{build_id}/versions")
+def get_build_version_history(request: Request, slug: str, build_id: str):
+    """Version history for a versioned build."""
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            build = repositories.get_albion_build(db, build_id, ws["id"])
+            if not build or not build.get("current_version_id"):
+                raise HTTPException(status_code=404, detail="Build not found.")
+            versions = repositories.list_build_versions(db, build_id, ws["id"])
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    return templates.TemplateResponse(
+        request,
+        "build_version_history.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
+            "build":        build,
+            "versions":     versions,
+            **access,
+        },
+    )
+
+
+@router.get("/workspaces/{slug}/builds/{build_id}/versions/{version_id}")
+def get_build_version_detail(
+    request: Request, slug: str, build_id: str, version_id: str
+):
+    """Read-only view of a specific version of a build."""
+    try:
+        with database.transaction() as db:
+            user, ws, access = authz.resolve_workspace_view(db, request, slug)
+            build = repositories.get_albion_build(db, build_id, ws["id"])
+            if not build or not build.get("current_version_id"):
+                raise HTTPException(status_code=404, detail="Build not found.")
+            version = repositories.get_build_version(
+                db, version_id, build_id, ws["id"]
+            )
+            if not version:
+                raise HTTPException(status_code=404, detail="Version not found.")
+            slot_items = repositories.get_build_slot_items(
+                db, version_id, ws["id"]
+            )
+            is_current = build.get("current_version_id") == version_id
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    return templates.TemplateResponse(
+        request,
+        "build_version_detail.html",
+        {
+            "workspace":    ws,
+            "current_user": user,
+            "build":        build,
+            "version":      version,
+            "slot_items":   slot_items,
+            "is_current":   is_current,
+            **access,
+        },
+    )
+
+
+@router.post("/workspaces/{slug}/builds/{build_id}/archive")
+async def post_archive_build(request: Request, slug: str, build_id: str):
+    """Archive a versioned build."""
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.archive_build(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}?error={exc}"
+        )
+    return _redirect(f"/workspaces/{slug}/builds/{build_id}?success=archived")
+
+
+@router.post("/workspaces/{slug}/builds/{build_id}/restore")
+async def post_restore_build(request: Request, slug: str, build_id: str):
+    """Restore an archived versioned build to draft status."""
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.restore_build(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}?error={exc}"
+        )
+    return _redirect(f"/workspaces/{slug}/builds/{build_id}?success=restored")
+
+
+@router.post("/workspaces/{slug}/builds/{build_id}/publish")
+async def post_publish_build(request: Request, slug: str, build_id: str):
+    """Publish a draft versioned build."""
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.publish_build(
+            guild_workspace_id=ws["id"],
+            build_id=build_id,
+            actor_user_id=user["id"],
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or build not found.")
+    except PermissionDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+    except IronkeepError as exc:
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}?error={exc}"
+        )
+    return _redirect(f"/workspaces/{slug}/builds/{build_id}?success=published")
 
 
 def _build_fields_from_form(form) -> dict:

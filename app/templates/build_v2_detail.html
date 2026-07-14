@@ -1,0 +1,193 @@
+{% extends "base.html" %}
+{% block title %}{{ build.name }} — Builds — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">{{ build.name }}</span>
+{% endblock %}
+
+{% block content %}
+{% include "flash_messages.html" %}
+
+{% if success == 'created' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Build created and saved as version 1.</div>
+{% elif success == 'version_saved' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Changes saved as a new version.</div>
+{% elif success == 'no_changes' %}
+<div class="alert alert-info" style="margin-bottom:var(--space-4)">No changes detected — version unchanged.</div>
+{% elif success == 'archived' %}
+<div class="alert alert-info" style="margin-bottom:var(--space-4)">Build archived.</div>
+{% elif success == 'restored' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Build restored to draft.</div>
+{% elif success == 'published' %}
+<div class="alert alert-success" style="margin-bottom:var(--space-4)">Build published.</div>
+{% endif %}
+
+{% if request.query_params.get('error') %}
+<div class="alert alert-error" style="margin-bottom:var(--space-4)">{{ request.query_params.get('error') }}</div>
+{% endif %}
+
+<header class="page-header">
+  <div class="page-header__main">
+    <h1>{{ build.name }}</h1>
+    <p class="page-meta">
+      <span class="badge" data-role="{{ build.role | lower }}">{{ build.role | replace('_', ' ') | title }}</span>
+      &nbsp;·&nbsp;
+      <span class="text-muted">{{ build.event_type | upper | replace('_', ' ') }}</span>
+      {% if build.minimum_ip %}
+      &nbsp;·&nbsp;
+      <span class="text-muted">Min IP {{ build.minimum_ip }}</span>
+      {% endif %}
+      &nbsp;·&nbsp;
+      {% if build.status == 'published' %}
+      <span class="badge badge-success">published</span>
+      {% elif build.status == 'archived' %}
+      <span class="badge badge-archived">archived</span>
+      {% else %}
+      <span class="badge badge-muted">draft</span>
+      {% endif %}
+      {% if current_version %}
+      &nbsp;·&nbsp;
+      <span class="text-muted">v{{ current_version.version_number }}</span>
+      {% endif %}
+    </p>
+    {% if build.description %}
+    <p class="page-meta" style="margin-top:var(--space-1)">{{ build.description }}</p>
+    {% endif %}
+  </div>
+
+  <div class="action-group action-group--compact">
+    {% if can_mutate and build.status != 'archived' %}
+    <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/edit"
+       class="btn btn-sm btn-primary">Edit / New version</a>
+    {% if build.status == 'draft' %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/publish"
+          class="inline-form">
+      <button type="submit" class="btn btn-sm btn-secondary"
+              onclick="return confirm('Publish this build?')">Publish</button>
+    </form>
+    {% endif %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/archive"
+          class="inline-form"
+          onsubmit="return confirm('Archive {{ build.name }}? It will be hidden from active lists.')">
+      <button type="submit" class="btn btn-sm btn-muted">Archive</button>
+    </form>
+    {% elif can_mutate and build.status == 'archived' %}
+    <form method="post"
+          action="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/restore"
+          class="inline-form">
+      <button type="submit" class="btn btn-sm btn-secondary">Restore</button>
+    </form>
+    {% endif %}
+  </div>
+</header>
+
+{# ── Current equipment ─────────────────────────────────────────────────────── #}
+{% if slot_items %}
+<div class="card bld-detail-card" style="margin-bottom:var(--space-4)">
+  <div class="card-header">
+    <h3 class="card-header__title">
+      Equipment
+      {% if current_version %}
+      <span class="text-muted" style="font-size:0.8rem; font-weight:normal">
+        — version {{ current_version.version_number }}
+      </span>
+      {% endif %}
+    </h3>
+  </div>
+  <div class="card-body">
+    <div class="bld-v2-slots">
+      {% set SLOT_LABELS = {
+        'main_hand': 'Main Hand',
+        'off_hand':  'Off Hand',
+        'head':      'Head',
+        'chest':     'Chest',
+        'shoes':     'Shoes',
+        'cape':      'Cape',
+        'bag':       'Bag',
+        'mount':     'Mount',
+        'food':      'Food',
+        'potion':    'Potion',
+      } %}
+      {% for slot_key in ['main_hand','off_hand','head','chest','shoes','cape','bag','mount','food','potion'] %}
+      {% set items_for_slot = slot_items | selectattr('slot', 'equalto', slot_key) | list %}
+      {% if items_for_slot %}
+      {% set primary = items_for_slot | selectattr('is_primary') | first %}
+      {% if primary %}
+      <div class="bld-v2-slot">
+        <span class="bld-v2-slot__label">{{ SLOT_LABELS[slot_key] }}</span>
+        <span class="bld-v2-slot__item">
+          T{{ primary.tier }}.{{ primary.enchantment }} {{ primary.display_name_snapshot }}
+        </span>
+      </div>
+      {% endif %}
+      {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+</div>
+{% else %}
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-body">
+    <p class="text-muted">No items selected in the current version.</p>
+  </div>
+</div>
+{% endif %}
+
+{# ── Version history summary ───────────────────────────────────────────────── #}
+{% if all_versions %}
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-header">
+    <h3 class="card-header__title">Version history</h3>
+    <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/versions"
+       class="btn btn-sm btn-ghost">View all →</a>
+  </div>
+  <div class="card-body" style="padding:0">
+    <table class="tbl" style="width:100%">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th>Saved</th>
+          <th>By</th>
+          <th>Summary</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in all_versions[:5] %}
+        <tr{% if build.current_version_id == v.id %} class="tbl__row--highlight"{% endif %}>
+          <td>
+            v{{ v.version_number }}
+            {% if build.current_version_id == v.id %}
+            <span class="badge badge-success" style="font-size:0.7rem">current</span>
+            {% endif %}
+          </td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.created_at[:10] }}</td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.created_by_name or '—' }}</td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.change_summary or '—' }}</td>
+          <td>
+            <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/versions/{{ v.id }}"
+               class="btn btn-sm btn-ghost">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
+<div class="action-bar">
+  <a href="/workspaces/{{ workspace.slug }}/builds" class="btn">← All Builds</a>
+</div>
+
+{% endblock %}

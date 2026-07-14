@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block title %}Version History — {{ build.name }} — {{ workspace.name }}{% endblock %}
+
+{% block workspace_nav %}
+{% set workspace_nav_active = 'builds' %}
+{% include "workspace_nav.html" %}
+{% endblock %}
+
+{% block nav_extra %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds">Builds</a>
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}">{{ build.name }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Version History</span>
+{% endblock %}
+
+{% block content %}
+{% set title = 'Version History — ' ~ build.name %}
+{% include "page_header.html" %}
+
+<div class="card" style="margin-bottom:var(--space-4)">
+  <div class="card-body" style="padding:0">
+    {% if versions %}
+    <table class="tbl" style="width:100%">
+      <thead>
+        <tr>
+          <th>Version</th>
+          <th>Saved at</th>
+          <th>Saved by</th>
+          <th>Summary</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for v in versions %}
+        <tr{% if build.current_version_id == v.id %} class="tbl__row--highlight"{% endif %}>
+          <td>
+            v{{ v.version_number }}
+            {% if build.current_version_id == v.id %}
+            <span class="badge badge-success" style="font-size:0.7rem">current</span>
+            {% endif %}
+          </td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.created_at | replace('T',' ') | truncate(16, True, '') }}</td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.created_by_name or '—' }}</td>
+          <td class="text-muted" style="font-size:0.85rem">{{ v.change_summary or '—' }}</td>
+          <td>
+            <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/versions/{{ v.id }}"
+               class="btn btn-sm btn-ghost">View</a>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p class="text-muted" style="padding:var(--space-4)">No versions found.</p>
+    {% endif %}
+  </div>
+</div>
+
+<p class="text-muted" style="font-size:0.85rem;margin-bottom:var(--space-4)">
+  All versions are immutable. Previous versions are read-only.
+</p>
+
+<div class="action-bar">
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}" class="btn">← Back to build</a>
+</div>
+{% endblock %}
