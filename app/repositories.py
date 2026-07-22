@@ -71,6 +71,7 @@ def get_workspaces_for_user(db: sqlite3.Connection, user_id: str) -> list[dict]:
             FROM guild_workspaces w
             JOIN workspace_members m ON m.guild_workspace_id = w.id
             WHERE m.user_id = ?
+              AND w.deleted_at IS NULL
             ORDER BY w.name
             """,
             (user_id,),
@@ -96,6 +97,7 @@ def get_unclaimed_discord_workspaces(db: sqlite3.Connection) -> list[dict]:
             SELECT w.*
             FROM guild_workspaces w
             WHERE w.discord_provisioned_at IS NOT NULL
+              AND w.deleted_at IS NULL
               AND NOT EXISTS (
                   SELECT 1 FROM workspace_members m
                   WHERE m.guild_workspace_id = w.id AND m.role = 'owner'
@@ -4109,6 +4111,153 @@ def get_workspaces_needing_roster_sync(
             ORDER BY w.name
             """,
             (threshold_at,),
+        ).fetchall()
+    )
+
+
+# ---------------------------------------------------------------------------
+# Super-admin portal (god-mode)
+# ---------------------------------------------------------------------------
+
+def list_all_workspaces_admin(db: sqlite3.Connection) -> list[dict]:
+    """Return every workspace (including soft-deleted) with support metadata:
+    owner display name, member count, and deletion status.
+
+    Cross-tenant by design — only ever called from super-admin routes.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT
+                w.*,
+                (SELECT COUNT(*) FROM workspace_members m
+                   WHERE m.guild_workspace_id = w.id) AS member_count,
+                (SELECT u.display_name
+                   FROM workspace_members m
+                   JOIN users u ON u.id = m.user_id
+                   WHERE m.guild_workspace_id = w.id AND m.role = 'owner'
+                   ORDER BY m.created_at
+                   LIMIT 1) AS owner_display_name
+            FROM guild_workspaces w
+            ORDER BY w.deleted_at IS NOT NULL, w.name
+            """,
+        ).fetchall()
+    )
+
+
+def soft_delete_workspace(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    deleted_at: str,
+    deleted_by: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET deleted_at = ?, deleted_by = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (deleted_at, deleted_by, deleted_at, workspace_id),
+    )
+
+
+def restore_workspace(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    updated_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET deleted_at = NULL, deleted_by = NULL, updated_at = ?
+        WHERE id = ?
+        """,
+        (updated_at, workspace_id),
+    )
+
+
+def rename_workspace(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    name: str,
+    slug: str,
+    updated_at: str,
+) -> None:
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET name = ?, slug = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (name, slug, updated_at, workspace_id),
+    )
+
+
+def set_workspace_member_role(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    user_id: str,
+    role: str,
+) -> bool:
+    """Set the role of an existing member. Returns True if a row was updated."""
+    cursor = db.execute(
+        """
+        UPDATE workspace_members
+        SET role = ?
+        WHERE guild_workspace_id = ? AND user_id = ?
+        """,
+        (role, guild_workspace_id, user_id),
+    )
+    return cursor.rowcount > 0
+
+
+def demote_other_owners(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    except_user_id: str,
+    new_role: str = "officer",
+) -> int:
+    """Demote every owner except *except_user_id* to *new_role*.
+    Returns the number of demoted rows. Used by ownership transfer."""
+    cursor = db.execute(
+        """
+        UPDATE workspace_members
+        SET role = ?
+        WHERE guild_workspace_id = ? AND role = 'owner' AND user_id != ?
+        """,
+        (new_role, guild_workspace_id, except_user_id),
+    )
+    return cursor.rowcount
+
+
+def insert_superadmin_audit_log(db: sqlite3.Connection, record: dict) -> None:
+    db.execute(
+        """
+        INSERT INTO superadmin_audit_log
+            (id, actor_user_id, actor_discord_id, action,
+             target_workspace_id, target_workspace_name, detail_json, created_at)
+        VALUES
+            (:id, :actor_user_id, :actor_discord_id, :action,
+             :target_workspace_id, :target_workspace_name, :detail_json, :created_at)
+        """,
+        record,
+    )
+
+
+def list_superadmin_audit_log(
+    db: sqlite3.Connection,
+    limit: int = 100,
+) -> list[dict]:
+    return _rows(
+        db.execute(
+            """
+            SELECT a.*, u.display_name AS actor_display_name
+            FROM superadmin_audit_log a
+            LEFT JOIN users u ON u.id = a.actor_user_id
+            ORDER BY a.created_at DESC
+            LIMIT ?
+            """,
+            (limit,),
         ).fetchall()
     )
 

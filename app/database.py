@@ -217,6 +217,10 @@ _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE albion_builds ADD COLUMN updated_by TEXT NULL",
     "ALTER TABLE albion_builds ADD COLUMN archived_at TEXT NULL",
     "ALTER TABLE albion_builds ADD COLUMN archived_by TEXT NULL",
+    # Super-admin workspace soft-delete (god-mode portal).
+    # NULL = active; ISO-8601 timestamp = soft-deleted (hidden from normal users).
+    "ALTER TABLE guild_workspaces ADD COLUMN deleted_at TEXT NULL",
+    "ALTER TABLE guild_workspaces ADD COLUMN deleted_by TEXT NULL REFERENCES users(id)",
 ]
 
 
@@ -439,6 +443,91 @@ def _migrate_albion_builds_rebuild(conn: sqlite3.Connection) -> None:
         raise
     finally:
         conn.execute("PRAGMA foreign_keys = ON")
+
+
+# ---------------------------------------------------------------------------
+# Super-admin: permanent workspace deletion
+# ---------------------------------------------------------------------------
+
+#: Every table carrying a guild_workspace_id column.  Deleting a workspace
+#: permanently removes all of its rows across these tables.  Kept in one place
+#: so a new workspace-scoped table is a one-line addition here.
+_WORKSPACE_CHILD_TABLES: tuple[str, ...] = (
+    "player_game_identities",
+    "discord_metadata_cache",
+    "workspace_members",
+    "guild_operations",
+    "albion_compositions",
+    "composition_slot_templates",
+    "albion_builds",
+    "operation_plans",
+    "operation_slots",
+    "participants",
+    "signup_intents",
+    "assignments",
+    "readiness_snapshots",
+    "operational_events",
+    "scout_attendance_records",
+    "attendance_records",
+    "operation_reserves",
+    "discord_guild_installs",
+    "discord_messages",
+    "discord_dispatch_failures",
+    "operation_reminder_deliveries",
+    "albion_build_versions",
+    "albion_build_slot_items",
+    "payout_ledger_entries",
+    "workspace_albion_guilds",
+    "workspace_albion_players",
+)
+
+
+def hard_delete_workspace(workspace_id: str) -> dict[str, int]:
+    """Permanently delete a workspace and every row that belongs to it.
+
+    This is a destructive super-admin operation.  Because the schema uses no
+    ON DELETE CASCADE (and has a circular FK between albion_builds and
+    albion_build_versions), the delete runs on a dedicated connection with
+    ``PRAGMA foreign_keys = OFF`` inside a single transaction, mirroring the
+    table-rebuild migrations.  After deletion ``PRAGMA foreign_key_check`` is
+    run and any violation aborts the whole operation with a rollback.
+
+    Returns a mapping of ``{table_name: rows_deleted}`` (including
+    ``guild_workspaces``).
+
+    Does NOT touch global/user tables (users, user_auth_identities, item
+    catalog, scheduler_runs, superadmin_audit_log).
+    """
+    conn = sqlite3.connect(_DB_PATH)
+    deleted: dict[str, int] = {}
+    try:
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN")
+        for table in _WORKSPACE_CHILD_TABLES:
+            cur = conn.execute(
+                f"DELETE FROM {table} WHERE guild_workspace_id = ?",
+                (workspace_id,),
+            )
+            deleted[table] = cur.rowcount
+        cur = conn.execute(
+            "DELETE FROM guild_workspaces WHERE id = ?", (workspace_id,)
+        )
+        deleted["guild_workspaces"] = cur.rowcount
+
+        violations = conn.execute("PRAGMA foreign_key_check").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"hard_delete_workspace aborted: foreign_key_check found "
+                f"dangling references after delete: {violations}"
+            )
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.close()
+    return deleted
 
 
 def init_schema() -> None:

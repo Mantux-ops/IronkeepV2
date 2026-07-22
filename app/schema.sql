@@ -20,8 +20,33 @@ CREATE TABLE IF NOT EXISTS guild_workspaces (
     -- 0 = auto-dispatch disabled (default); 1 = readiness summaries auto-post/edit
     discord_auto_dispatch           INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
-    updated_at  TEXT NOT NULL
+    updated_at  TEXT NOT NULL,
+    -- Soft delete (super-admin god-mode). NULL = active; ISO-8601 = soft-deleted.
+    -- Soft-deleted workspaces are hidden from all normal users and blocked from
+    -- normal access; only super-admins can see, restore, or permanently delete.
+    deleted_at  TEXT,
+    deleted_by  TEXT REFERENCES users(id)
 );
+
+-- ---------------------------------------------------------------------------
+-- Super-admin audit log  (platform-global "god-mode" action trail)
+-- Intentionally has NO foreign key to guild_workspaces so audit rows survive a
+-- permanent workspace deletion.  target_workspace_name is denormalised for the
+-- same reason.  Only writable by super-admin use cases.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS superadmin_audit_log (
+    id                    TEXT PRIMARY KEY,
+    actor_user_id         TEXT NOT NULL,
+    actor_discord_id      TEXT,
+    action                TEXT NOT NULL,
+    target_workspace_id   TEXT,
+    target_workspace_name TEXT,
+    detail_json           TEXT NOT NULL DEFAULT '{}',
+    created_at            TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_superadmin_audit_created
+    ON superadmin_audit_log(created_at);
 
 -- ---------------------------------------------------------------------------
 -- Users and workspace membership

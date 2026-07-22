@@ -35,6 +35,7 @@ from fastapi.templating import Jinja2Templates
 from app import backup, database, diagnostics as diag, repositories, tactical
 from app.application import use_cases
 from app.auth import session as auth_session
+from app.auth import superadmin
 from app.auth.current_user import get_current_user, require_current_user
 from app.domain import attendance as attendance_domain
 from app.domain import guild_operations
@@ -741,6 +742,7 @@ def home(request: Request):
             roster_join_candidates = repositories.find_roster_join_candidates_for_user(
                 db, user["id"], user["display_name"]
             )
+            is_superadmin = superadmin.is_superadmin(db, user)
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     return templates.TemplateResponse(
@@ -752,6 +754,7 @@ def home(request: Request):
             "current_user":                user,
             "unclaimed_discord_workspaces": unclaimed,
             "roster_join_candidates":      roster_join_candidates,
+            "is_superadmin":               is_superadmin,
         },
     )
 

@@ -43,6 +43,7 @@ from starlette.staticfiles import StaticFiles
 
 from app import database, startup
 from app.routes import router
+from app.routes_admin import router as admin_router
 from app.routes_catalog import router as catalog_router
 
 logging.basicConfig(
@@ -144,4 +145,5 @@ app.mount(
 )
 
 app.include_router(router)
+app.include_router(admin_router)
 app.include_router(catalog_router)

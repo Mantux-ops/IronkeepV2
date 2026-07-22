@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Super-admin Portal — Ironkeep{% endblock %}
+
+{% block content %}
+{% set title = 'Super-admin Portal' %}
+{% set subtitle = 'God-mode: manage every workspace on this deployment.' %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="card" style="margin-bottom:var(--space-3)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">All workspaces ({{ workspaces | length }})</h3>
+    {% if workspaces %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Slug</th>
+            <th>Owner</th>
+            <th>Members</th>
+            <th>Discord</th>
+            <th>Status</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for ws in workspaces %}
+          <tr{% if ws.deleted_at %} style="opacity:0.6"{% endif %}>
+            <td><strong>{{ ws.name }}</strong></td>
+            <td><code style="font-size:0.8rem">{{ ws.slug }}</code></td>
+            <td>{{ ws.owner_display_name or '—' }}</td>
+            <td>{{ ws.member_count }}</td>
+            <td>{% if ws.discord_guild_id %}<span class="badge badge-success">linked</span>{% else %}<span class="text-muted">—</span>{% endif %}</td>
+            <td>
+              {% if ws.deleted_at %}
+              <span class="badge badge-archived">deleted</span>
+              {% else %}
+              <span class="badge badge-success">active</span>
+              {% endif %}
+            </td>
+            <td style="display:flex;gap:0.4rem;flex-wrap:wrap;justify-content:flex-end">
+              <a href="/admin/workspaces/{{ ws.id }}" class="btn btn-sm">Manage</a>
+              {% if ws.deleted_at %}
+              <form method="post" action="/admin/workspaces/{{ ws.id }}/restore" class="inline-form">
+                <button type="submit" class="btn btn-sm">Restore</button>
+              </form>
+              {% else %}
+              <form method="post" action="/admin/workspaces/{{ ws.id }}/soft-delete" class="inline-form"
+                    onsubmit="return confirm('Soft-delete {{ ws.name }}? It will be hidden from all users but recoverable.');">
+                <button type="submit" class="btn btn-sm btn-danger">Delete</button>
+              </form>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No workspaces exist.</p>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Recent super-admin actions</h3>
+    {% if audit_log %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>When</th>
+            <th>Actor</th>
+            <th>Action</th>
+            <th>Workspace</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in audit_log %}
+          <tr>
+            <td class="text-muted" style="font-size:0.85rem">{{ a.created_at[:19] | replace('T', ' ') }}</td>
+            <td>{{ a.actor_display_name or a.actor_user_id }}</td>
+            <td><code style="font-size:0.8rem">{{ a.action }}</code></td>
+            <td>{{ a.target_workspace_name or a.target_workspace_id or '—' }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="empty-state">No super-admin actions logged yet.</p>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

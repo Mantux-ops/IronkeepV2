@@ -12,6 +12,7 @@ Rules:
 
 from __future__ import annotations
 
+import json
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -5143,3 +5144,177 @@ def join_workspace_via_roster_match(
         repositories.insert_operational_event(db, event)
 
     return {"workspace": ws, "character_name": player["character_name"]}
+
+
+# ---------------------------------------------------------------------------
+# Super-admin ("god-mode") workspace operations
+#
+# These use cases are only ever reached from super-admin routes, which enforce
+# the Discord allowlist check before calling.  They perform NO membership-based
+# permission checks themselves — access control lives at the route boundary.
+# Every action is written to superadmin_audit_log.
+# ---------------------------------------------------------------------------
+
+def _log_superadmin_action(
+    db,
+    actor_user_id: str,
+    action: str,
+    workspace_id: str | None,
+    workspace_name: str | None,
+    detail: dict | None = None,
+) -> None:
+    ident = repositories.get_discord_identity_for_user(db, actor_user_id)
+    repositories.insert_superadmin_audit_log(db, {
+        "id": str(uuid.uuid4()),
+        "actor_user_id": actor_user_id,
+        "actor_discord_id": ident["provider_user_id"] if ident else None,
+        "action": action,
+        "target_workspace_id": workspace_id,
+        "target_workspace_name": workspace_name,
+        "detail_json": json.dumps(detail or {}),
+        "created_at": _now(),
+    })
+
+
+def superadmin_soft_delete_workspace(
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+) -> dict:
+    """Soft-delete a workspace: hide it from all normal users, reversibly.
+
+    Raises NotFoundError if the workspace does not exist; ConflictError if it
+    is already soft-deleted.
+    """
+    now = _now()
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        if ws.get("deleted_at"):
+            raise ConflictError("Workspace is already deleted.")
+        repositories.soft_delete_workspace(db, workspace_id, now, actor_user_id)
+        _log_superadmin_action(
+            db, actor_user_id, "workspace.soft_delete", workspace_id, ws["name"], {}
+        )
+    return ws
+
+
+def superadmin_restore_workspace(
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+) -> dict:
+    """Restore a soft-deleted workspace back to active.
+
+    Raises NotFoundError if the workspace does not exist; ValidationError if it
+    is not currently soft-deleted.
+    """
+    now = _now()
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        if not ws.get("deleted_at"):
+            raise ValidationError("Workspace is not deleted.")
+        repositories.restore_workspace(db, workspace_id, now)
+        _log_superadmin_action(
+            db, actor_user_id, "workspace.restore", workspace_id, ws["name"], {}
+        )
+    return ws
+
+
+def superadmin_hard_delete_workspace(
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+) -> dict:
+    """Permanently delete a workspace and ALL of its data. Irreversible.
+
+    Safety: the workspace must already be soft-deleted (two-step delete).  The
+    audit log row is written after the delete in a separate transaction, since
+    the destructive delete runs on its own connection.
+
+    Raises NotFoundError if missing; ValidationError if not soft-deleted first.
+    """
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        if not ws.get("deleted_at"):
+            raise ValidationError(
+                "Workspace must be soft-deleted before it can be permanently deleted."
+            )
+        ws_name = ws["name"]
+
+    deleted_counts = database.hard_delete_workspace(workspace_id)
+
+    with database.transaction() as db:
+        _log_superadmin_action(
+            db, actor_user_id, "workspace.hard_delete", workspace_id, ws_name,
+            {"rows_deleted": deleted_counts},
+        )
+    return {"workspace_name": ws_name, "rows_deleted": deleted_counts}
+
+
+def superadmin_rename_workspace(
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+    name: str,
+    slug: str,
+) -> dict:
+    """Rename a workspace (name + slug) as a support action.
+
+    Raises NotFoundError if missing; ValidationError for invalid name/slug;
+    ConflictError if the slug is already used by another workspace.
+    """
+    guild_workspace.validate_workspace_name(name)
+    guild_workspace.validate_workspace_slug(slug)
+    now = _now()
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        existing = repositories.get_workspace_by_slug(db, slug)
+        if existing and existing["id"] != workspace_id:
+            raise ConflictError(f"A workspace with slug '{slug}' already exists.")
+        repositories.rename_workspace(db, workspace_id, name.strip(), slug, now)
+        _log_superadmin_action(
+            db, actor_user_id, "workspace.rename", workspace_id, name.strip(),
+            {"old_name": ws["name"], "old_slug": ws["slug"],
+             "new_name": name.strip(), "new_slug": slug},
+        )
+    return {"id": workspace_id, "name": name.strip(), "slug": slug}
+
+
+def superadmin_transfer_workspace_ownership(
+    *,
+    actor_user_id: str,
+    workspace_id: str,
+    new_owner_user_id: str,
+) -> dict:
+    """Transfer workspace ownership to an existing member.
+
+    The new owner must already be a member of the workspace.  Any other current
+    owners are demoted to officer so there is a single owner after transfer.
+
+    Raises NotFoundError if the workspace does not exist; ValidationError if the
+    target user is not a member.
+    """
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+        target = repositories.get_workspace_membership(db, workspace_id, new_owner_user_id)
+        if not target:
+            raise ValidationError("The chosen user is not a member of this workspace.")
+        repositories.demote_other_owners(db, workspace_id, new_owner_user_id, "officer")
+        repositories.set_workspace_member_role(
+            db, workspace_id, new_owner_user_id, "owner"
+        )
+        _log_superadmin_action(
+            db, actor_user_id, "workspace.transfer_ownership", workspace_id, ws["name"],
+            {"new_owner_user_id": new_owner_user_id},
+        )
+    return ws

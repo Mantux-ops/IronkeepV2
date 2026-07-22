@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from starlette.requests import Request
 
 from app import repositories
+from app.auth import superadmin
 from app.auth.current_user import require_current_user
 from app.domain.workspace_membership import validate_role
 from app.errors import NotFoundError, PermissionDenied
@@ -46,6 +47,14 @@ def resolve_workspace_member_by_slug(
     user = require_current_user(db, request)
     workspace = repositories.get_workspace_by_slug(db, slug)
     if not workspace:
+        raise NotFoundError("Workspace not found.")
+    # Super-admin god-mode: owner-level view of any workspace (incl. soft-deleted).
+    if superadmin.is_superadmin(db, user):
+        return user, workspace, superadmin.synthetic_owner_membership(
+            workspace["id"], user["id"]
+        )
+    # Soft-deleted workspaces are invisible to normal users.
+    if workspace.get("deleted_at"):
         raise NotFoundError("Workspace not found.")
     membership = require_workspace_member(db, user["id"], workspace["id"])
     return user, workspace, membership

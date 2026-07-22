@@ -30,6 +30,9 @@
   {% endif %}
   {% block nav_extra %}{% endblock %}
   <div class="global-nav__account">
+    {% if is_superadmin %}
+      <a href="/admin" title="Super-admin portal">&#128737; Admin</a>
+    {% endif %}
     {% if current_user %}
       <a href="/account" title="My Account">{{ current_user.display_name }}</a>
       <form method="post" action="/logout" class="inline-form">

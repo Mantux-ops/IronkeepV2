@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% block title %}Manage {{ target_ws.name }} — Admin — Ironkeep{% endblock %}
+
+{% block content %}
+{% set title = 'Manage: ' ~ target_ws.name %}
+{% set subtitle = 'Super-admin support actions for this workspace.' %}
+{% include "page_header.html" %}
+{% include "flash_messages.html" %}
+
+<div class="action-bar" style="margin-bottom:var(--space-3)">
+  <a href="/admin" class="btn btn-sm">&larr; Back to portal</a>
+  {% if not target_ws.deleted_at %}
+  <a href="/workspaces/{{ target_ws.slug }}" class="btn btn-sm btn-primary">Open workspace (god-mode) &rarr;</a>
+  {% endif %}
+</div>
+
+{% if target_ws.deleted_at %}
+<div class="alert alert-warning" style="margin-bottom:var(--space-3)">
+  This workspace is <strong>soft-deleted</strong> (hidden from all users since {{ target_ws.deleted_at[:19] | replace('T', ' ') }}).
+  Restore it to make it usable again, or permanently delete it below.
+</div>
+{% endif %}
+
+<div class="card" style="margin-bottom:var(--space-3)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Overview</h3>
+    <dl class="detail-list">
+      <dt>Name</dt><dd>{{ target_ws.name }}</dd>
+      <dt>Slug</dt><dd><code>{{ target_ws.slug }}</code></dd>
+      <dt>Workspace ID</dt><dd><code style="font-size:0.8rem">{{ target_ws.id }}</code></dd>
+      <dt>Discord server</dt><dd>{{ target_ws.discord_guild_id or '— not linked —' }}</dd>
+      <dt>Created</dt><dd>{{ target_ws.created_at[:19] | replace('T', ' ') }}</dd>
+    </dl>
+  </div>
+</div>
+
+<!-- Rename ------------------------------------------------------------------>
+<div class="card" style="margin-bottom:var(--space-3)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Rename</h3>
+    <form method="post" action="/admin/workspaces/{{ target_ws.id }}/rename" class="form">
+      <div class="form-group">
+        <label for="name">Name</label>
+        <input type="text" id="name" name="name" value="{{ target_ws.name }}" required>
+      </div>
+      <div class="form-group">
+        <label for="slug">Slug</label>
+        <input type="text" id="slug" name="slug" value="{{ target_ws.slug }}" required>
+        <small class="form-hint">Changing the slug changes every URL for this workspace.</small>
+      </div>
+      <div class="action-bar">
+        <button type="submit" class="btn btn-primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Members + transfer ownership --------------------------------------------->
+<div class="card" style="margin-bottom:var(--space-3)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Members ({{ members | length }})</h3>
+    {% if members %}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead><tr><th>Display name</th><th>Role</th></tr></thead>
+        <tbody>
+          {% for m in members %}
+          <tr>
+            <td>{{ m.display_name }}</td>
+            <td><span class="badge badge-{{ m.role }}">{{ m.role }}</span></td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+
+    <h4 style="margin:var(--space-3) 0 var(--space-2)">Transfer ownership</h4>
+    <form method="post" action="/admin/workspaces/{{ target_ws.id }}/transfer-owner" class="form"
+          onsubmit="return confirm('Transfer ownership? The current owner will be demoted to officer.');">
+      <div class="form-group">
+        <label for="new_owner_user_id">New owner</label>
+        <select id="new_owner_user_id" name="new_owner_user_id" required>
+          {% for m in members %}
+          <option value="{{ m.user_id }}"{% if m.role == 'owner' %} disabled{% endif %}>
+            {{ m.display_name }}{% if m.role == 'owner' %} (current owner){% endif %}
+          </option>
+          {% endfor %}
+        </select>
+        <small class="form-hint">Only existing members can become owner.</small>
+      </div>
+      <div class="action-bar">
+        <button type="submit" class="btn btn-primary">Transfer</button>
+      </div>
+    </form>
+    {% else %}
+    <p class="empty-state">This workspace has no members.</p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- Danger zone ------------------------------------------------------------->
+<div class="card" style="border:1px solid var(--color-danger, #b00)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">Danger zone</h3>
+    {% if not target_ws.deleted_at %}
+    <p class="text-muted">Soft-delete hides this workspace from all users but keeps its data for recovery.</p>
+    <form method="post" action="/admin/workspaces/{{ target_ws.id }}/soft-delete" class="inline-form"
+          onsubmit="return confirm('Soft-delete {{ target_ws.name }}?');">
+      <button type="submit" class="btn btn-danger">Soft-delete workspace</button>
+    </form>
+    {% else %}
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:var(--space-3)">
+      <form method="post" action="/admin/workspaces/{{ target_ws.id }}/restore" class="inline-form">
+        <button type="submit" class="btn btn-primary">Restore workspace</button>
+      </form>
+    </div>
+    <p class="text-muted">
+      Permanent deletion removes this workspace and <strong>all</strong> of its data
+      (operations, compositions, builds, roster, members, history) forever.
+      Type the slug <code>{{ target_ws.slug }}</code> to confirm.
+    </p>
+    <form method="post" action="/admin/workspaces/{{ target_ws.id }}/hard-delete" class="form"
+          onsubmit="return confirm('PERMANENTLY delete {{ target_ws.name }} and all its data? This cannot be undone.');">
+      <div class="form-group">
+        <label for="confirm_slug">Confirm slug</label>
+        <input type="text" id="confirm_slug" name="confirm_slug" autocomplete="off"
+               placeholder="{{ target_ws.slug }}" required>
+      </div>
+      <div class="action-bar">
+        <button type="submit" class="btn btn-danger">Permanently delete</button>
+      </div>
+    </form>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 from starlette.requests import Request
 
 from app import repositories
-from app.auth import workspace_access
+from app.auth import superadmin, workspace_access
 from app.auth.current_user import require_current_user
 from app.domain.workspace_membership import (
     MUTATOR_ROLES,
@@ -85,6 +85,10 @@ def resolve_workspace_for_signup(
 
 
 def require_workspace_mutator(db, user_id: str, guild_workspace_id: str) -> dict:
+    # Super-admin god-mode: owner-level access to any workspace.
+    user = repositories.get_user_by_id(db, user_id)
+    if superadmin.is_superadmin(db, user):
+        return superadmin.synthetic_owner_membership(guild_workspace_id, user_id)
     return workspace_access.require_workspace_role(
         db, user_id, guild_workspace_id, MUTATOR_ROLES
     )
@@ -102,6 +106,18 @@ def authorize_workspace_action(
     workspace = repositories.get_workspace_by_slug(db, slug)
     if not workspace:
         raise NotFoundError("Workspace not found.")
+
+    # Super-admin god-mode: full owner access to any workspace, including
+    # soft-deleted ones (so they can inspect before restoring/purging).
+    if superadmin.is_superadmin(db, user):
+        return user, workspace, superadmin.synthetic_owner_membership(
+            workspace["id"], user["id"]
+        )
+
+    # Soft-deleted workspaces are invisible to normal users.
+    if workspace.get("deleted_at"):
+        raise NotFoundError("Workspace not found.")
+
     membership = repositories.get_workspace_membership(
         db, workspace["id"], user["id"]
     )
