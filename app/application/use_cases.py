@@ -4633,7 +4633,32 @@ def resolve_albion_guild_preview(
     if not workspace_membership.can_manage_workspace_members(membership["role"]):
         raise PermissionDenied("Only officers and owners can import guild rosters.")
 
-    from app.albion.rest_client import AlbionApiError, search_albion_guilds
+    from app.albion.rest_client import (
+        AlbionApiError,
+        fetch_albion_guild,
+        looks_like_albion_id,
+        search_albion_guilds,
+    )
+
+    # Direct guild-ID path: the Albion /search index does not return every guild
+    # (small/new guilds, >10 matches, multi-word names).  When the input looks
+    # like a raw guild ID, resolve it directly via /guilds/{id} — this always
+    # works if the ID is valid.
+    if looks_like_albion_id(value):
+        try:
+            g = fetch_albion_guild(value, server=server)
+            return {
+                "albion_guild_id": g["albion_guild_id"],
+                "guild_name":      g["guild_name"],
+                "server":          g.get("server", server),
+                "alliance_id":     g.get("alliance_id"),
+                "alliance_name":   g.get("alliance_name"),
+                "member_count":    g.get("member_count", 0),
+                "error":           None,
+            }
+        except AlbionApiError:
+            # Fall through to name search as a safety net.
+            pass
 
     try:
         results = search_albion_guilds(value, server=server)

@@ -15,6 +15,7 @@ Retries:    none inside this module — callers decide.
 from __future__ import annotations
 
 import json
+import re
 import threading
 import time
 
@@ -176,6 +177,38 @@ def search_albion_guilds(name: str, server: str = _DEFAULT_SERVER) -> list[dict]
     for r in results:
         r["server"] = server
     return results
+
+
+# Albion internal IDs are exactly 22 URL-safe base64 characters, e.g.
+# "bkH9XhQFRFG5gcoOLJgSoQ".  Used to tell "this input is a guild ID" apart
+# from "this input is a guild name" in the import/preview flow.
+_ALBION_ID_RE = re.compile(r"[A-Za-z0-9_-]{22}")
+
+
+def looks_like_albion_id(value: str) -> bool:
+    """True when *value* looks like a raw Albion entity ID (22 base64url chars)."""
+    return bool(_ALBION_ID_RE.fullmatch((value or "").strip()))
+
+
+def fetch_albion_guild(guild_id: str, server: str = _DEFAULT_SERVER) -> dict:
+    """
+    Fetch a single Albion guild directly by its stable guild ID via /guilds/{id}.
+
+    Unlike name search, this always finds the guild if the ID is valid, so it is
+    the reliable path for guilds the Albion /search index does not return.
+
+    Returns a normalised guild dict (with a "server" field).
+    Raises AlbionApiError on HTTP error, timeout, or missing guild ID.
+    """
+    base = ALBION_SERVERS.get(server) or ALBION_SERVERS[_DEFAULT_SERVER]
+    raw = _get_from(base, f"/guilds/{guild_id}")
+    if not isinstance(raw, dict):
+        raise AlbionApiError(f"Unexpected response type for guild {guild_id}")
+    result = _normalise_guild(raw)
+    if not result["albion_guild_id"]:
+        raise AlbionApiError(f"Guild ID missing from response for {guild_id}")
+    result["server"] = server
+    return result
 
 
 def fetch_albion_guild_members(guild_id: str) -> list[dict]:

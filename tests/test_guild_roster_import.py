@@ -532,6 +532,36 @@ class TestResolveAlbionGuildPreview:
         assert result["albion_guild_id"] == _GUILD_ID_A
         assert result["guild_name"] == "Iron Keep"
 
+    def test_direct_guild_id_resolves_via_fetch(self):
+        # A 22-char Albion ID should resolve directly via /guilds/{id},
+        # bypassing the unreliable name search index.
+        owner = make_user("PreviewIdOwner")
+        ws = make_workspace(owner_user_id=owner["id"])
+        albion_id = "bkH9XhQFRFG5gcoOLJgSoQ"  # 22-char base64url
+        resolved = {
+            "albion_guild_id": albion_id,
+            "guild_name":      "Dutch Chaos",
+            "server":          "europe",
+            "alliance_id":     None,
+            "alliance_name":   None,
+            "member_count":    0,
+        }
+        from app.albion import rest_client
+        with patch.object(rest_client, "fetch_albion_guild",
+                          return_value=resolved) as mock_fetch, \
+             patch.object(rest_client, "search_albion_guilds") as mock_search, \
+             patch.object(rest_client, "_rate_limit"):
+            result = use_cases.resolve_albion_guild_preview(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=owner["id"],
+                guild_name_or_id=albion_id,
+            )
+        assert result["error"] is None
+        assert result["albion_guild_id"] == albion_id
+        assert result["guild_name"] == "Dutch Chaos"
+        mock_fetch.assert_called_once()
+        mock_search.assert_not_called()  # ID path must not fall back to name search
+
     def test_no_results_returns_error(self):
         owner = make_user("PreviewNoResultOwner")
         ws = make_workspace(owner_user_id=owner["id"])
