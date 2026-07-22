@@ -50,15 +50,28 @@
 {% if builds %}
 <div class="bld-list">
   {% for build in builds %}
-  <div class="bld-card{% if build.retired_at %} bld-card--retired{% endif %}" data-role="{{ build.role | lower }}">
+  {# Discriminator: current_version_id IS NOT NULL → versioned (V2) build #}
+  {% set is_v2 = build.current_version_id %}
+  <div class="bld-card{% if build.retired_at %} bld-card--retired{% endif %}{% if is_v2 %} bld-card--v2{% endif %}"
+       data-role="{{ build.role | lower }}">
     <div class="bld-card__header">
-      {% if build.doctrine_role %}
+      {% if not is_v2 and build.doctrine_role %}
       <span class="bld-card__doctrine-role bld-doctrine-role">{{ build.doctrine_role }}</span>
       {% endif %}
-      <span class="bld-card__role">{{ build.role }}</span>
+      <span class="bld-card__role">{{ build.role | replace('_', ' ') }}</span>
       <span class="bld-card__name">
         <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}">{{ build.name }}</a>
       </span>
+      {% if is_v2 %}
+      <span class="badge badge-muted" style="font-size:0.75rem">v2</span>
+      {% if build.status == 'published' %}
+      <span class="badge badge-success" style="font-size:0.75rem">published</span>
+      {% elif build.status == 'archived' %}
+      <span class="badge badge-archived" style="font-size:0.75rem">archived</span>
+      {% else %}
+      <span class="badge" style="font-size:0.75rem;opacity:0.7">draft</span>
+      {% endif %}
+      {% endif %}
       {% if build.usage_count and build.usage_count > 0 %}
       <span class="bld-card__usage text-muted" style="font-size:0.8rem" title="Referenced in {{ build.usage_count }} active composition(s)">
         used in {{ build.usage_count }} comp{% if build.usage_count != 1 %}s{% endif %}
@@ -69,14 +82,30 @@
       {% endif %}
     </div>
     <div class="bld-card__body">
+      {% if is_v2 %}
+      {# V2 builds: show event type and min IP instead of legacy equipment fields #}
+      <span class="text-muted" style="font-size:0.85rem">
+        {{ build.event_type | upper | replace('_', ' ') }}{% if build.minimum_ip %} · Min IP {{ build.minimum_ip }}{% endif %}
+      </span>
+      {% else %}
       {{ doctrine_summary(build, css_class='bld-card__doctrine') }}
+      {% endif %}
     </div>
-    {% if can_mutate and not build.retired_at %}
+    {% if can_mutate %}
     <div class="bld-card__actions">
+      {% if is_v2 %}
+      {% if build.status != 'archived' %}
+      <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/edit"
+         class="btn btn-sm">Edit / New version</a>
+      {% endif %}
+      {% else %}
+      {% if not build.retired_at %}
       <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/edit"
          class="btn btn-sm">Edit</a>
       <a href="/workspaces/{{ workspace.slug }}/builds/{{ build.id }}/fork"
          class="btn btn-sm">Fork →</a>
+      {% endif %}
+      {% endif %}
     </div>
     {% endif %}
   </div>

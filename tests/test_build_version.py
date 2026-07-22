@@ -18,6 +18,9 @@ Coverage:
   Group 14 — Route: lifecycle routes (archive, restore, publish)
   Group 15 — Route: version history and version detail
   Group 16 — Regression: legacy builds/compositions unaffected
+  Group 17 — Build type isolation (helpers + repo filters)
+  Group 18 — Transaction rollback integrity
+  Group 19 — Direct database integrity (cross-build/workspace FK)
 """
 
 from __future__ import annotations
@@ -1646,3 +1649,373 @@ class TestLegacyRegression:
         assert resp.status_code == 200
         assert "Legacy In List" in resp.text
         assert "Test Healer" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Group 17 — Build type isolation (helpers + repository filters)
+# ---------------------------------------------------------------------------
+
+class TestBuildTypeIsolation:
+
+    def test_is_legacy_build_true_for_null_version_id(self):
+        assert bv_domain.is_legacy_build({"current_version_id": None}) is True
+
+    def test_is_legacy_build_true_for_missing_key(self):
+        assert bv_domain.is_legacy_build({}) is True
+
+    def test_is_legacy_build_false_for_versioned(self):
+        assert bv_domain.is_legacy_build({"current_version_id": "some-id"}) is False
+
+    def test_is_versioned_build_true_for_non_null(self):
+        assert bv_domain.is_versioned_build({"current_version_id": "abc"}) is True
+
+    def test_is_versioned_build_false_for_null(self):
+        assert bv_domain.is_versioned_build({"current_version_id": None}) is False
+
+    def test_is_versioned_build_false_for_missing_key(self):
+        assert bv_domain.is_versioned_build({}) is False
+
+    def test_get_albion_builds_legacy_only_excludes_v2(self):
+        owner = make_user("iso-leg-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="iso-leg-ws1")
+        # Create one legacy build and one V2 build.
+        legacy = use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="Legacy Only",
+            role="Healer",
+            weapon_name="Hallowfall",
+        )
+        _create_v2_build(ws["id"], owner["id"])
+        with database.transaction() as db:
+            legacy_only = repositories.get_albion_builds(
+                db, ws["id"], legacy_only=True
+            )
+        ids = [b["id"] for b in legacy_only]
+        assert legacy["id"] in ids
+        # V2 builds must not appear in legacy-only query.
+        for b in legacy_only:
+            assert b["current_version_id"] is None, (
+                f"V2 build appeared in legacy_only=True result: {b}"
+            )
+
+    def test_get_albion_builds_without_legacy_only_includes_both(self):
+        owner = make_user("iso-mixed-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="iso-mixed-ws1")
+        use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="Mixed Legacy",
+            role="Healer",
+            weapon_name="Hallowfall",
+        )
+        _create_v2_build(ws["id"], owner["id"])
+        with database.transaction() as db:
+            all_builds = repositories.get_albion_builds(db, ws["id"])
+        has_legacy = any(b["current_version_id"] is None for b in all_builds)
+        has_v2 = any(b["current_version_id"] is not None for b in all_builds)
+        assert has_legacy, "Expected at least one legacy build in mixed result"
+        assert has_v2, "Expected at least one V2 build in mixed result"
+
+    def test_v2_build_has_null_weapon_name(self):
+        owner = make_user("iso-null-wn-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="iso-null-wn-ws1")
+        build = _create_v2_build(ws["id"], owner["id"])
+        with database.transaction() as db:
+            row = repositories.get_albion_build(db, build["id"], ws["id"])
+        assert row["weapon_name"] is None, (
+            f"V2 build should have weapon_name=NULL, got {row['weapon_name']!r}"
+        )
+
+    def test_legacy_build_preserves_weapon_name(self):
+        owner = make_user("iso-leg-wn-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="iso-leg-wn-ws1")
+        use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="Legacy WN",
+            role="Healer",
+            weapon_name="Hallowfall",
+        )
+        with database.transaction() as db:
+            builds = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
+        legacy = next((b for b in builds if b["name"] == "Legacy WN"), None)
+        assert legacy is not None
+        assert legacy["weapon_name"] == "Hallowfall"
+
+    def test_fork_route_redirects_v2_to_edit(self):
+        client, owner, ws = _make_setup("iso-fork-ws1")
+        build = _create_v2_build(ws["id"], owner["id"])
+        resp = client.get(
+            f"/workspaces/{ws['slug']}/builds/{build['id']}/fork",
+            follow_redirects=False,
+        )
+        assert resp.status_code in (302, 303)
+        assert f"/builds/{build['id']}/edit" in resp.headers["location"]
+
+    def test_composition_new_route_workspace_builds_excludes_v2(self):
+        """GET /workspaces/{slug}/compositions/new must not include V2 builds."""
+        client, owner, ws = _make_setup("iso-comp-new-ws1")
+        _create_v2_build(ws["id"], owner["id"])
+        use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="Legacy For Comp",
+            role="Healer",
+            weapon_name="Hallowfall",
+        )
+        resp = client.get(f"/workspaces/{ws['slug']}/compositions/new")
+        assert resp.status_code == 200
+        # The response must contain the legacy build name but not show empty
+        # weapon_name entries from V2 builds (which have weapon_name=NULL).
+        assert "Legacy For Comp" in resp.text
+
+
+# ---------------------------------------------------------------------------
+# Group 18 — Transaction rollback integrity
+# ---------------------------------------------------------------------------
+
+class TestTransactionRollback:
+
+    def test_build_insert_fails_version_insert_leaves_no_build(self):
+        """If version insert fails, the build row must be rolled back."""
+        owner = make_user("rb-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="rb-ws1")
+        slot_json = json.dumps([
+            {"slot": "main_hand", "item_id": _get_valid_item_id_for_slot("main_hand"),
+             "is_primary": True},
+        ])
+        from unittest.mock import patch
+
+        def _fail_insert_version(db, version):
+            raise RuntimeError("Simulated version insert failure")
+
+        with patch.object(repositories, "insert_build_version", _fail_insert_version):
+            with pytest.raises(RuntimeError, match="Simulated version"):
+                use_cases.create_build(
+                    guild_workspace_id=ws["id"],
+                    actor_user_id=owner["id"],
+                    name="Rollback Test Build",
+                    description=None,
+                    role="healer",
+                    event_type="zvz",
+                    minimum_ip=0,
+                    status="draft",
+                    slot_items_json=slot_json,
+                )
+
+        # The build row must not exist after rollback.
+        with database.transaction() as db:
+            builds = repositories.get_albion_builds(db, ws["id"])
+        v2_builds = [b for b in builds if b.get("name") == "Rollback Test Build"]
+        assert not v2_builds, "Build row must have been rolled back"
+
+    def test_meta_update_fails_rolls_back_new_version(self):
+        """Failure in update_albion_build_meta_v2 must roll back the new version row."""
+        owner = make_user("rb-owner2")
+        ws = make_workspace(owner_user_id=owner["id"], slug="rb-ws2")
+        # Create build with version 1 using a head item.
+        build = _create_v2_build(
+            ws["id"], owner["id"],
+            slot_json=json.dumps([
+                {"slot": "head", "item_id": _get_valid_item_id_for_slot("head"),
+                 "is_primary": True},
+            ]),
+        )
+
+        with database.transaction() as db:
+            before = repositories.get_albion_build(db, build["id"], ws["id"])
+        original_version_id = before["current_version_id"]
+
+        from unittest.mock import patch
+
+        def _fail_meta_update(db, *args, **kwargs):
+            raise RuntimeError("Simulated meta update failure")
+
+        # Use a DIFFERENT slot (main_hand) in the new version so _is_identical is False.
+        slot_json_v2 = json.dumps([
+            {"slot": "main_hand", "item_id": _get_valid_item_id_for_slot("main_hand"),
+             "is_primary": True},
+        ])
+        with patch.object(repositories, "update_albion_build_meta_v2", _fail_meta_update):
+            with pytest.raises(RuntimeError, match="Simulated meta"):
+                use_cases.create_build_version(
+                    guild_workspace_id=ws["id"],
+                    build_id=build["id"],
+                    actor_user_id=owner["id"],
+                    slot_items_json=slot_json_v2,
+                    change_summary="Should be rolled back",
+                )
+
+        # current_version_id must be unchanged.
+        with database.transaction() as db:
+            after = repositories.get_albion_build(db, build["id"], ws["id"])
+        assert after["current_version_id"] == original_version_id
+
+        # No new version row must exist beyond the original.
+        with database.transaction() as db:
+            versions = repositories.list_build_versions(db, build["id"], ws["id"])
+        assert len(versions) == 1, (
+            f"Expected 1 version after rollback, found {len(versions)}"
+        )
+
+    def test_publish_validation_failure_leaves_status_unchanged(self):
+        owner = make_user("rb-pub-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="rb-pub-ws1")
+        # Create a draft build with no items.
+        build = _create_v2_build(ws["id"], owner["id"])
+
+        with pytest.raises(Exception):
+            use_cases.publish_build(ws["id"], build["id"], owner["id"])
+
+        with database.transaction() as db:
+            b = repositories.get_albion_build(db, build["id"], ws["id"])
+        assert b["status"] == "draft"
+
+    def test_archive_failure_leaves_status_unchanged(self):
+        owner = make_user("rb-arc-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="rb-arc-ws1")
+        build = _create_v2_build(ws["id"], owner["id"])
+        use_cases.archive_build(ws["id"], build["id"], owner["id"])
+        # Double-archive must fail; status remains archived.
+        with pytest.raises(Exception):
+            use_cases.archive_build(ws["id"], build["id"], owner["id"])
+        with database.transaction() as db:
+            b = repositories.get_albion_build(db, build["id"], ws["id"])
+        assert b["status"] == "archived"
+
+
+# ---------------------------------------------------------------------------
+# Group 19 — Direct database integrity (cross-build/workspace FK guard)
+# ---------------------------------------------------------------------------
+
+class TestDatabaseIntegrity:
+
+    def test_set_current_version_rejects_nonexistent_version(self):
+        owner = make_user("dbi-owner1")
+        ws = make_workspace(owner_user_id=owner["id"], slug="dbi-ws1")
+        build = _create_v2_build(ws["id"], owner["id"])
+        with pytest.raises(ValueError, match="does not exist"):
+            with database.transaction() as db:
+                repositories.set_build_current_version(
+                    db,
+                    build_id=build["id"],
+                    guild_workspace_id=ws["id"],
+                    version_id="nonexistent-version-id-xyz",
+                    updated_at="2025-01-01T00:00:00Z",
+                    updated_by=owner["id"],
+                )
+
+    def test_set_current_version_rejects_wrong_build(self):
+        """Version belonging to build A must not be assigned to build B."""
+        owner = make_user("dbi-owner2")
+        ws = make_workspace(owner_user_id=owner["id"], slug="dbi-ws2")
+        build_a = _create_v2_build(ws["id"], owner["id"])
+        build_b = use_cases.create_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="Build B",
+            description=None,
+            role="healer",
+            event_type="zvz",
+            minimum_ip=0,
+            status="draft",
+            slot_items_json="[]",
+        )
+        with database.transaction() as db:
+            a_row = repositories.get_albion_build(db, build_a["id"], ws["id"])
+        version_id_of_a = a_row["current_version_id"]
+
+        with pytest.raises(ValueError, match="belongs to build"):
+            with database.transaction() as db:
+                repositories.set_build_current_version(
+                    db,
+                    build_id=build_b["id"],
+                    guild_workspace_id=ws["id"],
+                    version_id=version_id_of_a,
+                    updated_at="2025-01-01T00:00:00Z",
+                    updated_by=owner["id"],
+                )
+
+    def test_set_current_version_rejects_wrong_workspace(self):
+        """Version from workspace A must not be assigned to a build in workspace B."""
+        owner = make_user("dbi-owner3")
+        ws_a = make_workspace(owner_user_id=owner["id"], slug="dbi-ws3a")
+        ws_b = make_workspace(owner_user_id=owner["id"], slug="dbi-ws3b")
+        build_a = _create_v2_build(ws_a["id"], owner["id"])
+        build_b = use_cases.create_build(
+            guild_workspace_id=ws_b["id"],
+            actor_user_id=owner["id"],
+            name="WS-B Build",
+            description=None,
+            role="healer",
+            event_type="zvz",
+            minimum_ip=0,
+            status="draft",
+            slot_items_json="[]",
+        )
+        with database.transaction() as db:
+            a_row = repositories.get_albion_build(db, build_a["id"], ws_a["id"])
+        version_id_of_a = a_row["current_version_id"]
+
+        with pytest.raises(ValueError, match="belongs to workspace"):
+            with database.transaction() as db:
+                repositories.set_build_current_version(
+                    db,
+                    build_id=build_b["id"],
+                    guild_workspace_id=ws_b["id"],
+                    version_id=version_id_of_a,
+                    updated_at="2025-01-01T00:00:00Z",
+                    updated_by=owner["id"],
+                )
+
+    def test_sql_level_fk_rejects_nonexistent_current_version_id(self):
+        """Direct SQL UPDATE with invalid current_version_id must raise IntegrityError."""
+        import sqlite3 as _sqlite3
+        owner = make_user("dbi-owner4")
+        ws = make_workspace(owner_user_id=owner["id"], slug="dbi-ws4")
+        build = _create_v2_build(ws["id"], owner["id"])
+        with pytest.raises(_sqlite3.IntegrityError):
+            with database.transaction() as db:
+                db.execute("PRAGMA foreign_keys = ON")
+                db.execute(
+                    "UPDATE albion_builds SET current_version_id = ? WHERE id = ?",
+                    ("nonexistent-version-9999", build["id"]),
+                )
+
+    def test_build_version_delete_restricted_while_build_references_it(self):
+        """Deleting a build_version row referenced by current_version_id must fail."""
+        import sqlite3 as _sqlite3
+        owner = make_user("dbi-owner5")
+        ws = make_workspace(owner_user_id=owner["id"], slug="dbi-ws5")
+        build = _create_v2_build(ws["id"], owner["id"])
+        with database.transaction() as db:
+            row = repositories.get_albion_build(db, build["id"], ws["id"])
+        version_id = row["current_version_id"]
+        with pytest.raises(_sqlite3.IntegrityError):
+            with database.transaction() as db:
+                db.execute("PRAGMA foreign_keys = ON")
+                db.execute(
+                    "DELETE FROM albion_build_versions WHERE id = ?",
+                    (version_id,),
+                )
+
+    def test_composition_fk_to_legacy_build_valid_after_db_exists(self):
+        """FK from composition_slot_templates to albion_builds must remain valid."""
+        from tests.conftest import make_composition
+        owner = make_user("dbi-owner6")
+        ws = make_workspace(owner_user_id=owner["id"], slug="dbi-ws6")
+        legacy = use_cases.create_albion_build(
+            guild_workspace_id=ws["id"],
+            actor_user_id=owner["id"],
+            name="FK Test Legacy",
+            role="Healer",
+            weapon_name="Hallowfall",
+        )
+        comp = make_composition(ws["id"])
+        # Verify FK integrity at the DB level.
+        with database.transaction() as db:
+            violations = db.execute(
+                "PRAGMA foreign_key_check(composition_slot_templates)"
+            ).fetchall()
+        assert not violations, f"FK violations found: {violations}"

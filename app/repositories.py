@@ -607,18 +607,27 @@ def get_albion_builds(
     db: sqlite3.Connection,
     guild_workspace_id: str,
     include_retired: bool = False,
+    legacy_only: bool = False,
 ) -> list[dict]:
-    if include_retired:
-        sql = (
-            "SELECT * FROM albion_builds WHERE guild_workspace_id = ? "
-            "ORDER BY name"
-        )
-    else:
-        sql = (
-            "SELECT * FROM albion_builds "
-            "WHERE guild_workspace_id = ? AND retired_at IS NULL "
-            "ORDER BY name"
-        )
+    """Return builds for a workspace.
+
+    Parameters
+    ----------
+    include_retired:
+        When True, include legacy builds whose ``retired_at IS NOT NULL``.
+    legacy_only:
+        When True, restrict to legacy builds (``current_version_id IS NULL``).
+        Use this for any context that must not receive versioned builds:
+        composition slot selection, import, fork, suggestions, planner.
+        When False (default), returns both legacy and versioned builds.
+    """
+    clauses: list[str] = ["guild_workspace_id = ?"]
+    if not include_retired:
+        clauses.append("retired_at IS NULL")
+    if legacy_only:
+        clauses.append("current_version_id IS NULL")
+    where = " AND ".join(clauses)
+    sql = f"SELECT * FROM albion_builds WHERE {where} ORDER BY name"
     return _rows(db.execute(sql, (guild_workspace_id,)).fetchall())
 
 
@@ -740,7 +749,32 @@ def set_build_current_version(
     updated_at: str,
     updated_by: str,
 ) -> None:
-    """Update current_version_id on a build after a new version is created."""
+    """Update current_version_id on a build after a new version is created.
+
+    Enforces the cross-build/cross-workspace invariant:
+    the version must belong to *build_id* and *guild_workspace_id*.
+    Raises ``ValueError`` if the version does not exist, belongs to a
+    different build, or belongs to a different workspace.
+    """
+    version_row = db.execute(
+        "SELECT build_id, guild_workspace_id FROM albion_build_versions WHERE id = ?",
+        (version_id,),
+    ).fetchone()
+    if version_row is None:
+        raise ValueError(
+            f"Version '{version_id}' does not exist. "
+            "Cannot set current_version_id."
+        )
+    if version_row[1] != guild_workspace_id:
+        raise ValueError(
+            f"Version '{version_id}' belongs to workspace '{version_row[1]}', "
+            f"not '{guild_workspace_id}'. Cannot cross-workspace assign current_version_id."
+        )
+    if version_row[0] != build_id:
+        raise ValueError(
+            f"Version '{version_id}' belongs to build '{version_row[0]}', "
+            f"not '{build_id}'. Cannot cross-assign current_version_id."
+        )
     db.execute(
         """
         UPDATE albion_builds
@@ -1010,17 +1044,29 @@ def get_builds_with_usage_counts(
     db: sqlite3.Connection,
     guild_workspace_id: str,
     include_retired: bool = False,
+    legacy_only: bool = False,
 ) -> list[dict]:
-    """Return build rows augmented with a usage_count field.
+    """Return build rows augmented with a ``usage_count`` field.
 
-    usage_count = number of distinct active compositions (deleted_at IS NULL)
+    ``usage_count`` = number of distinct active compositions (deleted_at IS NULL)
     that have at least one composition_slot_templates row with
-    albion_build_id = build.id.
+    ``albion_build_id = build.id``.
 
-    Builds with no FK references carry usage_count = 0.
+    Builds with no FK references carry ``usage_count = 0``.
     Ordering matches get_albion_builds: alphabetical by name.
+
+    Parameters
+    ----------
+    legacy_only:
+        When True restrict to legacy builds (``current_version_id IS NULL``).
+        The general builds list should leave this False so V2 builds appear.
     """
-    retired_clause = "" if include_retired else "AND b.retired_at IS NULL"
+    clauses: list[str] = ["b.guild_workspace_id = ?"]
+    if not include_retired:
+        clauses.append("b.retired_at IS NULL")
+    if legacy_only:
+        clauses.append("b.current_version_id IS NULL")
+    where = " AND ".join(clauses)
     rows = _rows(
         db.execute(
             f"""
@@ -1034,16 +1080,13 @@ def get_builds_with_usage_counts(
              AND cst.guild_workspace_id = b.guild_workspace_id
             LEFT JOIN albion_compositions c
               ON c.id = cst.albion_composition_id
-            WHERE b.guild_workspace_id = ?
-              {retired_clause}
+            WHERE {where}
             GROUP BY b.id
             ORDER BY b.name
             """,
             (guild_workspace_id,),
         ).fetchall()
     )
-    # Ensure usage_count is always an int (sqlite returns it as int already,
-    # but guard for None from an empty LEFT JOIN).
     for row in rows:
         row["usage_count"] = row.get("usage_count") or 0
     return rows
@@ -3973,4 +4016,99 @@ def link_workspace_albion_player_to_user(
         (user_id, now, guild_workspace_id, albion_player_id),
     )
     return cursor.rowcount > 0
+
+
+def find_unlinked_roster_players_by_name(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    character_name: str,
+) -> list[dict]:
+    """Return active, unlinked roster players in a workspace whose character
+    name matches *character_name* case-insensitively.
+
+    Filters:
+    - ``user_id IS NULL``     — only rows not yet linked to an Ironkeep user.
+    - ``stale_at IS NULL``    — only players still present in the guild roster.
+    - ``LOWER(character_name) = LOWER(?)`` — case-insensitive exact match.
+
+    Returns a list (possibly empty, possibly >1 when several characters share a
+    name); the caller decides how to handle ambiguity.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM workspace_albion_players
+            WHERE guild_workspace_id = ?
+              AND user_id IS NULL
+              AND stale_at IS NULL
+              AND LOWER(character_name) = LOWER(?)
+            ORDER BY character_name
+            """,
+            (guild_workspace_id, character_name),
+        ).fetchall()
+    )
+
+
+def find_roster_join_candidates_for_user(
+    db: sqlite3.Connection,
+    user_id: str,
+    display_name: str,
+) -> list[dict]:
+    """Return workspaces the user can self-join via an Albion roster name match.
+
+    A workspace qualifies when it contains an active, unlinked roster player
+    (``user_id IS NULL`` and ``stale_at IS NULL``) whose character name matches
+    the user's *display_name* case-insensitively AND the user is not already a
+    member of that workspace.
+
+    Each row: ``{id, name, slug, character_name, albion_player_id}``.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT DISTINCT
+                w.id                 AS id,
+                w.name               AS name,
+                w.slug               AS slug,
+                p.character_name     AS character_name,
+                p.albion_player_id   AS albion_player_id
+            FROM workspace_albion_players p
+            JOIN guild_workspaces w ON w.id = p.guild_workspace_id
+            WHERE p.user_id IS NULL
+              AND p.stale_at IS NULL
+              AND LOWER(p.character_name) = LOWER(?)
+              AND NOT EXISTS (
+                  SELECT 1 FROM workspace_members m
+                  WHERE m.guild_workspace_id = w.id
+                    AND m.user_id = ?
+              )
+            ORDER BY w.name
+            """,
+            (display_name, user_id),
+        ).fetchall()
+    )
+
+
+def get_workspaces_needing_roster_sync(
+    db: sqlite3.Connection,
+    threshold_at: str,
+) -> list[dict]:
+    """Return workspaces with at least one linked Albion guild whose roster is
+    stale (never imported, or last imported before *threshold_at*).
+
+    Used by the scheduler's periodic roster-sync job.  Each row: ``{id, name}``.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT DISTINCT w.id AS id, w.name AS name
+            FROM guild_workspaces w
+            JOIN workspace_albion_guilds g ON g.guild_workspace_id = w.id
+            WHERE g.last_imported_at IS NULL
+               OR g.last_imported_at < ?
+            ORDER BY w.name
+            """,
+            (threshold_at,),
+        ).fetchall()
+    )
 

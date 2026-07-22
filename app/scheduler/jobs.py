@@ -10,6 +10,10 @@ Safety rules (design decision):
   - Jobs may call refresh_discord_metadata (best-effort, already non-fatal).
   - Jobs may write to discord_dispatch_failures (status/retry updates only),
     operation_reminder_deliveries, and scheduler_runs.
+  - Jobs may sync the imported Albion guild roster (workspace_albion_guilds,
+    workspace_albion_players) via sync_workspace_rosters_system — this refreshes
+    imported character data only and NEVER grants workspace memberships or
+    links roster rows to Ironkeep users.
   - Jobs must NOT mutate operation status, create/remove assignments,
     post announcements or rosters, or grant workspace memberships.
   - The readiness-only dispatch policy is enforced by the existing
@@ -48,6 +52,11 @@ _log = logging.getLogger(__name__)
 
 MAX_RETRIES: int = 3
 METADATA_STALE_HOURS: int = 24
+
+# Roster sync: a workspace's linked guilds are re-synced when their newest
+# last_imported_at is older than this many hours (or never imported).  Keeps the
+# scheduler from hammering the Albion API on every short poll interval.
+ROSTER_SYNC_STALE_HOURS: int = 6
 
 _BACKOFF: list[timedelta] = [
     timedelta(minutes=5),
@@ -388,6 +397,58 @@ def refresh_stale_metadata() -> dict:
         except Exception as exc:
             _log.warning(
                 "refresh_stale_metadata: workspace %s error: %s", ws_id, exc
+            )
+            result["errors"] += 1
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Job: sync_albion_guild_rosters
+# ---------------------------------------------------------------------------
+
+def sync_albion_guild_rosters() -> dict:
+    """Periodically re-sync Albion guild rosters for workspaces whose rosters
+    are stale (never imported, or older than ROSTER_SYNC_STALE_HOURS).
+
+    For each qualifying workspace, calls the system-actor roster sync use case
+    (no RBAC).  This keeps the imported roster fresh so that Discord users can
+    self-join by matching their display name to a current guild character.
+
+    Per-workspace failures (e.g. Albion API errors) are logged and counted but
+    never abort the job — one bad workspace does not block the others.
+
+    Returns:
+        {"workspaces_checked": N, "synced": N, "players_active": N,
+         "stale_marked": N, "errors": N}
+    """
+    from app.application import use_cases  # noqa: PLC0415
+
+    now = _utcnow()
+    threshold_at = _iso(now - timedelta(hours=ROSTER_SYNC_STALE_HOURS))
+
+    with database.transaction() as db:
+        workspaces = repositories.get_workspaces_needing_roster_sync(db, threshold_at)
+
+    result: dict[str, int] = {
+        "workspaces_checked": len(workspaces),
+        "synced":             0,
+        "players_active":     0,
+        "stale_marked":       0,
+        "errors":             0,
+    }
+
+    for ws in workspaces:
+        ws_id = ws["id"]
+        try:
+            summary = use_cases.sync_workspace_rosters_system(ws_id)
+            result["synced"]         += 1
+            result["players_active"] += summary.get("active", 0)
+            result["stale_marked"]   += summary.get("stale_marked", 0)
+            _log.info("sync_albion_guild_rosters: workspace %s synced: %s", ws_id, summary)
+        except Exception as exc:
+            _log.warning(
+                "sync_albion_guild_rosters: workspace %s error: %s", ws_id, exc
             )
             result["errors"] += 1
 

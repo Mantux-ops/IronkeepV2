@@ -7,6 +7,27 @@
 {% include "page_header.html" %}
 {% include "flash_messages.html" %}
 
+{% if roster_join_candidates %}
+<div class="card" style="margin-bottom:var(--space-3)">
+  <div class="card-body">
+    <h3 style="margin-bottom:var(--space-2)">We found your character</h3>
+    <p class="text-muted" style="margin-bottom:var(--space-2)">
+      Your display name matches a character in these guild rosters. Join to get access.
+    </p>
+    {% for cand in roster_join_candidates %}
+    <div class="alert alert-info" style="display:flex;align-items:center;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:var(--space-2)">
+      <span>
+        <strong>{{ cand.name }}</strong> — matched character <strong>{{ cand.character_name }}</strong>
+      </span>
+      <form method="post" action="/workspaces/{{ cand.slug }}/join-via-roster" class="inline-form">
+        <button type="submit" class="btn btn-sm btn-primary">Join {{ cand.name }} →</button>
+      </form>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
 {% if unclaimed_discord_workspaces %}
 <div class="card" style="margin-bottom:var(--space-3)">
   <div class="card-body">

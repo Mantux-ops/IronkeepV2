@@ -737,6 +737,10 @@ def home(request: Request):
             user       = require_current_user(db, request)
             workspaces = repositories.get_workspaces_for_user(db, user["id"])
             unclaimed  = repositories.get_unclaimed_discord_workspaces(db)
+            # Workspaces the user can self-join via an Albion roster name match.
+            roster_join_candidates = repositories.find_roster_join_candidates_for_user(
+                db, user["id"], user["display_name"]
+            )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     return templates.TemplateResponse(
@@ -747,7 +751,40 @@ def home(request: Request):
             "workspaces":                  workspaces,
             "current_user":                user,
             "unclaimed_discord_workspaces": unclaimed,
+            "roster_join_candidates":      roster_join_candidates,
         },
+    )
+
+
+@router.post("/workspaces/{slug}/join-via-roster")
+async def post_join_via_roster(request: Request, slug: str):
+    """Self-service join: add the current user to a workspace when their display
+    name matches an unlinked Albion guild roster character.
+
+    The name match is re-verified server-side in the use case — the client
+    cannot force a join for a workspace they don't match.
+    """
+    try:
+        with database.transaction() as db:
+            user = require_current_user(db, request)
+            ws = repositories.get_workspace_by_slug(db, slug)
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+
+    if not ws:
+        raise HTTPException(status_code=404, detail="Workspace not found.")
+
+    try:
+        result = use_cases.join_workspace_via_roster_match(
+            user_id=user["id"],
+            guild_workspace_id=ws["id"],
+        )
+    except IronkeepError as exc:
+        return _err_redirect("/workspaces", str(exc))
+
+    return _ok_redirect(
+        f"/workspaces/{slug}",
+        f"Welcome! You joined as {result['character_name']}.",
     )
 
 
@@ -2109,6 +2146,13 @@ def get_fork_build(request: Request, slug: str, build_id: str):
     except PermissionDenied as exc:
         raise HTTPException(status_code=403, detail=str(exc))
 
+    # Versioned builds (Phase 12.3) cannot be forked into a legacy flat build.
+    # Redirect to the V2 edit page instead so the user can create a new version.
+    if source.get("current_version_id"):
+        return _redirect(
+            f"/workspaces/{slug}/builds/{build_id}/edit"
+        )
+
     prev = {
         "name":         f"Copy of {source['name']}",
         "role":         source["role"],
@@ -3109,7 +3153,7 @@ def get_new_composition(request: Request, slug: str):
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
             if not access["can_mutate"]:
                 raise PermissionDenied("You do not have permission for this action.")
-            workspace_builds    = repositories.get_albion_builds(db, ws["id"])
+            workspace_builds    = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
             build_suggestions   = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -3161,8 +3205,9 @@ def get_composition_detail(request: Request, slug: str, comp_id: str):
                 db, comp_id, ws["id"]
             )
             # Workspace builds passed to detail page for quick-edit build selector.
+            # Only legacy builds are eligible for composition slot assignment.
             workspace_builds = (
-                repositories.get_albion_builds(db, ws["id"])
+                repositories.get_albion_builds(db, ws["id"], legacy_only=True)
                 if access.get("can_mutate")
                 else []
             )
@@ -3323,7 +3368,7 @@ def get_clone_composition(request: Request, slug: str, comp_id: str):
             slot_templates = repositories.get_composition_slot_templates(
                 db, comp_id, ws["id"]
             )
-            workspace_builds  = repositories.get_albion_builds(db, ws["id"])
+            workspace_builds  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
             build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -3417,7 +3462,7 @@ def get_edit_composition(request: Request, slug: str, comp_id: str):
             active_operations = repositories.get_operations_using_composition(
                 db, comp_id, ws["id"]
             )
-            workspace_builds  = repositories.get_albion_builds(db, ws["id"])
+            workspace_builds  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
             build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -3605,7 +3650,7 @@ async def post_create_composition(request: Request, slug: str):
             _prev_warnings = []
         try:
             with database.transaction() as db:
-                _wb  = repositories.get_albion_builds(db, ws["id"])
+                _wb  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
                 _bsg = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
         except Exception:
             _wb  = []

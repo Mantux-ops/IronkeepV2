@@ -63,6 +63,10 @@ WORKSPACE_DISCORD_PROVISIONED = "workspace.discord_provisioned"
 WORKSPACE_OWNER_CLAIMED = "workspace.owner_claimed"
 WORKSPACE_DISCORD_CONFIG_UPDATED = "workspace.discord_config.updated"
 WORKSPACE_MEMBER_REMOVED = "workspace.member.removed"
+# Emitted when a Discord-authenticated user self-joins a workspace by matching
+# their display name to an unlinked Albion guild roster character. Workspace-level,
+# audit-only, not dispatchable.
+WORKSPACE_MEMBER_SELF_JOINED = "workspace.member.self_joined"
 ALBION_COMPOSITION_CREATED       = "albion_composition.created"
 ALBION_COMPOSITION_DELETED       = "albion_composition.deleted"
 ALBION_COMPOSITION_SLOTS_UPDATED = "albion_composition.slots.updated"

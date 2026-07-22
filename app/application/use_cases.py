@@ -1309,10 +1309,11 @@ def create_build(
             "current_version_id": None,  # set after version insert
             "notes":              None,
             "doctrine_role":      None,
-            # Legacy flat equipment fields — empty string for v2 builds.
-            # weapon_name is NOT NULL in the legacy schema; v2 builds don't use it
-            # but must satisfy the constraint.
-            "weapon_name":        "",
+            # Legacy flat equipment fields — NULL for v2 builds (Phase 12.3b).
+            # weapon_name is nullable post-migration; versioned builds never use
+            # these fields.  The _migrate_albion_builds_rebuild migration also
+            # backfills any existing "" sentinels to NULL.
+            "weapon_name":        None,
             "offhand_name":       None,
             "head_name":          None,
             "armor_name":         None,
@@ -4872,6 +4873,51 @@ def refresh_all_guild_rosters(
             raise PermissionDenied(
                 "Only officers and owners can refresh guild rosters."
             )
+
+    return _refresh_all_guild_rosters_core(
+        guild_workspace_id=guild_workspace_id,
+        actor_type="user",
+        actor_id=requesting_user_id,
+    )
+
+
+def sync_workspace_rosters_system(guild_workspace_id: str) -> dict:
+    """Refresh all linked Albion guild rosters for a workspace as the *system*
+    actor, bypassing the officer/owner RBAC check.
+
+    This is the entry point used by the scheduler's periodic roster-sync job.
+    It must NEVER be wired directly to an HTTP route — user-triggered refreshes
+    go through refresh_all_guild_rosters, which enforces permissions.
+
+    Behaviour is otherwise identical to refresh_all_guild_rosters: it fetches
+    every linked guild roster, aborts before any DB write if any fetch fails,
+    upserts players, marks absent players stale, and emits one audit event
+    (with actor_type='system').
+
+    Raises ValidationError if the workspace has no linked guilds or any Albion
+    API call fails; NotFoundError if the workspace does not exist.
+    """
+    return _refresh_all_guild_rosters_core(
+        guild_workspace_id=guild_workspace_id,
+        actor_type="system",
+        actor_id=None,
+    )
+
+
+def _refresh_all_guild_rosters_core(
+    *,
+    guild_workspace_id: str,
+    actor_type: str,
+    actor_id: str | None,
+) -> dict:
+    """Shared roster-refresh implementation for the user- and system-triggered
+    entry points.  Performs NO permission checks — the caller is responsible for
+    authorization before invoking this function.
+    """
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
         linked_guilds = repositories.list_workspace_albion_guilds(db, guild_workspace_id)
 
     if not linked_guilds:
@@ -4959,8 +5005,8 @@ def refresh_all_guild_rosters(
             event_type=operational_events.ALBION_GUILD_ROSTER_REFRESHED,
             entity_type="guild_workspace",
             entity_id=guild_workspace_id,
-            actor_type="user",
-            actor_id=requesting_user_id,
+            actor_type=actor_type,
+            actor_id=actor_id,
             payload={
                 "guilds_refreshed": len(fetched),
                 "active":           active,
@@ -4976,3 +5022,124 @@ def refresh_all_guild_rosters(
         "updated":          updated,
         "stale_marked":     stale_marked,
     }
+
+
+def join_workspace_via_roster_match(
+    *,
+    user_id: str,
+    guild_workspace_id: str,
+) -> dict:
+    """Let a user self-join a workspace by matching their display name to an
+    unlinked Albion guild roster character.
+
+    Security model: the name match is re-verified server-side here (never
+    trusted from the client).  A user may only join when EXACTLY ONE active,
+    unlinked roster character in the workspace matches their display name
+    case-insensitively.  Ambiguous (multiple) matches are refused so an officer
+    can link the correct character manually.
+
+    On success, atomically:
+      1. Inserts a workspace_members row with role='member'.
+      2. Links the roster player row to the user (workspace_albion_players.user_id).
+      3. Inserts an 'approved' player_game_identities row when no identity yet
+         exists for this user or this character in the workspace.
+      4. Emits a WORKSPACE_MEMBER_SELF_JOINED audit event.
+
+    Returns ``{"workspace": <workspace dict>, "character_name": str}``.
+
+    Raises:
+        NotFoundError   — workspace does not exist, or user does not exist.
+        ConflictError   — the user is already a member of the workspace.
+        ValidationError — no matching roster character, or the match is ambiguous.
+    """
+    now = _now()
+
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+        if not ws:
+            raise NotFoundError("Workspace not found.")
+
+        user = repositories.get_user_by_id(db, user_id)
+        if not user:
+            raise NotFoundError("User not found.")
+
+        if repositories.get_workspace_membership(db, guild_workspace_id, user_id):
+            raise ConflictError("You are already a member of this workspace.")
+
+        display_name = (user["display_name"] or "").strip()
+        if not display_name:
+            raise ValidationError("Your account has no display name to match against.")
+
+        matches = repositories.find_unlinked_roster_players_by_name(
+            db, guild_workspace_id, display_name
+        )
+        if not matches:
+            raise ValidationError(
+                f"No unlinked guild-roster character matches your name "
+                f"'{display_name}'. Ask an officer to add you manually, or make "
+                "sure your display name matches your in-game character name."
+            )
+        if len(matches) > 1:
+            raise ValidationError(
+                f"Multiple roster characters match the name '{display_name}'. "
+                "Ask an officer to link the correct character to your account."
+            )
+
+        player = matches[0]
+
+        membership = {
+            "id": str(uuid.uuid4()),
+            "guild_workspace_id": guild_workspace_id,
+            "user_id": user_id,
+            "role": "member",
+            "created_at": now,
+        }
+        repositories.insert_workspace_member(db, membership)
+
+        repositories.link_workspace_albion_player_to_user(
+            db,
+            guild_workspace_id=guild_workspace_id,
+            albion_player_id=player["albion_player_id"],
+            user_id=user_id,
+        )
+
+        # Create an approved identity claim only when none exists yet for this
+        # user or this character in the workspace (avoids UNIQUE violations).
+        existing_user_identity = repositories.get_player_game_identity_for_user(
+            db, user_id, guild_workspace_id
+        )
+        existing_char_identity = repositories.get_player_game_identity_by_albion_id(
+            db, player["albion_player_id"], guild_workspace_id
+        )
+        if not existing_user_identity and not existing_char_identity:
+            repositories.insert_player_game_identity(db, {
+                "id": str(uuid.uuid4()),
+                "guild_workspace_id": guild_workspace_id,
+                "user_id": user_id,
+                "game": "albion",
+                "albion_player_id": player["albion_player_id"],
+                "character_name": player["character_name"],
+                "verification_status": "approved",
+                "claimed_at": now,
+                "reviewed_at": now,
+                "reviewed_by": user_id,
+                "review_note": "Auto-linked via guild roster name match.",
+                "created_at": now,
+            })
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=None,
+            event_type=operational_events.WORKSPACE_MEMBER_SELF_JOINED,
+            entity_type="workspace_member",
+            entity_id=membership["id"],
+            actor_type="user",
+            actor_id=user_id,
+            payload={
+                "albion_player_id": player["albion_player_id"],
+                "character_name":   player["character_name"],
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+    return {"workspace": ws, "character_name": player["character_name"]}

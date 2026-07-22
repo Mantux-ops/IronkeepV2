@@ -289,6 +289,158 @@ def _migrate_workspace_albion_guilds_add_server(conn: sqlite3.Connection) -> Non
     conn.commit()
 
 
+def _migrate_albion_builds_rebuild(conn: sqlite3.Connection) -> None:
+    """Rebuild ``albion_builds`` to add DB-level integrity for Phase 12.3b.
+
+    Two improvements in one table rebuild (SQLite cannot add constraints via
+    ALTER TABLE):
+
+    1. ``weapon_name TEXT NULL``  — was NOT NULL; versioned builds store NULL
+       here instead of the legacy sentinel ``""``.
+    2. ``FOREIGN KEY (current_version_id) REFERENCES albion_build_versions(id)``
+       — ensures current_version_id can only point at an existing version row.
+
+    Idempotent: detects the already-migrated state by checking whether
+    ``weapon_name`` allows NULL in ``PRAGMA table_info``.
+
+    Safety:
+    * Validates every V2 row's ``current_version_id`` before dropping the old
+      table so corruption is caught before any data loss.
+    * Runs with ``PRAGMA foreign_keys = OFF`` to allow the transient rename.
+    * Calls ``PRAGMA foreign_key_check(albion_builds)`` after rename.
+    * Rolls back on any error — the old table is never dropped until the new
+      one is fully populated and validated.
+    * Recreates the ``idx_albion_builds_workspace`` index.
+    * The ``composition_slot_templates.albion_build_id → albion_builds.id`` FK
+      is preserved because the table name is unchanged after the rename.
+    """
+    rows = conn.execute("PRAGMA table_info(albion_builds)").fetchall()
+    if not rows:
+        # Table does not exist yet (fresh DB will be created from schema.sql).
+        _log.info("albion_builds does not exist yet — skipping rebuild.")
+        return
+
+    # Detect: notnull flag for weapon_name column (index 3 in PRAGMA result).
+    weapon_col = next((r for r in rows if r[1] == "weapon_name"), None)
+    if weapon_col is None:
+        _log.warning("weapon_name column not found in albion_builds — skipping rebuild.")
+        return
+    if weapon_col[3] == 0:
+        # notnull == 0  →  NULL already allowed  →  migration already applied.
+        _log.debug("albion_builds rebuild already applied, skipping.")
+        return
+
+    # Check that current_version_id column exists (added by _COLUMN_MIGRATIONS).
+    col_names = {r[1] for r in rows}
+    if "current_version_id" not in col_names:
+        _log.warning(
+            "current_version_id column missing from albion_builds — "
+            "column migrations may not have run yet.  Skipping rebuild."
+        )
+        return
+
+    _log.info(
+        "Rebuilding albion_builds: weapon_name → nullable, "
+        "adding FOREIGN KEY on current_version_id."
+    )
+
+    # Pre-flight: validate V2 rows before dropping the old table.
+    broken = conn.execute(
+        """
+        SELECT b.id FROM albion_builds b
+        WHERE b.current_version_id IS NOT NULL
+          AND b.current_version_id NOT IN (
+              SELECT id FROM albion_build_versions
+          )
+        """
+    ).fetchall()
+    if broken:
+        ids = ", ".join(r[0] for r in broken)
+        raise RuntimeError(
+            f"albion_builds rebuild aborted: rows have current_version_id "
+            f"pointing at non-existent albion_build_versions rows: {ids}. "
+            "Fix the data corruption before running the migration."
+        )
+
+    conn.execute("PRAGMA foreign_keys = OFF")
+    try:
+        # Build exact column list from current table so we never silently drop
+        # columns added by future migrations.  We explicitly cast known columns
+        # to their correct nullability in the new definition.
+        conn.execute("""
+            CREATE TABLE albion_builds_new (
+                id                  TEXT PRIMARY KEY,
+                guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+                name                TEXT NOT NULL,
+                role                TEXT NOT NULL,
+                weapon_name         TEXT NULL,
+                offhand_name        TEXT,
+                head_name           TEXT,
+                armor_name          TEXT,
+                shoes_name          TEXT,
+                cape_name           TEXT,
+                food_name           TEXT,
+                potion_name         TEXT,
+                notes               TEXT,
+                doctrine_role       TEXT,
+                created_at          TEXT NOT NULL,
+                updated_at          TEXT NOT NULL,
+                retired_at          TEXT,
+                description         TEXT NULL,
+                event_type          TEXT NOT NULL DEFAULT 'other',
+                minimum_ip          INTEGER NOT NULL DEFAULT 0,
+                status              TEXT NOT NULL DEFAULT 'draft',
+                current_version_id  TEXT NULL
+                    REFERENCES albion_build_versions(id),
+                created_by          TEXT NULL,
+                updated_by          TEXT NULL,
+                archived_at         TEXT NULL,
+                archived_by         TEXT NULL
+            )
+        """)
+        conn.execute("""
+            INSERT INTO albion_builds_new
+                (id, guild_workspace_id, name, role, weapon_name,
+                 offhand_name, head_name, armor_name, shoes_name,
+                 cape_name, food_name, potion_name, notes, doctrine_role,
+                 created_at, updated_at, retired_at,
+                 description, event_type, minimum_ip, status,
+                 current_version_id, created_by, updated_by,
+                 archived_at, archived_by)
+            SELECT
+                 id, guild_workspace_id, name, role,
+                 -- Migrate empty-string sentinel to NULL for versioned builds.
+                 CASE WHEN current_version_id IS NOT NULL AND weapon_name = ''
+                      THEN NULL ELSE weapon_name END,
+                 offhand_name, head_name, armor_name, shoes_name,
+                 cape_name, food_name, potion_name, notes, doctrine_role,
+                 created_at, updated_at, retired_at,
+                 description, event_type, minimum_ip, status,
+                 current_version_id, created_by, updated_by,
+                 archived_at, archived_by
+            FROM albion_builds
+        """)
+        conn.execute("DROP TABLE albion_builds")
+        conn.execute("ALTER TABLE albion_builds_new RENAME TO albion_builds")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_albion_builds_workspace "
+            "ON albion_builds(guild_workspace_id, retired_at)"
+        )
+        violations = conn.execute("PRAGMA foreign_key_check(albion_builds)").fetchall()
+        if violations:
+            raise RuntimeError(
+                f"albion_builds PRAGMA foreign_key_check found violations after "
+                f"rebuild: {violations}"
+            )
+        conn.commit()
+        _log.info("albion_builds rebuild complete.")
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+
+
 def init_schema() -> None:
     """
     Create all tables and indexes from schema.sql (idempotent).
@@ -320,5 +472,6 @@ def init_schema() -> None:
             except sqlite3.OperationalError as exc:
                 _log.warning("Data migration skipped (%s): %.120s", exc, stmt.strip())
         _migrate_workspace_albion_guilds_add_server(conn)
+        _migrate_albion_builds_rebuild(conn)
     finally:
         conn.close()

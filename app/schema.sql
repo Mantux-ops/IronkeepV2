@@ -235,7 +235,11 @@ CREATE TABLE IF NOT EXISTS albion_builds (
     guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
     name                TEXT NOT NULL,
     role                TEXT NOT NULL,
-    weapon_name         TEXT NOT NULL,
+    -- NULL for Phase 12.3 versioned builds; non-null for legacy flat builds.
+    -- Legacy builds MUST have a non-empty weapon_name (enforced at app layer).
+    -- Versioned builds (current_version_id IS NOT NULL) store equipment in
+    -- albion_build_slot_items and never use this or other flat equipment fields.
+    weapon_name         TEXT NULL,
     offhand_name        TEXT,
     head_name           TEXT,
     armor_name          TEXT,
@@ -249,8 +253,22 @@ CREATE TABLE IF NOT EXISTS albion_builds (
     doctrine_role       TEXT,
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL,
-    -- NULL = active; ISO-8601 timestamp = retired (soft-delete)
-    retired_at          TEXT
+    -- NULL = active; ISO-8601 timestamp = retired (soft-delete, legacy only)
+    retired_at          TEXT,
+    -- Phase 12.3: versioned build metadata (NULL on legacy builds)
+    description         TEXT NULL,
+    event_type          TEXT NOT NULL DEFAULT 'other',
+    minimum_ip          INTEGER NOT NULL DEFAULT 0,
+    status              TEXT NOT NULL DEFAULT 'draft',
+    -- Logical FK to albion_build_versions.id; NULL for legacy and during initial insert.
+    -- FOREIGN KEY declared here for fresh databases; existing databases get the
+    -- constraint added via _migrate_albion_builds_rebuild() in database.py.
+    current_version_id  TEXT NULL
+        REFERENCES albion_build_versions(id),
+    created_by          TEXT NULL,
+    updated_by          TEXT NULL,
+    archived_at         TEXT NULL,
+    archived_by         TEXT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_albion_builds_workspace

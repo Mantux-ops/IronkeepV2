@@ -236,3 +236,38 @@ def validate_slot_items(slot_items: list[dict], status: str) -> None:
                 + ", ".join(sorted(missing))
                 + "."
             )
+
+
+# ---------------------------------------------------------------------------
+# Build type discriminators
+# ---------------------------------------------------------------------------
+
+#: Sentinel used for legacy NOT NULL constraint on weapon_name.
+#: Post-migration (Phase 12.3b) V2 builds store NULL in weapon_name.
+#: This constant is kept for reference only — new code must use NULL,
+#: not this sentinel, when checking is_versioned_build().
+VERSIONED_BUILD_WEAPON_NAME_LEGACY_SENTINEL = ""
+
+
+def is_versioned_build(build: dict) -> bool:
+    """Return True when *build* is a Phase 12.3 versioned build.
+
+    Discriminator: ``current_version_id IS NOT NULL``.
+    V2 builds are managed via the visual editor and store equipment in
+    ``albion_build_slot_items`` via ``albion_build_versions``.
+    They must never be processed by legacy equipment logic (weapon_name,
+    offhand_name, doctrine_summary, import, fork, composition-slot-select).
+    """
+    return bool(build.get("current_version_id"))
+
+
+def is_legacy_build(build: dict) -> bool:
+    """Return True when *build* is a legacy flat-equipment build.
+
+    Discriminator: ``current_version_id IS NULL``.
+    Legacy builds store equipment in flat text columns on ``albion_builds``
+    (weapon_name, offhand_name, head_name, …) and are consumed by
+    compositions, operation_slots, and the legacy flat-form editor.
+    They must never be processed by V2 versioning logic.
+    """
+    return not bool(build.get("current_version_id"))
