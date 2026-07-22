@@ -6,7 +6,8 @@ Pure HTTP layer — no SQLite, no Discord, no domain imports.
 Base URL: https://gameinfo.albiononline.com/api/gameinfo
 
 Rate limit: 1 request per second (lightweight token-bucket via threading lock).
-Timeout:    5 seconds per request.
+Timeout:    15 seconds per request (the Albion gameinfo API is frequently slow;
+            search in particular can take ~8s+). Search uses a longer timeout.
 Errors:     AlbionApiError on timeout or non-200 HTTP status.
 Retries:    none inside this module — callers decide.
 """
@@ -20,7 +21,8 @@ import time
 import httpx
 
 _BASE_URL = "https://gameinfo.albiononline.com/api/gameinfo"
-_TIMEOUT = 5.0  # seconds
+_TIMEOUT = 15.0         # seconds — default per-request timeout
+_SEARCH_TIMEOUT = 25.0  # seconds — /search is notably slower than other endpoints
 
 # ---------------------------------------------------------------------------
 # Known Albion server API base URLs.
@@ -69,11 +71,12 @@ class AlbionApiError(Exception):
 # Internal HTTP helper
 # ---------------------------------------------------------------------------
 
-def _get(path: str, params: dict | None = None) -> dict | list:
+def _get(path: str, params: dict | None = None,
+         timeout: float = _TIMEOUT) -> dict | list:
     _rate_limit()
     url = f"{_BASE_URL}{path}"
     try:
-        response = httpx.get(url, params=params, timeout=_TIMEOUT)
+        response = httpx.get(url, params=params, timeout=timeout)
     except httpx.TimeoutException as exc:
         raise AlbionApiError(f"Albion API timed out: {path}") from exc
     except httpx.RequestError as exc:
@@ -85,12 +88,13 @@ def _get(path: str, params: dict | None = None) -> dict | list:
     return response.json()
 
 
-def _get_from(base_url: str, path: str, params: dict | None = None) -> dict | list:
+def _get_from(base_url: str, path: str, params: dict | None = None,
+              timeout: float = _TIMEOUT) -> dict | list:
     """Like _get() but queries *base_url* instead of the module-level _BASE_URL."""
     _rate_limit()
     url = f"{base_url}{path}"
     try:
-        response = httpx.get(url, params=params, timeout=_TIMEOUT)
+        response = httpx.get(url, params=params, timeout=timeout)
     except httpx.TimeoutException as exc:
         raise AlbionApiError(f"Albion API timed out: {path}") from exc
     except httpx.RequestError as exc:
@@ -147,6 +151,11 @@ def search_albion_guilds(name: str, server: str = _DEFAULT_SERVER) -> list[dict]
     "asia").  Defaults to "europe" (the original base URL).  Unknown server
     keys fall back to "europe".
 
+    Uses the Albion gameinfo ``/search`` endpoint, which returns an object of
+    the form ``{"guilds": [...], "players": [...]}``.  (There is no
+    ``/guilds/search`` endpoint — that path hangs.)  Only the guilds array is
+    used here.  Note: search results do not include member counts.
+
     Each returned dict includes a "server" field set to the queried server key
     so callers can display which server the result came from.
 
@@ -154,10 +163,16 @@ def search_albion_guilds(name: str, server: str = _DEFAULT_SERVER) -> list[dict]
     Raises AlbionApiError on HTTP error or timeout.
     """
     base = ALBION_SERVERS.get(server) or ALBION_SERVERS[_DEFAULT_SERVER]
-    raw = _get_from(base, "/guilds/search", params={"q": name})
-    if not isinstance(raw, list):
+    raw = _get_from(base, "/search", params={"q": name}, timeout=_SEARCH_TIMEOUT)
+    # The /search endpoint returns {"guilds": [...], "players": [...]}.
+    # Fall back gracefully for other shapes (and for tests that mock a raw list).
+    if isinstance(raw, dict):
+        guilds_raw = raw.get("guilds") or raw.get("Guilds") or []
+    elif isinstance(raw, list):
+        guilds_raw = raw
+    else:
         return []
-    results = [_normalise_guild(g) for g in raw if g.get("Id") or g.get("id")]
+    results = [_normalise_guild(g) for g in guilds_raw if g.get("Id") or g.get("id")]
     for r in results:
         r["server"] = server
     return results

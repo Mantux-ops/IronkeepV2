@@ -148,6 +148,34 @@ class TestGuildRestClient:
         assert results[0]["alliance_name"] == "Iron Alliance"
         assert results[0]["member_count"] == 80
 
+    def test_search_parses_search_endpoint_dict_shape(self):
+        # The real Albion /search endpoint returns
+        # {"guilds": [...], "players": [...]} — only guilds are used.
+        raw = {
+            "guilds": [
+                {"Id": _GUILD_ID_A, "Name": "Iron Keep",
+                 "AllianceId": "ally-001", "AllianceName": "Iron Alliance"},
+            ],
+            "players": [
+                {"Id": "player-x", "Name": "SomePlayer"},
+            ],
+        }
+        from app.albion import rest_client
+        with patch.object(rest_client, "_get_from", return_value=raw):
+            with patch.object(rest_client, "_rate_limit"):
+                results = rest_client.search_albion_guilds("Iron Keep")
+        assert len(results) == 1
+        assert results[0]["albion_guild_id"] == _GUILD_ID_A
+        assert results[0]["guild_name"] == "Iron Keep"
+        assert results[0]["server"] == "europe"
+
+    def test_search_dict_without_guilds_returns_empty(self):
+        from app.albion import rest_client
+        with patch.object(rest_client, "_get_from", return_value={"players": []}):
+            with patch.object(rest_client, "_rate_limit"):
+                results = rest_client.search_albion_guilds("x")
+        assert results == []
+
     def test_search_empty_list_returns_empty(self):
         from app.albion import rest_client
         with patch.object(rest_client, "_get_from", return_value=[]):
