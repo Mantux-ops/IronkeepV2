@@ -100,7 +100,15 @@ def discord_oauth_login(discord_user_id: str, discord_username: str) -> dict:
             identities = repositories.get_auth_identities_for_user(db, existing["id"])
             providers = {i["auth_provider"] for i in identities}
             is_linked = users.DEV_AUTH_PROVIDER in providers
-            if not is_linked and existing["display_name"] != discord_username:
+            # If a Discord server nickname has been synced for this user, it is
+            # authoritative (members set it to their in-game name) — never revert
+            # display_name back to the global Discord name on login.
+            has_synced_nick = (
+                repositories.get_discord_member_nick_for_user(db, existing["id"])
+                is not None
+            )
+            if not is_linked and not has_synced_nick \
+                    and existing["display_name"] != discord_username:
                 now = _now()
                 db.execute(
                     "UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?",
@@ -2421,6 +2429,7 @@ def submit_signup_intent(
     availability: str = "confirmed",
     source: str = "web",
     actor_user_id: str | None = None,
+    discord_user_id: str | None = None,
 ) -> dict:
     """
     Register a participant's intent to attend an operation.
@@ -2429,6 +2438,8 @@ def submit_signup_intent(
     Returns the full signup_intents row.
 
     source: 'web' (default) or 'discord' â€” audit-only, no domain effect.
+    discord_user_id: when the signup originates from Discord, stored on the
+      participant so roster posts can @mention the member (live server nickname).
     """
     operation_plans.validate_preferred_role(preferred_role)
     operation_plans.validate_willingness(willingness)
@@ -2448,7 +2459,7 @@ def submit_signup_intent(
             raise ConflictError("Signups are closed for this operation.")
 
         participant = repositories.find_or_create_participant(
-            db, guild_workspace_id, display_name
+            db, guild_workspace_id, display_name, discord_user_id=discord_user_id
         )
 
         existing = repositories.get_signup_intent(
@@ -3724,6 +3735,96 @@ def refresh_discord_metadata(guild_workspace_id: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Discord member nickname sync (system actor)
+# ---------------------------------------------------------------------------
+
+def sync_discord_member_nicknames_system(guild_workspace_id: str) -> dict:
+    """Refresh cached Discord server nicknames for one workspace's guild.
+
+    System actor (no RBAC). Reads GET /guilds/{id}/members (requires the
+    privileged Server Members Intent) and:
+      1. Upserts every member's nick/global_name/username into
+         discord_member_cache.
+      2. Updates users.display_name to the member's effective in-game name
+         (nickname > global_name > username) for Ironkeep users whose ONLY
+         auth identity is Discord — mirroring discord_oauth_login's rule that
+         linked (dev+discord) users keep their guild display name.
+
+    Two-phase: the REST call runs outside any DB transaction; DB writes happen
+    afterwards. A missing guild link, missing bot token, or a Discord error
+    (e.g. the intent is not enabled) is non-fatal and reported in the summary.
+
+    Returns:
+      {"members_fetched": N, "cached": N, "names_updated": N, "status": "ok"|"skipped:..."|"error:..."}
+    """
+    from app.discord import rest_client  # noqa: PLC0415
+
+    result = {"members_fetched": 0, "cached": 0, "names_updated": 0, "status": "skipped"}
+
+    with database.transaction() as db:
+        ws = repositories.get_workspace_by_id(db, guild_workspace_id)
+    if not ws:
+        raise NotFoundError("Workspace not found.")
+
+    guild_id = ws.get("discord_guild_id")
+    if not guild_id:
+        result["status"] = "skipped:no_discord_guild"
+        return result
+
+    # Phase 1: REST fetch (outside any DB transaction).
+    try:
+        members = rest_client.fetch_guild_members(guild_id)
+    except Exception as exc:  # noqa: BLE001 — non-fatal, reported to caller
+        result["status"] = f"error:{exc}"
+        return result
+
+    result["members_fetched"] = len(members)
+    now = _now()
+
+    # Phase 2: DB writes.
+    with database.transaction() as db:
+        for m in members:
+            discord_uid = m["discord_user_id"]
+            repositories.upsert_discord_member_nick(
+                db,
+                guild_workspace_id=guild_workspace_id,
+                discord_user_id=discord_uid,
+                nickname=m.get("nickname"),
+                global_name=m.get("global_name"),
+                username=m.get("username"),
+                fetched_at=now,
+            )
+            result["cached"] += 1
+
+            effective = m.get("nickname") or m.get("global_name") or m.get("username")
+            if not effective:
+                continue
+
+            user = repositories.get_user_by_provider_identity(
+                db, users.DISCORD_AUTH_PROVIDER, discord_uid
+            )
+            if not user:
+                continue
+
+            # Only auto-set the name for pure-Discord accounts (skip linked
+            # dev+discord users, matching discord_oauth_login policy).
+            identities = repositories.get_auth_identities_for_user(db, user["id"])
+            providers = {i["auth_provider"] for i in identities}
+            if users.DEV_AUTH_PROVIDER in providers:
+                continue
+
+            if user["display_name"] != effective:
+                db.execute(
+                    "UPDATE users SET display_name = ?, updated_at = ? WHERE id = ?",
+                    (effective, now, user["id"]),
+                )
+                result["names_updated"] += 1
+
+    result["status"] = "ok"
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Discord announcement â€” explicit officer post action
 # ---------------------------------------------------------------------------
 
@@ -3930,7 +4031,11 @@ def post_discord_roster(
     # Format payload (pure, no DB or API)
     # ------------------------------------------------------------------
     assignments = [
-        {"slot_id": slot_id, "display_name": info["display_name"]}
+        {
+            "slot_id": slot_id,
+            "display_name": info["display_name"],
+            "discord_user_id": info.get("discord_user_id"),
+        }
         for slot_id, info in assigned_map.items()
     ]
     web_base_url = os.environ.get("WEB_BASE_URL", "").rstrip("/")

@@ -58,6 +58,12 @@ METADATA_STALE_HOURS: int = 24
 # scheduler from hammering the Albion API on every short poll interval.
 ROSTER_SYNC_STALE_HOURS: int = 6
 
+# Discord member nickname sync: a workspace's cached server nicknames are
+# refreshed when the newest cache row is older than this many hours (or never
+# fetched).  Members set their nickname to their in-game name; this keeps the
+# workspace display names current without hammering the Discord API.
+MEMBER_NICK_SYNC_STALE_HOURS: int = 6
+
 _BACKOFF: list[timedelta] = [
     timedelta(minutes=5),
     timedelta(minutes=30),
@@ -449,6 +455,61 @@ def sync_albion_guild_rosters() -> dict:
         except Exception as exc:
             _log.warning(
                 "sync_albion_guild_rosters: workspace %s error: %s", ws_id, exc
+            )
+            result["errors"] += 1
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Job: sync_discord_member_nicknames
+# ---------------------------------------------------------------------------
+
+def sync_discord_member_nicknames() -> dict:
+    """Periodically refresh cached Discord server nicknames for workspaces whose
+    member cache is stale (never fetched, or older than
+    MEMBER_NICK_SYNC_STALE_HOURS).
+
+    For each qualifying workspace, calls sync_discord_member_nicknames_system,
+    which reads the guild's members (requires the Server Members Intent) and
+    updates workspace display names to members' in-game nicknames.
+
+    Per-workspace failures (Discord errors, intent not enabled, missing token)
+    are logged and counted but never abort the job.
+
+    Returns:
+        {"workspaces_checked": N, "synced": N, "names_updated": N, "errors": N}
+    """
+    from app.application import use_cases  # noqa: PLC0415
+
+    now = _utcnow()
+    threshold_at = _iso(now - timedelta(hours=MEMBER_NICK_SYNC_STALE_HOURS))
+
+    with database.transaction() as db:
+        workspaces = repositories.get_workspaces_needing_member_nick_sync(db, threshold_at)
+
+    result: dict[str, int] = {
+        "workspaces_checked": len(workspaces),
+        "synced":             0,
+        "names_updated":      0,
+        "errors":             0,
+    }
+
+    for ws in workspaces:
+        ws_id = ws["id"]
+        try:
+            summary = use_cases.sync_discord_member_nicknames_system(ws_id)
+            if summary.get("status") == "ok":
+                result["synced"] += 1
+                result["names_updated"] += summary.get("names_updated", 0)
+            else:
+                # A non-ok status (e.g. intent not enabled) is not an exception
+                # but should still be visible as a soft error in the run record.
+                result["errors"] += 1
+            _log.info("sync_discord_member_nicknames: workspace %s -> %s", ws_id, summary)
+        except Exception as exc:
+            _log.warning(
+                "sync_discord_member_nicknames: workspace %s error: %s", ws_id, exc
             )
             result["errors"] += 1
 

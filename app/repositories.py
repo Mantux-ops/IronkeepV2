@@ -1404,24 +1404,42 @@ def find_participant_by_display_name(
 
 
 def find_or_create_participant(
-    db: sqlite3.Connection, guild_workspace_id: str, display_name: str
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    display_name: str,
+    discord_user_id: str | None = None,
 ) -> dict:
     """
     Idempotent: returns existing participant if display_name is taken,
     otherwise inserts and returns the new one.  Must be called within a
     transaction to be safe against concurrent inserts (SQLite is single-writer,
     so this is fine in practice).
+
+    When *discord_user_id* is provided it is stored on new rows and backfilled
+    onto existing rows that don't have one yet (never overwrites an existing id).
+    This enables @mentions in Discord roster posts.
     """
     now = _now()
     pid = str(uuid.uuid4())
     db.execute(
         """
         INSERT OR IGNORE INTO participants
-            (id, guild_workspace_id, display_name, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?)
+            (id, guild_workspace_id, display_name, discord_user_id, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (pid, guild_workspace_id, display_name, now, now),
+        (pid, guild_workspace_id, display_name, discord_user_id, now, now),
     )
+    if discord_user_id:
+        # Backfill an existing participant that has no Discord id yet.
+        db.execute(
+            """
+            UPDATE participants
+            SET discord_user_id = ?, updated_at = ?
+            WHERE guild_workspace_id = ? AND display_name = ?
+              AND (discord_user_id IS NULL OR discord_user_id = '')
+            """,
+            (discord_user_id, now, guild_workspace_id, display_name),
+        )
     row = db.execute(
         "SELECT * FROM participants WHERE guild_workspace_id = ? AND display_name = ?",
         (guild_workspace_id, display_name),
@@ -1841,7 +1859,8 @@ def get_assigned_participants_for_operation(
     """
     rows = db.execute(
         """
-        SELECT a.id AS assignment_id, a.operation_slot_id, a.participant_id, p.display_name
+        SELECT a.id AS assignment_id, a.operation_slot_id, a.participant_id,
+               p.display_name, p.discord_user_id
         FROM assignments a
         JOIN participants p ON p.id = a.participant_id
         WHERE a.guild_operation_id = ?
@@ -2469,6 +2488,64 @@ def get_workspace_by_discord_guild_id(
     )
 
 
+# ---------------------------------------------------------------------------
+# Discord member nickname cache
+# ---------------------------------------------------------------------------
+
+def upsert_discord_member_nick(
+    db: sqlite3.Connection,
+    *,
+    guild_workspace_id: str,
+    discord_user_id: str,
+    nickname: str | None,
+    global_name: str | None,
+    username: str | None,
+    fetched_at: str,
+) -> None:
+    """Insert or refresh a member's cached Discord names for a workspace."""
+    db.execute(
+        """
+        INSERT INTO discord_member_cache
+            (id, guild_workspace_id, discord_user_id, nickname, global_name,
+             username, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(guild_workspace_id, discord_user_id) DO UPDATE SET
+            nickname    = excluded.nickname,
+            global_name = excluded.global_name,
+            username    = excluded.username,
+            fetched_at  = excluded.fetched_at
+        """,
+        (str(uuid.uuid4()), guild_workspace_id, discord_user_id, nickname,
+         global_name, username, fetched_at),
+    )
+
+
+def get_discord_member_nick_for_user(
+    db: sqlite3.Connection, user_id: str
+) -> str | None:
+    """Return the best cached Discord name for an Ironkeep user, or None.
+
+    Resolves the user's Discord snowflake via user_auth_identities, then reads
+    discord_member_cache for the most recently fetched row across all
+    workspaces.  Effective name = COALESCE(nickname, global_name, username).
+    Returns None when the user has no Discord identity or no cache row.
+    """
+    row = db.execute(
+        """
+        SELECT COALESCE(c.nickname, c.global_name, c.username) AS effective_name
+        FROM user_auth_identities i
+        JOIN discord_member_cache c
+          ON c.discord_user_id = i.provider_user_id
+        WHERE i.user_id = ? AND i.auth_provider = 'discord'
+          AND COALESCE(c.nickname, c.global_name, c.username) IS NOT NULL
+        ORDER BY c.fetched_at DESC
+        LIMIT 1
+        """,
+        (user_id,),
+    ).fetchone()
+    return row["effective_name"] if row else None
+
+
 def set_workspace_discord_guild_id(
     db: sqlite3.Connection,
     workspace_id: str,
@@ -3079,6 +3156,43 @@ def get_workspaces_needing_metadata_refresh(
                       WHERE c.guild_workspace_id = w.id
                         AND c.fetched_at < ?
                   )
+              )
+            ORDER BY w.id
+            """,
+            (threshold_at,),
+        ).fetchall()
+    )
+
+
+def get_workspaces_needing_member_nick_sync(
+    db: sqlite3.Connection,
+    threshold_at: str,
+) -> list[dict]:
+    """
+    Return active workspaces whose Discord member nickname cache is stale/missing.
+
+    A workspace qualifies if:
+    - discord_guild_id IS NOT NULL (Discord is configured), AND
+    - not soft-deleted, AND
+    - no member cache rows exist, OR the newest cached row is older than
+      threshold_at (now - nickname stale hours).
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT w.*
+            FROM guild_workspaces w
+            WHERE w.discord_guild_id IS NOT NULL
+              AND w.deleted_at IS NULL
+              AND (
+                  NOT EXISTS (
+                      SELECT 1 FROM discord_member_cache c
+                      WHERE c.guild_workspace_id = w.id
+                  )
+                  OR (
+                      SELECT MAX(c.fetched_at) FROM discord_member_cache c
+                      WHERE c.guild_workspace_id = w.id
+                  ) < ?
               )
             ORDER BY w.id
             """,

@@ -113,6 +113,7 @@ def handle_signup_command(payload: dict, db) -> dict:
             willingness=opts.get("willingness", "specific"),
             availability=opts.get("availability", "confirmed"),
             source="discord",
+            discord_user_id=user_id,
         )
         return _success_response(format_signup_confirmation(operation, signup))
 

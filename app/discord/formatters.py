@@ -266,16 +266,21 @@ def format_roster(
 
     operation requires: id, title, status
     slots: list of dicts with id, party_number, slot_index, role, build_name
-    assignments: list of dicts with slot_id, display_name
-      (caller resolves participant display names before calling)
+    assignments: list of dicts with slot_id, display_name, and optional
+      discord_user_id (when present, the participant is rendered as an @mention
+      so Discord shows their live server nickname and pings them).
     signup_url (optional): when provided, adds an "Open Signup Page" link button.
 
     Slot line format:
-      {slot_index}. {role} — {build_name or '—'} — **{display_name}**   (assigned)
-      {slot_index}. {role} — {build_name or '—'} — *(open)*             (unassigned)
+      {slot_index}. {role} — {build_name or '—'} — <@discord_id> or **{name}**  (assigned)
+      {slot_index}. {role} — {build_name or '—'} — *(open)*                      (unassigned)
     """
-    # Build slot_id → display_name lookup
-    assigned: dict[str, str] = {a["slot_id"]: a["display_name"] for a in assignments}
+    # Build slot_id → rendered participant string. Prefer an @mention (Discord
+    # renders the member's current server nickname) and fall back to bold text.
+    assigned: dict[str, str] = {}
+    for a in assignments:
+        did = a.get("discord_user_id")
+        assigned[a["slot_id"]] = f"<@{did}>" if did else f"**{a['display_name']}**"
 
     # Group slots by party, preserving slot_index order
     parties: dict[int, list[dict]] = {}
@@ -291,11 +296,7 @@ def format_roster(
             build  = slot.get("build_name") or "—"
             role   = slot.get("role", "?")
             idx    = slot.get("slot_index", "?")
-            name   = assigned.get(slot["id"])
-            if name:
-                participant = f"**{name}**"
-            else:
-                participant = "*(open)*"
+            participant = assigned.get(slot["id"]) or "*(open)*"
             lines.append(f"{idx}. {role} — {build} — {participant}")
         fields.append({
             "name":   f"Party {party_num}",

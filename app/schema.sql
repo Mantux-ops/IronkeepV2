@@ -145,6 +145,29 @@ CREATE TABLE IF NOT EXISTS discord_metadata_cache (
     UNIQUE (guild_workspace_id, entity_type, discord_entity_id)
 );
 
+-- ---------------------------------------------------------------------------
+-- Discord member nickname cache
+-- Per-workspace snapshot of each Discord server member's server nickname, kept
+-- fresh by a scheduler job that reads GET /guilds/{id}/members (requires the
+-- "Server Members Intent" to be enabled for the bot application).  Members set
+-- their server nickname to their in-game Albion name; Ironkeep uses that as the
+-- authoritative display name across the workspace.
+--   effective name = COALESCE(nickname, global_name, username)
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS discord_member_cache (
+    id                  TEXT PRIMARY KEY,
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    discord_user_id     TEXT NOT NULL,    -- Discord snowflake of the member
+    nickname            TEXT,             -- per-server nick (may be NULL)
+    global_name         TEXT,             -- account display name (fallback)
+    username            TEXT,             -- legacy username (last-resort fallback)
+    fetched_at          TEXT NOT NULL,    -- ISO-8601 UTC; drives staleness
+    UNIQUE (guild_workspace_id, discord_user_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_discord_member_cache_user
+    ON discord_member_cache(discord_user_id);
+
 CREATE TABLE IF NOT EXISTS user_auth_identities (
     id                TEXT PRIMARY KEY,
     user_id           TEXT NOT NULL REFERENCES users(id),
@@ -356,6 +379,10 @@ CREATE TABLE IF NOT EXISTS participants (
     guild_workspace_id      TEXT NOT NULL REFERENCES guild_workspaces(id),
     display_name            TEXT NOT NULL,
     albion_character_name   TEXT,
+    -- Discord snowflake of the participant, set when the participant is created
+    -- from a Discord interaction (signup/check-in).  Enables @mentions in
+    -- Discord roster posts so Discord renders the member's live server nickname.
+    discord_user_id         TEXT,
     created_at              TEXT NOT NULL,
     updated_at              TEXT NOT NULL,
     UNIQUE (guild_workspace_id, display_name)

@@ -153,6 +153,69 @@ def fetch_channel_metadata(channel_id: str) -> dict:
     }
 
 
+def fetch_guild_members(guild_id: str, *, page_limit: int = 1000, max_pages: int = 20) -> list[dict]:
+    """
+    Fetch the full member list of a Discord guild, including server nicknames.
+
+    Uses GET /guilds/{id}/members with snowflake pagination (`after`). Each page
+    returns up to `page_limit` members (Discord max is 1000). Stops when a short
+    page is returned or `max_pages` is reached (safety cap: 20 * 1000 = 20k).
+
+    IMPORTANT: this endpoint requires the privileged **Server Members Intent**
+    (GUILD_MEMBERS) to be enabled for the bot application in the Discord
+    Developer Portal. Without it Discord returns 403 and this raises
+    DiscordApiError — callers treat that as non-fatal.
+
+    Returns a list of normalized dicts:
+      {
+        "discord_user_id": str,   # never None
+        "nickname":        str | None,   # per-server nick
+        "global_name":     str | None,   # account display name
+        "username":        str | None,   # legacy username
+      }
+    Bot accounts are skipped.
+    """
+    members: list[dict] = []
+    after = "0"
+    for _ in range(max_pages):
+        try:
+            resp = httpx.get(
+                f"{_API_BASE}/guilds/{guild_id}/members",
+                headers=_headers(),
+                params={"limit": page_limit, "after": after},
+                timeout=15.0,  # member lists can be large / slow
+            )
+        except httpx.TimeoutException:
+            raise DiscordApiError(
+                0,
+                f"Guild member fetch timed out. Discord may be temporarily unavailable.",
+            )
+        _raise_for_status(resp)
+        page = resp.json()
+        if not isinstance(page, list) or not page:
+            break
+
+        for m in page:
+            user = m.get("user") or {}
+            uid = user.get("id")
+            if not uid or user.get("bot"):
+                continue
+            members.append({
+                "discord_user_id": str(uid),
+                "nickname":        m.get("nick"),
+                "global_name":     user.get("global_name"),
+                "username":        user.get("username"),
+            })
+
+        # Advance the cursor to the highest snowflake seen this page. Compare as
+        # integers — snowflakes vary in length so string max() would be wrong.
+        after = str(max(int(m.get("user", {}).get("id") or 0) for m in page))
+        if len(page) < page_limit:
+            break
+
+    return members
+
+
 def edit_message(channel_id: str, message_id: str, payload: dict) -> None:
     """
     PATCH (edit) an existing Discord message.

@@ -160,6 +160,9 @@ _COLUMN_MIGRATIONS: list[str] = [
     # Albion player ID bridge — dormant infrastructure for future officer-driven linking.
     # NOT used by planner, attendance, assignments, payouts, or reliability in this slice.
     "ALTER TABLE participants ADD COLUMN albion_player_id TEXT NULL",
+    # Discord mention support: snowflake of the participant when created from a
+    # Discord interaction.  Lets roster posts render <@id> (live server nickname).
+    "ALTER TABLE participants ADD COLUMN discord_user_id TEXT NULL",
     # Payout ledger finalization — explicit paid timestamp and actor (Slice 42).
     "ALTER TABLE payout_ledger_entries ADD COLUMN paid_at         TEXT NULL",
     "ALTER TABLE payout_ledger_entries ADD COLUMN paid_by_user_id TEXT NULL",

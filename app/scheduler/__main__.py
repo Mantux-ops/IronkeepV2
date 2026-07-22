@@ -51,10 +51,11 @@ def main() -> None:
     _log.info("Scheduler started. Poll interval: %ds", POLL_SECONDS)
 
     while True:
-        jobs.run_job("retry_dispatch_failures",   jobs.retry_dispatch_failures)
-        jobs.run_job("refresh_stale_metadata",    jobs.refresh_stale_metadata)
-        jobs.run_job("sync_albion_guild_rosters", jobs.sync_albion_guild_rosters)
-        jobs.run_job("send_operation_reminders",  jobs.send_operation_reminders)
+        jobs.run_job("retry_dispatch_failures",      jobs.retry_dispatch_failures)
+        jobs.run_job("refresh_stale_metadata",       jobs.refresh_stale_metadata)
+        jobs.run_job("sync_albion_guild_rosters",    jobs.sync_albion_guild_rosters)
+        jobs.run_job("sync_discord_member_nicknames", jobs.sync_discord_member_nicknames)
+        jobs.run_job("send_operation_reminders",     jobs.send_operation_reminders)
         _log.info("Sleeping %ds until next poll", POLL_SECONDS)
         time.sleep(POLL_SECONDS)
 
