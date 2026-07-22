@@ -30,9 +30,17 @@ _SEARCH_TIMEOUT = 25.0  # seconds — /search is notably slower than other endpo
 # The same guild name can exist on different servers; IDs are server-specific.
 # Note: regional availability depends on Albion Online's infrastructure.
 # ---------------------------------------------------------------------------
+#
+# IMPORTANT: the host suffix does NOT correspond to the region name.
+# Albion's live server hosts are:
+#   - https://gameinfo.albiononline.com      -> Americas (West)   [no suffix]
+#   - https://gameinfo-ams.albiononline.com  -> Europe (Amsterdam)
+#   - https://gameinfo-sgp.albiononline.com  -> Asia (Singapore)
+# (A previous version had europe/americas swapped, which made every Europe
+#  search hit the Americas server and silently return no/incorrect results.)
 ALBION_SERVERS: dict[str, str] = {
-    "europe":   "https://gameinfo.albiononline.com/api/gameinfo",
-    "americas": "https://gameinfo-ams.albiononline.com/api/gameinfo",
+    "americas": "https://gameinfo.albiononline.com/api/gameinfo",
+    "europe":   "https://gameinfo-ams.albiononline.com/api/gameinfo",
     "asia":     "https://gameinfo-sgp.albiononline.com/api/gameinfo",
 }
 ALBION_SERVER_LABELS: dict[str, str] = {
@@ -73,9 +81,10 @@ class AlbionApiError(Exception):
 # ---------------------------------------------------------------------------
 
 def _get(path: str, params: dict | None = None,
-         timeout: float = _TIMEOUT) -> dict | list:
+         timeout: float = _TIMEOUT, server: str = _DEFAULT_SERVER) -> dict | list:
+    base = ALBION_SERVERS.get(server) or ALBION_SERVERS[_DEFAULT_SERVER]
     _rate_limit()
-    url = f"{_BASE_URL}{path}"
+    url = f"{base}{path}"
     try:
         response = httpx.get(url, params=params, timeout=timeout)
     except httpx.TimeoutException as exc:
@@ -211,15 +220,19 @@ def fetch_albion_guild(guild_id: str, server: str = _DEFAULT_SERVER) -> dict:
     return result
 
 
-def fetch_albion_guild_members(guild_id: str) -> list[dict]:
+def fetch_albion_guild_members(guild_id: str,
+                               server: str = _DEFAULT_SERVER) -> list[dict]:
     """
     Fetch all current members of an Albion guild by stable guild ID.
+
+    *server* selects which regional Albion server to query and MUST match the
+    server the guild lives on, otherwise the API returns 404/empty.
 
     Returns a list of normalised player dicts — may be empty for guilds
     that exist but have no members.
     Raises AlbionApiError on HTTP error, timeout, or unexpected response.
     """
-    raw = _get(f"/guilds/{guild_id}/members")
+    raw = _get(f"/guilds/{guild_id}/members", server=server)
     if not isinstance(raw, list):
         raise AlbionApiError(
             f"Unexpected response type for guild members {guild_id}"
@@ -297,27 +310,34 @@ def fetch_albion_alliance(alliance_id: str, server: str = _DEFAULT_SERVER) -> di
 # Public API — player endpoints
 # ---------------------------------------------------------------------------
 
-def search_albion_characters(name: str) -> list[dict]:
+def search_albion_characters(name: str,
+                             server: str = _DEFAULT_SERVER) -> list[dict]:
     """
-    Search for Albion players by (partial) name.
+    Search for Albion players by (partial) name on the given *server*.
 
     Returns a list of normalised player dicts — may be empty.
     Raises AlbionApiError on HTTP error or timeout.
     """
-    raw = _get("/players/search", params={"q": name})
-    if not isinstance(raw, list):
+    raw = _get("/search", params={"q": name}, timeout=_SEARCH_TIMEOUT, server=server)
+    # /search returns {"guilds": [...], "players": [...]}.
+    if isinstance(raw, dict):
+        players_raw = raw.get("players") or raw.get("Players") or []
+    elif isinstance(raw, list):
+        players_raw = raw
+    else:
         return []
-    return [_normalise_player(p) for p in raw if p.get("Id") or p.get("id")]
+    return [_normalise_player(p) for p in players_raw if p.get("Id") or p.get("id")]
 
 
-def fetch_albion_character(albion_player_id: str) -> dict:
+def fetch_albion_character(albion_player_id: str,
+                           server: str = _DEFAULT_SERVER) -> dict:
     """
-    Fetch a single Albion player by stable player ID.
+    Fetch a single Albion player by stable player ID on the given *server*.
 
     Returns a normalised player dict.
     Raises AlbionApiError on HTTP error, timeout, or missing data.
     """
-    raw = _get(f"/players/{albion_player_id}")
+    raw = _get(f"/players/{albion_player_id}", server=server)
     if not isinstance(raw, dict):
         raise AlbionApiError(
             f"Unexpected response type for player {albion_player_id}"

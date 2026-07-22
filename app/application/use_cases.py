@@ -4770,7 +4770,7 @@ def import_albion_guild_roster(
     from app.albion.rest_client import AlbionApiError, fetch_albion_guild_members
 
     try:
-        members = fetch_albion_guild_members(guild_id)
+        members = fetch_albion_guild_members(guild_id, server=server)
     except AlbionApiError as exc:
         raise ValidationError(
             f"Could not fetch guild members from Albion API: {exc}"

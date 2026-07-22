@@ -157,17 +157,21 @@ class TestFetchAlbionAlliance:
             with pytest.raises(rest_client.AlbionApiError):
                 rest_client.fetch_albion_alliance(_AID)
 
-    def test_americas_server_uses_correct_base_url(self):
+    def test_server_maps_to_correct_base_url(self):
+        # Albion host suffixes do NOT match region names:
+        #   Americas = no suffix, Europe = "-ams" (Amsterdam), Asia = "-sgp".
         captured: list[tuple] = []
 
-        def _fake_get_from(base_url: str, path: str, params=None):
+        def _fake_get_from(base_url: str, path: str, params=None, timeout=None):
             captured.append((base_url, path))
             return _fake_alliance_raw()
 
         with patch.object(rest_client, "_get_from", side_effect=_fake_get_from):
             rest_client.fetch_albion_alliance(_AID, server="americas")
+            rest_client.fetch_albion_alliance(_AID, server="europe")
 
-        assert "ams" in captured[0][0]
+        assert captured[0][0] == "https://gameinfo.albiononline.com/api/gameinfo"
+        assert "gameinfo-ams" in captured[1][0]
 
 
 # ---------------------------------------------------------------------------
@@ -434,9 +438,8 @@ class TestServerPreservedInDiscovery:
             )
 
         assert resp.status_code == 200
-        # Must have used the Europe base URL
-        assert any("gameinfo.albiononline.com" in u and "ams" not in u
-                   and "sgp" not in u for u in captured_servers)
+        # Must have used the Europe base URL (Amsterdam host = gameinfo-ams).
+        assert any("gameinfo-ams.albiononline.com" in u for u in captured_servers)
 
 
 # ---------------------------------------------------------------------------
