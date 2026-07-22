@@ -47,6 +47,16 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _actor_is_superadmin(db, user_id: str) -> bool:
+    """True when *user_id* resolves to a platform super-admin (god-mode).
+
+    Lets support/god-mode actions bypass the normal workspace membership and
+    role checks inside use cases, mirroring the route-layer bypass.
+    """
+    from app.auth import superadmin
+    return superadmin.is_superadmin(db, repositories.get_user_by_id(db, user_id))
+
+
 # ---------------------------------------------------------------------------
 # 0. Dev auth user
 # ---------------------------------------------------------------------------
@@ -4627,11 +4637,13 @@ def resolve_albion_guild_preview(
         membership = repositories.get_workspace_membership(
             db, guild_workspace_id, requesting_user_id
         )
+        is_superadmin = _actor_is_superadmin(db, requesting_user_id)
 
-    if not membership:
-        raise PermissionDenied("You are not a member of this workspace.")
-    if not workspace_membership.can_manage_workspace_members(membership["role"]):
-        raise PermissionDenied("Only officers and owners can import guild rosters.")
+    if not is_superadmin:
+        if not membership:
+            raise PermissionDenied("You are not a member of this workspace.")
+        if not workspace_membership.can_manage_workspace_members(membership["role"]):
+            raise PermissionDenied("Only officers and owners can import guild rosters.")
 
     from app.albion.rest_client import (
         AlbionApiError,
@@ -4744,11 +4756,13 @@ def import_albion_guild_roster(
         membership = repositories.get_workspace_membership(
             db, guild_workspace_id, requesting_user_id
         )
+        is_superadmin = _actor_is_superadmin(db, requesting_user_id)
 
-    if not membership:
-        raise PermissionDenied("You are not a member of this workspace.")
-    if not workspace_membership.can_manage_workspace_members(membership["role"]):
-        raise PermissionDenied("Only officers and owners can import guild rosters.")
+    if not is_superadmin:
+        if not membership:
+            raise PermissionDenied("You are not a member of this workspace.")
+        if not workspace_membership.can_manage_workspace_members(membership["role"]):
+            raise PermissionDenied("Only officers and owners can import guild rosters.")
 
     # ------------------------------------------------------------------
     # Phase 2: API call (outside transaction)

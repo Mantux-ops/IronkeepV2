@@ -331,6 +331,71 @@ class TestGodModeBypass:
 
 
 # ===========================================================================
+# 5b. God-mode roster import (use case membership bypass)
+# ===========================================================================
+
+class TestGodModeRosterImport:
+    def test_superadmin_can_resolve_guild_by_id_without_membership(self, monkeypatch):
+        admin = _make_superadmin(monkeypatch)
+        owner = make_user(display_name="Guild Owner")
+        ws = make_workspace(name="Chaos", slug="chaos-ws", owner_user_id=owner["id"])
+        # admin is NOT a member of ws
+        from app.albion import rest_client
+        resolved = {
+            "albion_guild_id": "m8Q2gKjTRG-ALut1AyTgjA",
+            "guild_name":      "Dutch Chaos",
+            "server":          "europe",
+            "alliance_id":     None,
+            "alliance_name":   None,
+            "member_count":    0,
+        }
+        with patch.object(rest_client, "fetch_albion_guild", return_value=resolved), \
+             patch.object(rest_client, "_rate_limit"):
+            result = use_cases.resolve_albion_guild_preview(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=admin["id"],
+                guild_name_or_id="m8Q2gKjTRG-ALut1AyTgjA",
+            )
+        assert result["error"] is None
+        assert result["guild_name"] == "Dutch Chaos"
+
+    def test_non_member_non_superadmin_cannot_resolve(self, monkeypatch):
+        from app.errors import PermissionDenied
+        monkeypatch.setenv("IRONKEEP_SUPERADMIN_DISCORD_IDS", _DISCORD_ADMIN_ID)
+        stranger = make_user(display_name="Stranger")
+        owner = make_user(display_name="Guild Owner")
+        ws = make_workspace(slug="chaos-ws2", owner_user_id=owner["id"])
+        with pytest.raises(PermissionDenied):
+            use_cases.resolve_albion_guild_preview(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=stranger["id"],
+                guild_name_or_id="Something",
+            )
+
+    def test_superadmin_can_import_roster_without_membership(self, monkeypatch):
+        admin = _make_superadmin(monkeypatch)
+        owner = make_user(display_name="Guild Owner")
+        ws = make_workspace(slug="chaos-ws3", owner_user_id=owner["id"])
+        from app.albion import rest_client
+        members = [{
+            "albion_player_id": "p1", "character_name": "Kage",
+            "guild_id": "g", "guild_name": "Dutch Chaos",
+            "kill_fame": 1, "death_fame": 0, "extra_json": "{}",
+        }]
+        with patch.object(rest_client, "fetch_albion_guild_members",
+                          return_value=members), \
+             patch.object(rest_client, "_rate_limit"):
+            result = use_cases.import_albion_guild_roster(
+                guild_workspace_id=ws["id"],
+                requesting_user_id=admin["id"],
+                albion_guild_id="m8Q2gKjTRG-ALut1AyTgjA",
+                guild_name_hint="Dutch Chaos",
+            )
+        assert result["total"] == 1
+        assert result["imported"] == 1
+
+
+# ===========================================================================
 # 6. Routes
 # ===========================================================================
 
