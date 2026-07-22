@@ -127,6 +127,69 @@ def discord_oauth_login(discord_user_id: str, discord_username: str) -> dict:
     return user
 
 
+def sync_discord_guild_memberships(
+    *,
+    user_id: str,
+    discord_guild_ids: list[str],
+) -> dict:
+    """Auto-grant workspace membership based on the user's Discord servers.
+
+    For every Discord server (guild) the user belongs to that is linked to an
+    Ironkeep workspace, ensure the user has a ``workspace_members`` row. This is
+    how "being in the Discord server = access to the workspace" is realised.
+
+    Rules / safety:
+    - Only active workspaces are considered (soft-deleted ones are skipped, since
+      ``get_workspace_by_discord_guild_id`` returns them but we filter here).
+    - Idempotent: users already having a membership are left untouched, including
+      their existing role (owners/officers are never demoted to 'member').
+    - New members are added with role='member'.
+    - Each new membership emits a WORKSPACE_MEMBER_DISCORD_AUTOJOINED audit event
+      in the same transaction.
+
+    Returns ``{"joined": [<workspace dict>, ...]}`` listing workspaces newly
+    joined during this call (empty when nothing changed).
+    """
+    joined: list[dict] = []
+    # De-duplicate and drop empties without changing behaviour for the caller.
+    unique_ids = {gid.strip() for gid in (discord_guild_ids or []) if gid and gid.strip()}
+    if not unique_ids:
+        return {"joined": joined}
+
+    now = _now()
+    with database.transaction() as db:
+        for guild_id in unique_ids:
+            ws = repositories.get_workspace_by_discord_guild_id(db, guild_id)
+            if not ws or ws.get("deleted_at"):
+                continue
+            if repositories.get_workspace_membership(db, ws["id"], user_id):
+                continue
+
+            membership = {
+                "id": str(uuid.uuid4()),
+                "guild_workspace_id": ws["id"],
+                "user_id": user_id,
+                "role": "member",
+                "created_at": now,
+            }
+            repositories.insert_workspace_member(db, membership)
+
+            event = operational_events.make_event(
+                guild_workspace_id=ws["id"],
+                guild_operation_id=None,
+                event_type=operational_events.WORKSPACE_MEMBER_DISCORD_AUTOJOINED,
+                entity_type="workspace_member",
+                entity_id=membership["id"],
+                actor_type="user",
+                actor_id=user_id,
+                payload={"discord_guild_id": guild_id},
+            )
+            repositories.insert_operational_event(db, event)
+            joined.append(ws)
+
+    return {"joined": joined}
+
+
 def dev_login_or_create_user(display_name: str) -> dict:
     """Find or create a local dev auth user for the given display name."""
     users.validate_display_name(display_name)

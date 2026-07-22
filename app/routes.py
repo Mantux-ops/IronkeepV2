@@ -353,6 +353,19 @@ async def get_auth_discord_callback(request: Request):
     except IronkeepError as exc:
         return _err_redirect("/login", f"Login failed: {exc}")
 
+    # --- Auto-grant workspace access based on the user's Discord servers ---
+    # Best-effort: a failure here (missing `guilds` scope on an old consent,
+    # Discord outage, timeout) must never block login. Users can still self-join.
+    try:
+        guilds = discord_oauth.fetch_user_guilds(access_token)
+        guild_ids = [g.get("id", "") for g in guilds if g.get("id")]
+        if guild_ids:
+            use_cases.sync_discord_guild_memberships(
+                user_id=user["id"], discord_guild_ids=guild_ids
+            )
+    except (discord_oauth.DiscordOAuthError, IronkeepError):
+        pass
+
     auth_session.set_session_user(request, user["id"])
     return _redirect(next_path)
 

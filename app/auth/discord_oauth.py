@@ -76,7 +76,11 @@ def is_oauth_configured() -> bool:
 def build_authorization_url(state: str) -> str:
     """
     Build the Discord OAuth2 authorization URL.
-    Requests the `identify` scope only (no email, no guilds).
+
+    Requests the `identify` and `guilds` scopes:
+      - identify: the user's Discord id + display name (no email).
+      - guilds:   read-only list of servers the user is a member of, used to
+                  auto-grant workspace access for any server that has Ironkeep.
     """
     from urllib.parse import urlencode  # noqa: PLC0415
     client_id, _secret, redirect_uri = _oauth_config()
@@ -84,7 +88,7 @@ def build_authorization_url(state: str) -> str:
         "client_id":     client_id,
         "redirect_uri":  redirect_uri,
         "response_type": "code",
-        "scope":         "identify",
+        "scope":         "identify guilds",
         "state":         state,
     })
     return f"https://discord.com/oauth2/authorize?{params}"
@@ -183,4 +187,38 @@ def fetch_user_identity(access_token: str) -> dict:
     data = resp.json()
     if not data.get("id"):
         raise DiscordOAuthError("Discord identity response missing user id.")
+    return data
+
+
+def fetch_user_guilds(access_token: str) -> list[dict]:
+    """
+    Fetch the list of Discord servers (guilds) the authenticated user belongs to.
+
+    Requires the `guilds` OAuth scope. Returns the raw list of guild dicts, each
+    containing at least:
+      id    — Discord guild (server) snowflake
+      name  — server name
+
+    Returns an empty list if the token lacks the `guilds` scope or the account
+    is in no servers. Raises DiscordOAuthError on network/timeout/non-2xx so the
+    caller can decide whether to treat guild sync as best-effort.
+    """
+    try:
+        resp = httpx.get(
+            f"{_DISCORD_API}/users/@me/guilds",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        raise DiscordOAuthError(
+            f"Guild list fetch timed out after {_TIMEOUT}s. Discord may be unavailable."
+        )
+    if not resp.is_success:
+        body = resp.text[:200].strip()
+        raise DiscordOAuthError(
+            f"Guild list fetch failed ({resp.status_code}): {body or '(no body)'}"
+        )
+    data = resp.json()
+    if not isinstance(data, list):
+        return []
     return data

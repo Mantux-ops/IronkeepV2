@@ -67,6 +67,10 @@ WORKSPACE_MEMBER_REMOVED = "workspace.member.removed"
 # their display name to an unlinked Albion guild roster character. Workspace-level,
 # audit-only, not dispatchable.
 WORKSPACE_MEMBER_SELF_JOINED = "workspace.member.self_joined"
+# Emitted when a user is auto-added as a member on Discord login because they are
+# a member of the workspace's linked Discord server. Workspace-level, audit-only,
+# not dispatchable.
+WORKSPACE_MEMBER_DISCORD_AUTOJOINED = "workspace.member.discord_autojoined"
 ALBION_COMPOSITION_CREATED       = "albion_composition.created"
 ALBION_COMPOSITION_DELETED       = "albion_composition.deleted"
 ALBION_COMPOSITION_SLOTS_UPDATED = "albion_composition.slots.updated"
