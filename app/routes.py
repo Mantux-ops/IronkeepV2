@@ -58,6 +58,16 @@ templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 # every individual TemplateResponse context dict.
 templates.env.globals["ironkeep_env"] = os.getenv("IRONKEEP_ENV", "dev").strip().lower()
 
+# Icon URL helper for templates — routes through the same-origin icon proxy when
+# ITEM_ICON_PROXY_ENABLED is set, otherwise returns the direct render CDN URL.
+def _item_icon_url(item_id: str, size: int = 64) -> str:
+    from app.albion.item_catalog import get_icon_url
+    try:
+        return get_icon_url(item_id, size)
+    except Exception:
+        return ""
+templates.env.globals["item_icon_url"] = _item_icon_url
+
 def _is_production() -> bool:
     """Read IRONKEEP_ENV fresh on each call so test patches take effect."""
     return os.getenv("IRONKEEP_ENV", "dev").strip().lower() == "production"
@@ -2261,6 +2271,7 @@ async def post_create_build(request: Request, slug: str):
                 status=       form.get("intended_status", "draft").strip(),
                 slot_items_json=form.get("slot_items_json", "[]"),
                 change_summary= form.get("change_summary", "").strip(),
+                spells_json=    form.get("spells_json", "[]"),
             )
         except AuthenticationRequired:
             return _redirect(authz.login_url(request))
@@ -2474,6 +2485,42 @@ async def post_import_builds_confirm(request: Request, slug: str):
     return _redirect(f"/workspaces/{slug}/builds?success={quote_plus(msg)}")
 
 
+# Field-key ordering + human labels for spell display on build detail pages.
+_SPELL_FIELD_ORDER = [
+    "weapon_spell_q", "weapon_spell_w", "weapon_spell_e", "weapon_passive",
+    "head_spell", "head_passive",
+    "chest_spell", "chest_passive", "chest_passive_2",
+    "shoes_spell", "shoes_passive",
+    "offhand_passive", "cape_passive",
+]
+_SPELL_FIELD_LABELS = {
+    "weapon_spell_q": "Q", "weapon_spell_w": "W", "weapon_spell_e": "E",
+    "weapon_passive": "Weapon Passive",
+    "head_spell": "Head", "head_passive": "Head Passive",
+    "chest_spell": "Chest", "chest_passive": "Chest Passive",
+    "chest_passive_2": "Chest Passive II",
+    "shoes_spell": "Shoes", "shoes_passive": "Shoes Passive",
+    "offhand_passive": "Off-hand Passive", "cape_passive": "Cape Passive",
+}
+
+
+def _spells_for_display(spell_rows: list) -> list[dict]:
+    """Convert stored spell rows into ordered display dicts with icon URLs."""
+    from app.albion.spell_catalog import get_spell_icon_url
+    by_key = {r["field_key"]: r["spell_name"] for r in spell_rows}
+    out = []
+    for key in _SPELL_FIELD_ORDER:
+        name = by_key.get(key)
+        if not name:
+            continue
+        out.append({
+            "label":    _SPELL_FIELD_LABELS.get(key, key),
+            "name":     name,
+            "icon_url": get_spell_icon_url(name, 40),
+        })
+    return out
+
+
 @router.get("/workspaces/{slug}/builds/{build_id}")
 def get_build_detail(request: Request, slug: str, build_id: str):
     """View a single build's doctrine details.
@@ -2500,6 +2547,10 @@ def get_build_detail(request: Request, slug: str, build_id: str):
                     )
                     if current_version else []
                 )
+                spells = _spells_for_display(
+                    repositories.get_build_spells(db, current_version["id"], ws["id"])
+                    if current_version else []
+                )
                 all_versions = repositories.list_build_versions(
                     db, build_id, ws["id"]
                 )
@@ -2512,6 +2563,7 @@ def get_build_detail(request: Request, slug: str, build_id: str):
                         "build":           build,
                         "current_version": current_version,
                         "slot_items":      slot_items,
+                        "spells":          spells,
                         "all_versions":    all_versions,
                         "success":         success,
                         **access,
@@ -2591,7 +2643,16 @@ def get_edit_build(request: Request, slug: str, build_id: str):
                             "enchantment":  cat_item["enchantment"],
                             "is_two_handed": cat_item["is_two_handed"],
                             "icon_url":     cat_item["icon_url"],
+                            "is_primary":   bool(si["is_primary"]),
+                            "priority":     si["priority"],
                         })
+                initial_spells = [
+                    {"field_key": s["field_key"], "spell_name": s["spell_name"]}
+                    for s in (
+                        repositories.get_build_spells(db, current_version["id"], ws["id"])
+                        if current_version else []
+                    )
+                ]
                 return templates.TemplateResponse(
                     request,
                     "build_editor.html",
@@ -2601,6 +2662,7 @@ def get_edit_build(request: Request, slug: str, build_id: str):
                         "edit_build":          build,
                         "current_version":     current_version,
                         "initial_slots_json":  _json.dumps(initial_slots),
+                        "initial_spells_json": _json.dumps(initial_spells),
                         "initial_name":        build.get("name", ""),
                         "initial_description": build.get("description", "") or "",
                         "initial_role":        build.get("role", ""),
@@ -2738,6 +2800,7 @@ async def post_create_build_version(request: Request, slug: str, build_id: str):
             role=        form.get("role", "").strip() or None,
             event_type=  form.get("event_type", "").strip() or None,
             minimum_ip=  int(form.get("minimum_ip") or 0),
+            spells_json= form.get("spells_json", "[]"),
         )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -2768,8 +2831,17 @@ async def post_create_build_version(request: Request, slug: str, build_id: str):
                         "tier": si["tier"], "enchantment": si["enchantment"],
                         "is_two_handed": False,
                         "icon_url": catalog.get_item(si["item_id"]) and catalog.get_item(si["item_id"])["icon_url"] or "",
+                        "is_primary": bool(si["is_primary"]),
+                        "priority": si["priority"],
                     }
                     for si in si_db
+                ])
+                initial_spells_json = _json.dumps([
+                    {"field_key": s["field_key"], "spell_name": s["spell_name"]}
+                    for s in (
+                        repositories.get_build_spells(db, cv["id"], ws2["id"])
+                        if cv else []
+                    )
                 ])
         except Exception:
             raise HTTPException(status_code=409, detail=str(exc))
@@ -2782,6 +2854,7 @@ async def post_create_build_version(request: Request, slug: str, build_id: str):
                 "edit_build":          build2,
                 "current_version":     cv,
                 "initial_slots_json":  initial_slots_json,
+                "initial_spells_json": initial_spells_json,
                 "initial_name":        (build2 or {}).get("name", ""),
                 "initial_description": (build2 or {}).get("description", "") or "",
                 "initial_role":        (build2 or {}).get("role", ""),
@@ -2881,6 +2954,9 @@ def get_build_version_detail(
             slot_items = repositories.get_build_slot_items(
                 db, version_id, ws["id"]
             )
+            spells = _spells_for_display(
+                repositories.get_build_spells(db, version_id, ws["id"])
+            )
             is_current = build.get("current_version_id") == version_id
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -2896,6 +2972,7 @@ def get_build_version_detail(
             "build":        build,
             "version":      version,
             "slot_items":   slot_items,
+            "spells":       spells,
             "is_current":   is_current,
             **access,
         },

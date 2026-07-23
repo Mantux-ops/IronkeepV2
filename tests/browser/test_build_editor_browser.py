@@ -818,3 +818,103 @@ class TestReducedMotion:
         assert transition == '0s', (
             f"Expected slot transitionDuration='0s' under reduced-motion, got '{transition}'"
         )
+
+
+# ---------------------------------------------------------------------------
+# 22. Alt-gear / swap per slot  (Phase 12.4, Fase B)
+# ---------------------------------------------------------------------------
+
+class TestAltGear:
+    """One alternative (swap) item per slot.
+
+    Evidence level: automated_browser_test
+    """
+
+    def test_alt_add_hidden_until_primary_selected(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        # No primary yet — the "+ alt" affordance is hidden.
+        assert page.locator('#vbe-slot-shoes .vbe-slot__alt-add').is_hidden()
+
+    def test_alt_add_appears_after_primary(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        page.click('#vbe-slot-shoes')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        expect(page.locator('#vbe-slot-shoes .vbe-slot__alt-add')).to_be_visible()
+
+    def test_choosing_alt_shows_overlay(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        # Primary
+        page.click('#vbe-slot-cape')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        # Alt
+        page.locator('#vbe-slot-cape .vbe-slot__alt-add').click()
+        expect(page.locator('#vbe-modal-title')).to_have_text('Select alternative — Cape')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        expect(page.locator('#vbe-slot-cape .vbe-slot__alt')).to_be_visible()
+
+    def test_alt_clear_removes_overlay(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        page.click('#vbe-slot-head')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        page.locator('#vbe-slot-head .vbe-slot__alt-add').click()
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('#vbe-slot-head .vbe-slot__alt')).to_be_visible()
+        # Clearing the alt hides the overlay and restores the "+ alt" button.
+        page.locator('#vbe-slot-head .vbe-slot__alt-clear').click()
+        expect(page.locator('#vbe-slot-head .vbe-slot__alt')).to_be_hidden()
+        expect(page.locator('#vbe-slot-head .vbe-slot__alt-add')).to_be_visible()
+
+
+# ---------------------------------------------------------------------------
+# 23. Spells & passives picker  (Phase 12.4, Fase C)
+# ---------------------------------------------------------------------------
+
+class TestSpellsPicker:
+    """Spell rows appear per equipped spell-bearing item.
+
+    Evidence level: automated_browser_test
+    """
+
+    def test_spells_empty_on_load(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        expect(page.locator('#vbe-spells-empty')).to_be_visible()
+
+    def test_spell_rows_appear_for_weapon(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        page.click('#vbe-slot-main_hand')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        # Search for a mace — MAIN_MACE has spell data in the seed.
+        page.fill('#vbe-search', 'Mace')
+        page.wait_for_timeout(300)
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        # Spell rows should now be rendered for the weapon.
+        page.wait_for_selector('.vbe-spell-row', timeout=8000)
+        assert page.locator('.vbe-spell-row').count() > 0
+
+    def test_spell_select_updates_state(self, page: Page, browser_workspace):
+        _open_editor(page, browser_workspace)
+        page.click('#vbe-slot-main_hand')
+        page.wait_for_selector('.vbe-item-card', timeout=8000)
+        page.fill('#vbe-search', 'Mace')
+        page.wait_for_timeout(300)
+        page.locator('.vbe-item-card').first.click()
+        expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
+        page.wait_for_selector('.vbe-spell-row__select', timeout=8000)
+        select = page.locator('.vbe-spell-row__select').first
+        # Pick the first real spell option (index 1; index 0 is "— none —").
+        options = select.locator('option')
+        assert options.count() >= 2
+        value = options.nth(1).get_attribute('value')
+        select.select_option(value)
+        assert select.input_value() == value

@@ -1,0 +1,28 @@
+{# ── Shared spell / passive strip ──────────────────────────────────────────
+   Renders a horizontal row of spell icons for a build version.
+   Expects an optional `spells` list in context, each item a dict with keys:
+     label     human label (e.g. 'Q', 'Passive')
+     name      spell display name
+     icon_url  render.albiononline.com spell icon URL
+   Renders nothing when `spells` is absent or empty.
+--------------------------------------------------------------------------- #}
+{% if spells %}
+<div style="margin-top:var(--space-3)">
+  <div class="text-muted" style="font-size:0.75rem; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:var(--space-2)">
+    Spells &amp; Passives
+  </div>
+  <div class="bld-spells">
+    {% for sp in spells %}
+    <div class="bld-spell">
+      <img class="bld-spell__icon"
+           src="{{ sp.icon_url }}"
+           alt="{{ sp.name }}"
+           title="{{ sp.label }}: {{ sp.name }}"
+           loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      <span class="bld-spell__label">{{ sp.name }}</span>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

@@ -1,0 +1,45 @@
+{# ── Shared equipment strip ────────────────────────────────────────────────
+   Renders a horizontal row of item icons for a build version.
+   Expects `slot_items` in context: rows from albion_build_slot_items with
+   keys slot, item_id, tier, enchantment, display_name_snapshot, is_primary.
+   The primary item per slot is shown large; the alternative (is_primary=0)
+   is shown as a small overlay in the bottom-right corner.
+--------------------------------------------------------------------------- #}
+{% set SLOT_LABELS = {
+  'main_hand': 'Main Hand',
+  'off_hand':  'Off Hand',
+  'head':      'Head',
+  'chest':     'Chest',
+  'shoes':     'Shoes',
+  'cape':      'Cape',
+  'food':      'Food',
+  'potion':    'Potion',
+} %}
+<div class="bld-strip">
+  {% for slot_key in ['main_hand','off_hand','head','chest','shoes','cape','food','potion'] %}
+  {% set items_for_slot = slot_items | selectattr('slot', 'equalto', slot_key) | list %}
+  {% set primary = items_for_slot | selectattr('is_primary') | first %}
+  {% set alt = items_for_slot | rejectattr('is_primary') | first %}
+  {% if primary %}
+  <div class="bld-strip__slot">
+    <div class="bld-strip__icons">
+      <img class="bld-strip__icon"
+           src="{{ item_icon_url(primary.item_id, 120) }}"
+           alt="{{ primary.display_name_snapshot }}"
+           title="{{ SLOT_LABELS[slot_key] }}: T{{ primary.tier }}.{{ primary.enchantment }} {{ primary.display_name_snapshot }}"
+           loading="lazy"
+           onerror="this.style.visibility='hidden'">
+      {% if alt %}
+      <img class="bld-strip__icon bld-strip__icon--alt"
+           src="{{ item_icon_url(alt.item_id, 80) }}"
+           alt="{{ alt.display_name_snapshot }}"
+           title="Alt: T{{ alt.tier }}.{{ alt.enchantment }} {{ alt.display_name_snapshot }}"
+           loading="lazy"
+           onerror="this.style.display='none'">
+      {% endif %}
+    </div>
+    <span class="bld-strip__label">{{ SLOT_LABELS[slot_key] }}</span>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>

@@ -1011,6 +1011,42 @@ def get_build_slot_items(
     )
 
 
+def insert_build_spells(
+    db: sqlite3.Connection,
+    spells: list[dict],
+) -> None:
+    """Bulk-insert spell selections for a build version."""
+    if not spells:
+        return
+    db.executemany(
+        """
+        INSERT INTO albion_build_spells
+            (id, build_version_id, guild_workspace_id, field_key, spell_name)
+        VALUES
+            (:id, :build_version_id, :guild_workspace_id, :field_key, :spell_name)
+        """,
+        spells,
+    )
+
+
+def get_build_spells(
+    db: sqlite3.Connection,
+    version_id: str,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return all spell selections for a version, ordered by field_key."""
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM albion_build_spells
+            WHERE build_version_id = ? AND guild_workspace_id = ?
+            ORDER BY field_key
+            """,
+            (version_id, guild_workspace_id),
+        ).fetchall()
+    )
+
+
 def get_build_usage_compositions(
     db: sqlite3.Connection,
     build_id: str,

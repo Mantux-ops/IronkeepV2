@@ -45,6 +45,7 @@ from app import database, startup
 from app.routes import router
 from app.routes_admin import router as admin_router
 from app.routes_catalog import router as catalog_router
+from app.routes_icons import router as icons_router
 
 logging.basicConfig(
     level=logging.INFO,
@@ -147,3 +148,4 @@ app.mount(
 app.include_router(router)
 app.include_router(admin_router)
 app.include_router(catalog_router)
+app.include_router(icons_router)

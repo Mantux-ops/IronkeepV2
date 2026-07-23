@@ -40,6 +40,9 @@
 {% if initial_slots_json %}
 <script id="vbe-initial-slots" type="application/json">{{ initial_slots_json | safe }}</script>
 {% endif %}
+{% if initial_spells_json %}
+<script id="vbe-initial-spells" type="application/json">{{ initial_spells_json | safe }}</script>
+{% endif %}
 
 <form id="vbe-save-form"
       method="post"
@@ -47,6 +50,7 @@
 
   <input type="hidden" name="editor_type" value="visual">
   <input type="hidden" name="slot_items_json" id="vbe-slot-items-json" value="">
+  <input type="hidden" name="spells_json" id="vbe-spells-json" value="">
   {% if edit_build and current_version %}
   <input type="hidden" name="expected_current_version_id" value="{{ current_version.id }}">
   {% endif %}
@@ -66,6 +70,19 @@
         <div class="vbe-equip-hint" id="vbe-two-handed-notice" hidden>
           <span class="vbe-notice-icon" aria-hidden="true">⚔</span>
           Two-handed weapon — Off Hand slot is disabled.
+        </div>
+      </div>
+    </div>
+
+    <!-- ── Spells & passives panel ────────────────────────── -->
+    <div class="vbe-spells-panel card">
+      <div class="card-header">
+        <h2 class="card-header__title">Spells &amp; Passives</h2>
+        <span class="text-muted" style="font-size:var(--text-xs)">Pick abilities per equipped item</span>
+      </div>
+      <div class="card-body">
+        <div id="vbe-spells" class="vbe-spells">
+          <p class="text-muted" id="vbe-spells-empty">Select weapons and armor above to choose spells.</p>
         </div>
       </div>
     </div>

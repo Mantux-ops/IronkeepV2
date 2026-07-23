@@ -184,6 +184,11 @@ def get_icon_url(item_id: str, size: int = DEFAULT_ICON_SIZE) -> str:
     """
     if size < 1 or size > 1024:
         raise ValueError(f"Icon size {size} is out of range (1–1024).")
+    # When the same-origin icon proxy is enabled, route through it (disk cache,
+    # long browser cache). Otherwise use the render CDN directly.
+    from app.albion import icon_proxy
+    if icon_proxy.is_enabled():
+        return icon_proxy.item_proxy_url(item_id, size)
     return f"{_RENDER_BASE}/{item_id.strip().upper()}.png?size={size}"
 
 

@@ -760,6 +760,26 @@ CREATE INDEX IF NOT EXISTS idx_build_slot_items_version
     ON albion_build_slot_items(build_version_id, guild_workspace_id, slot);
 
 -- ---------------------------------------------------------------------------
+-- Build spells / passives  (Phase 12.4)
+--
+-- One row per (version, field_key). field_key is <slot_prefix>_<field_suffix>,
+-- e.g. weapon_spell_q, head_passive, chest_passive_2, offhand_passive.
+-- spell_name is the Albion spell display name (icons rendered from the name via
+-- the static spell catalog). Spells are immutable per version, like slot items.
+-- ---------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS albion_build_spells (
+    id                  TEXT PRIMARY KEY,
+    build_version_id    TEXT NOT NULL REFERENCES albion_build_versions(id),
+    guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
+    field_key           TEXT NOT NULL,
+    spell_name          TEXT NOT NULL,
+    UNIQUE (build_version_id, field_key)
+);
+
+CREATE INDEX IF NOT EXISTS idx_build_spells_version
+    ON albion_build_spells(build_version_id, guild_workspace_id);
+
+-- ---------------------------------------------------------------------------
 -- Payout ledger entries  (regear/payout/adjustment tracking per operation)
 --
 -- Each entry is linked to a workspace + operation + participant.

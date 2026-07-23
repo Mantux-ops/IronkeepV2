@@ -1415,6 +1415,19 @@ def _validate_and_resolve_slots(
                 f"but was submitted for slot '{slot}'."
             )
 
+        is_primary = bool(raw.get("is_primary", True))
+        # Priority orders alternatives within a slot. Primary is always 0;
+        # alternatives default to 1 (single-alt model) but honour any client
+        # value >= 1 defensively.
+        try:
+            priority = int(raw.get("priority", 0) or 0)
+        except (TypeError, ValueError):
+            priority = 0
+        if is_primary:
+            priority = 0
+        elif priority < 1:
+            priority = 1
+
         resolved.append({
             "slot":         slot,
             "item_id":      cat_item["item_id"],
@@ -1422,10 +1435,102 @@ def _validate_and_resolve_slots(
             "tier":         cat_item["tier"],
             "enchantment":  cat_item["enchantment"],
             "is_two_handed": cat_item["is_two_handed"],
-            "is_primary":   bool(raw.get("is_primary", True)),
+            "is_primary":   is_primary,
+            "priority":     priority,
         })
 
     bv_domain.validate_slot_items(resolved, status)
+    return resolved
+
+
+def _parse_spells_json(raw: str) -> list[dict]:
+    """Parse the spells_json string from the editor form.
+
+    Accepts a JSON array of {field_key, spell_name} objects. Returns [] for
+    empty input. Raises ValidationError on malformed JSON.
+    """
+    import json
+    from app.errors import ValidationError as _VE
+    if not raw or not raw.strip():
+        return []
+    try:
+        data = json.loads(raw)
+    except (json.JSONDecodeError, ValueError) as exc:
+        raise _VE(f"spells_json is not valid JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise _VE("spells_json must be a JSON array.")
+    return data
+
+
+def _validate_and_resolve_spells(
+    spells_raw: list[dict],
+    resolved_slots: list[dict],
+) -> list[dict]:
+    """Validate submitted spell selections against the equipped items.
+
+    Each entry must be {field_key, spell_name}. The field_key must be a valid
+    spell field key, its slot must hold a primary item, and the spell name must
+    be one of that item's catalog spell options for that field.
+
+    Returns a list of {field_key, spell_name} dicts (deduplicated by field_key).
+    """
+    from app.albion.spell_catalog import (
+        get_spell_catalog,
+        SPELL_SLOT_PREFIX,
+        VALID_SPELL_FIELD_KEYS,
+    )
+    from app.errors import ValidationError as _VE
+
+    if not spells_raw:
+        return []
+
+    # Map each spell-bearing slot to its equipped PRIMARY item_id.
+    primary_by_slot: dict[str, str] = {
+        item["slot"]: item["item_id"]
+        for item in resolved_slots
+        if item.get("is_primary")
+    }
+    # prefix -> slot (inverse of SPELL_SLOT_PREFIX)
+    slot_by_prefix = {v: k for k, v in SPELL_SLOT_PREFIX.items()}
+
+    catalog = get_spell_catalog()
+    resolved: list[dict] = []
+    seen_keys: set[str] = set()
+
+    for raw in spells_raw:
+        field_key = (raw.get("field_key") or "").strip()
+        spell_name = (raw.get("spell_name") or "").strip()
+        if not field_key or not spell_name:
+            continue  # empty selection — skip
+        if field_key not in VALID_SPELL_FIELD_KEYS:
+            raise _VE(f"Unknown spell field '{field_key}'.")
+        if field_key in seen_keys:
+            raise _VE(f"Duplicate spell field '{field_key}'.")
+
+        # Determine the slot this field belongs to (longest matching prefix).
+        prefix = field_key.split("_", 1)[0]
+        slot = slot_by_prefix.get(prefix)
+        if slot is None:
+            raise _VE(f"Spell field '{field_key}' has no matching equipment slot.")
+
+        item_id = primary_by_slot.get(slot)
+        if not item_id:
+            raise _VE(
+                f"Spell '{spell_name}' set for '{field_key}' but slot '{slot}' "
+                "has no primary item."
+            )
+
+        options = catalog.field_options_for_item(slot, item_id)
+        allowed = options.get(field_key)
+        if not allowed or spell_name not in allowed:
+            raise _VE(
+                f"Spell '{spell_name}' is not a valid option for '{field_key}' "
+                f"on the equipped item."
+            )
+
+        seen_keys.add(field_key)
+        resolved.append({"field_key": field_key, "spell_name": spell_name})
+
     return resolved
 
 
@@ -1440,6 +1545,7 @@ def create_build(
     status: str,
     slot_items_json: str,
     change_summary: str = "",
+    spells_json: str = "",
 ) -> dict:
     """Create a new versioned build with version 1 atomically.
 
@@ -1448,8 +1554,9 @@ def create_build(
     2. INSERT albion_builds with current_version_id = NULL.
     3. INSERT albion_build_versions (version 1).
     4. INSERT albion_build_slot_items.
-    5. UPDATE albion_builds SET current_version_id = version.id.
-    6. Emit build_created and version_created events.
+    5. INSERT albion_build_spells.
+    6. UPDATE albion_builds SET current_version_id = version.id.
+    7. Emit build_created and version_created events.
 
     Returns the new build dict.
     """
@@ -1468,6 +1575,9 @@ def create_build(
 
     slot_items_raw = _parse_slot_items_json(slot_items_json)
     resolved_slots = _validate_and_resolve_slots(slot_items_raw, status)
+    resolved_spells = _validate_and_resolve_spells(
+        _parse_spells_json(spells_json), resolved_slots
+    )
 
     with database.transaction() as db:
         member = repositories.get_workspace_membership(
@@ -1538,7 +1648,7 @@ def create_build(
                 "tier":                  item["tier"],
                 "enchantment":           item["enchantment"],
                 "is_primary":            1 if item["is_primary"] else 0,
-                "priority":              0,
+                "priority":              item.get("priority", 0),
                 "notes":                 None,
                 "minimum_enchantment":   0,
             }
@@ -1546,6 +1656,19 @@ def create_build(
         ]
         if slot_rows:
             repositories.insert_build_slot_items(db, slot_rows)
+
+        spell_rows = [
+            {
+                "id":                 str(uuid.uuid4()),
+                "build_version_id":   version_id,
+                "guild_workspace_id": guild_workspace_id,
+                "field_key":          sp["field_key"],
+                "spell_name":         sp["spell_name"],
+            }
+            for sp in resolved_spells
+        ]
+        if spell_rows:
+            repositories.insert_build_spells(db, spell_rows)
 
         repositories.set_build_current_version(
             db, build_id, guild_workspace_id, version_id, now, actor_user_id
@@ -1604,6 +1727,7 @@ def create_build_version(
     role: str | None = None,
     event_type: str | None = None,
     minimum_ip: int | None = None,
+    spells_json: str = "",
 ) -> dict:
     """Save changes to an existing build as a new immutable version.
 
@@ -1672,6 +1796,9 @@ def create_build_version(
         bv_domain.validate_build_meta(meta)
 
         resolved_slots = _validate_and_resolve_slots(slot_items_raw, new_status)
+        resolved_spells = _validate_and_resolve_spells(
+            _parse_spells_json(spells_json), resolved_slots
+        )
 
         # No-change detection against current version
         current_version = repositories.get_current_build_version(
@@ -1681,7 +1808,13 @@ def create_build_version(
             current_items = repositories.get_build_slot_items(
                 db, current_version["id"], guild_workspace_id
             )
-            if _is_identical(build, current_items, meta, resolved_slots):
+            current_spells = repositories.get_build_spells(
+                db, current_version["id"], guild_workspace_id
+            )
+            if _is_identical(
+                build, current_items, meta, resolved_slots,
+                current_spells, resolved_spells,
+            ):
                 return {
                     "build":   dict(build),
                     "version": dict(current_version),
@@ -1716,7 +1849,7 @@ def create_build_version(
                 "tier":                  item["tier"],
                 "enchantment":           item["enchantment"],
                 "is_primary":            1 if item["is_primary"] else 0,
-                "priority":              0,
+                "priority":              item.get("priority", 0),
                 "notes":                 None,
                 "minimum_enchantment":   0,
             }
@@ -1724,6 +1857,19 @@ def create_build_version(
         ]
         if slot_rows:
             repositories.insert_build_slot_items(db, slot_rows)
+
+        spell_rows = [
+            {
+                "id":                 str(uuid.uuid4()),
+                "build_version_id":   version_id,
+                "guild_workspace_id": guild_workspace_id,
+                "field_key":          sp["field_key"],
+                "spell_name":         sp["spell_name"],
+            }
+            for sp in resolved_spells
+        ]
+        if spell_rows:
+            repositories.insert_build_spells(db, spell_rows)
 
         meta_fields = {
             "name":               new_name,
@@ -1756,8 +1902,10 @@ def _is_identical(
     current_items: list[dict],
     new_meta: dict,
     new_slots: list[dict],
+    current_spells: list[dict] | None = None,
+    new_spells: list[dict] | None = None,
 ) -> bool:
-    """Return True when metadata and slot state are identical to the current version."""
+    """Return True when metadata, slot state and spells are identical to the current version."""
     # Compare metadata
     if build.get("name") != new_meta["name"]:
         return False
@@ -1772,18 +1920,28 @@ def _is_identical(
     if build.get("status") != new_meta["status"]:
         return False
 
-    # Compare slot items (order-independent, primary only)
+    # Compare slot items (order-independent). Include is_primary so that
+    # adding, removing, or changing an alternative (swap) item is detected as
+    # a change and produces a new version.
     current_set = frozenset(
-        (i["slot"], i["item_id"])
+        (i["slot"], i["item_id"], bool(i.get("is_primary")))
         for i in current_items
-        if i.get("is_primary")
     )
     new_set = frozenset(
-        (i["slot"], i["item_id"])
+        (i["slot"], i["item_id"], bool(i.get("is_primary")))
         for i in new_slots
-        if i.get("is_primary")
     )
-    return current_set == new_set
+    if current_set != new_set:
+        return False
+
+    # Compare spells (field_key -> spell_name), order-independent.
+    cur_spells = frozenset(
+        (s["field_key"], s["spell_name"]) for s in (current_spells or [])
+    )
+    nw_spells = frozenset(
+        (s["field_key"], s["spell_name"]) for s in (new_spells or [])
+    )
+    return cur_spells == nw_spells
 
 
 def get_build(

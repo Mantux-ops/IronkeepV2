@@ -39,6 +39,18 @@ const SLOT_DEFS = [
 // Slots for which the two-handed / one-handed weapon-type filter is shown
 const WEAPON_SLOTS = new Set(['main_hand', 'off_hand']);
 
+// Equipment slot -> spell field-key prefix (mirrors app/albion/spell_catalog.py).
+// Only these slots carry spells; order defines display order of spell groups.
+const SPELL_SLOT_PREFIX = {
+  main_hand: 'weapon',
+  off_hand:  'offhand',
+  head:      'head',
+  chest:     'chest',
+  shoes:     'shoes',
+  cape:      'cape',
+};
+const SPELL_SLOT_ORDER = ['main_hand', 'off_hand', 'head', 'chest', 'shoes', 'cape'];
+
 // Maximum item cards rendered per query.
 // main_hand has 1 096 catalog entries; rendering all at once is wasteful.
 const RENDER_LIMIT = 100;
@@ -58,14 +70,21 @@ function _defaultPickerState() {
 }
 
 const state = {
-  // Ephemeral build contents — null means slot is empty
-  slots: Object.fromEntries(SLOT_DEFS.map(s => [s.key, null])),
+  // Ephemeral build contents. Each slot holds { primary, alt }; either may be
+  // null. `primary` is the canonical item; `alt` is the optional swap item.
+  slots: Object.fromEntries(SLOT_DEFS.map(s => [s.key, { primary: null, alt: null }])),
   // Key of the slot whose picker is currently open, or null
   activeSlot:     null,
+  // Which variant the open picker edits: 'primary' | 'alt'
+  activeVariant:  'primary',
   // Whether off_hand is locked because main_hand holds a 2H weapon
   offHandLocked:  false,
   // Picker filters and loaded data
   picker: _defaultPickerState(),
+  // Chosen spells: field_key -> spell display name
+  spells: {},
+  // Available spell data per slot: slot -> { item_id, apiSlots:[...] }
+  spellData: {},
 };
 
 /* §3 — DOM references ───────────────────────────────────── */
@@ -85,6 +104,7 @@ const elTierChips  = $('vbe-tier-chips');
 const elEnchChips  = $('vbe-ench-chips');
 const elNotice     = $('vbe-two-handed-notice');
 const elResetBtn   = $('vbe-reset-btn');
+const elSpells     = $('vbe-spells');
 
 /* §4 — Catalog client ───────────────────────────────────── */
 
@@ -147,6 +167,36 @@ const catalogClient = {
   },
 };
 
+/* §4b — Spell catalog client ────────────────────────────── */
+
+const spellClient = {
+  // item_id -> API response {item_type, slots:[...]}. Cached for the session.
+  _cache: {},
+
+  /** Return spell data for an item_id, or null on failure. */
+  async load(itemId) {
+    if (!itemId) return null;
+    if (this._cache[itemId]) return this._cache[itemId];
+    const url = new URL('/api/catalog/spells', location.origin);
+    url.searchParams.set('item_id', itemId);
+    let res;
+    try {
+      res = await fetch(url.toString());
+    } catch {
+      return null;   // network error — degrade gracefully (no spell rows)
+    }
+    if (!res.ok) return null;
+    let data;
+    try {
+      data = await res.json();
+    } catch {
+      return null;
+    }
+    this._cache[itemId] = data;
+    return data;
+  },
+};
+
 /* §5 — Grid — slot tile creation and update ─────────────── */
 
 function initGrid() {
@@ -188,7 +238,8 @@ function _createTile(def) {
   badges.appendChild(tierBadge);
   badges.appendChild(enchBadge);
 
-  // ── Individual clear button (hidden until slot is filled)
+  // ── Individual clear button (hidden until slot is filled) — clears the
+  // whole slot (primary + alt).
   const clearBtn = document.createElement('button');
   clearBtn.type      = 'button';
   clearBtn.className = 'vbe-slot__clear';
@@ -200,22 +251,70 @@ function _createTile(def) {
     clearSlot(def.key);
   });
 
+  // ── Alt (swap) overlay — small icon in the bottom-right, shown when an
+  // alternative item is set. Clicking it re-opens the picker in alt mode.
+  const altOverlay = document.createElement('span');
+  altOverlay.className = 'vbe-slot__alt';
+  altOverlay.hidden    = true;
+  altOverlay.setAttribute('role', 'button');
+  altOverlay.setAttribute('tabindex', '0');
+  altOverlay.setAttribute('aria-label', `Change alternative for ${def.label}`);
+  const altImg = document.createElement('img');
+  altImg.className = 'vbe-slot__alt-icon';
+  altImg.alt       = '';
+  altOverlay.appendChild(altImg);
+  const altClear = document.createElement('button');
+  altClear.type      = 'button';
+  altClear.className = 'vbe-slot__alt-clear';
+  altClear.setAttribute('aria-label', `Clear alternative for ${def.label}`);
+  altClear.textContent = '✕';
+  altClear.addEventListener('click', e => {
+    e.stopPropagation();
+    clearAlt(def.key);
+  });
+  altOverlay.appendChild(altClear);
+  altOverlay.addEventListener('click', e => {
+    e.stopPropagation();
+    openPicker(def.key, 'alt');
+  });
+  altOverlay.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      e.stopPropagation();
+      openPicker(def.key, 'alt');
+    }
+  });
+
   iconWrap.appendChild(placeholder);
   iconWrap.appendChild(img);
   iconWrap.appendChild(badges);
   iconWrap.appendChild(clearBtn);
+  iconWrap.appendChild(altOverlay);
 
   const label = document.createElement('span');
   label.className   = 'vbe-slot__label';
   label.textContent = def.label;
 
+  // ── "+ alt" affordance — shown only when a primary is set but no alt yet.
+  const altAdd = document.createElement('button');
+  altAdd.type      = 'button';
+  altAdd.className = 'vbe-slot__alt-add';
+  altAdd.hidden    = true;
+  altAdd.textContent = '+ alt';
+  altAdd.setAttribute('aria-label', `Add alternative for ${def.label}`);
+  altAdd.addEventListener('click', e => {
+    e.stopPropagation();
+    openPicker(def.key, 'alt');
+  });
+
   btn.appendChild(iconWrap);
   btn.appendChild(label);
+  btn.appendChild(altAdd);
 
   btn.addEventListener('click', () => {
     // aria-disabled blocks interaction for the locked off_hand tile
     if (btn.getAttribute('aria-disabled') === 'true') return;
-    openPicker(def.key);
+    openPicker(def.key, 'primary');
   });
 
   return btn;
@@ -227,17 +326,24 @@ function _onSlotIconError(img, placeholder) {
   placeholder.hidden = false;
 }
 
-function updateTile(slotKey, item) {
+function updateTile(slotKey) {
   const btn = $(`vbe-slot-${slotKey}`);
   if (!btn) return;
   const def       = SLOT_DEFS.find(s => s.key === slotKey);
+  const slotState = state.slots[slotKey] || { primary: null, alt: null };
+  const item      = slotState.primary;
+  const alt       = slotState.alt;
   const ph        = btn.querySelector('.vbe-slot__placeholder');
   const img       = btn.querySelector('.vbe-slot__icon');
   const badges    = btn.querySelector('.vbe-slot__badges');
   const tierBadge = btn.querySelector('.vbe-tier-badge');
   const enchBadge = btn.querySelector('.vbe-ench-badge');
   const clearBtn  = btn.querySelector('.vbe-slot__clear');
+  const altAdd    = btn.querySelector('.vbe-slot__alt-add');
+  const altOver   = btn.querySelector('.vbe-slot__alt');
+  const altImg    = btn.querySelector('.vbe-slot__alt-icon');
 
+  // ── Primary
   if (item) {
     ph.hidden             = true;
     img.src               = item.icon_url;
@@ -259,6 +365,21 @@ function updateTile(slotKey, item) {
     btn.classList.remove('vbe-slot--filled');
     btn.setAttribute('aria-label', `${def.label} — empty, click to select`);
   }
+
+  // ── Alt (only meaningful when a primary is set and the tile isn't locked)
+  const locked = btn.getAttribute('aria-disabled') === 'true';
+  if (alt && item) {
+    altImg.src        = alt.icon_url;
+    altImg.alt        = alt.display_name;
+    altOver.hidden    = false;
+    altOver.title     = `Alt: ${alt.display_name} T${alt.tier}.${alt.enchantment}`;
+    if (altAdd) altAdd.hidden = true;
+  } else {
+    altOver.hidden = true;
+    altImg.src     = '';
+    // Offer "+ alt" only once a primary exists and the tile isn't locked.
+    if (altAdd) altAdd.hidden = !(item && !locked);
+  }
 }
 
 /* §6 — Modal lifecycle ──────────────────────────────────── */
@@ -266,12 +387,14 @@ function updateTile(slotKey, item) {
 // The slot tile that triggered openPicker(); focus returns here on close.
 let _returnFocusTarget = null;
 
-function openPicker(slotKey) {
+function openPicker(slotKey, variant = 'primary') {
   state.activeSlot      = slotKey;
+  state.activeVariant   = variant;
   _returnFocusTarget    = $(`vbe-slot-${slotKey}`);
 
   const def = SLOT_DEFS.find(s => s.key === slotKey);
-  elModalTitle.textContent = `Select — ${def.label}`;
+  elModalTitle.textContent =
+    variant === 'alt' ? `Select alternative — ${def.label}` : `Select — ${def.label}`;
 
   // Reset picker state; syncs chip UI to defaults
   state.picker = _defaultPickerState();
@@ -568,10 +691,17 @@ function _onCardIconError(img) {
 function selectItem(item) {
   const slotKey = state.activeSlot;
   if (!slotKey) return;
-  state.slots[slotKey] = item;
-  updateTile(slotKey, item);
-  if (slotKey === 'main_hand') {
+  const variant = state.activeVariant === 'alt' ? 'alt' : 'primary';
+  if (!state.slots[slotKey]) state.slots[slotKey] = { primary: null, alt: null };
+  state.slots[slotKey][variant] = item;
+  updateTile(slotKey);
+  // Two-handed lock only depends on the PRIMARY main-hand weapon.
+  if (slotKey === 'main_hand' && variant === 'primary') {
     applyTwoHandedLogic(item);
+  }
+  // Spells depend only on the PRIMARY item of a spell-bearing slot.
+  if (variant === 'primary' && SPELL_SLOT_PREFIX[slotKey]) {
+    refreshSpellData(slotKey);
   }
   closePicker();
 }
@@ -586,36 +716,222 @@ function applyTwoHandedLogic(weaponItem) {
   if (!offBtn) return;
 
   if (shouldLock) {
-    // Clear and lock off_hand
-    state.slots['off_hand'] = null;
-    updateTile('off_hand', null);
+    // Clear and lock off_hand (both primary and alt)
+    state.slots['off_hand'] = { primary: null, alt: null };
     offBtn.setAttribute('aria-disabled', 'true');
     offBtn.classList.add('vbe-slot--disabled');
+    updateTile('off_hand');
     elNotice.hidden = false;
   } else {
     offBtn.removeAttribute('aria-disabled');
     offBtn.classList.remove('vbe-slot--disabled');
+    updateTile('off_hand');
     elNotice.hidden = true;
   }
+  // Keep off-hand spell rows in sync with its (now possibly cleared) item.
+  if (typeof refreshSpellData === 'function') refreshSpellData('off_hand');
 }
 
 /* §11 — Slot removal ────────────────────────────────────── */
 
 function clearSlot(slotKey) {
-  state.slots[slotKey] = null;
-  updateTile(slotKey, null);
+  // The main ✕ clears the entire slot (primary and alt).
+  state.slots[slotKey] = { primary: null, alt: null };
+  updateTile(slotKey);
   // Clearing main_hand also unlocks off_hand if it was locked
   if (slotKey === 'main_hand') {
     applyTwoHandedLogic(null);
   }
+  // Clearing a spell-bearing slot removes its spell options + selections.
+  if (SPELL_SLOT_PREFIX[slotKey]) {
+    refreshSpellData(slotKey);
+  }
+}
+
+// Clear only the alternative (swap) item for a slot, keeping the primary.
+function clearAlt(slotKey) {
+  if (state.slots[slotKey]) state.slots[slotKey].alt = null;
+  updateTile(slotKey);
 }
 
 function resetAllSlots() {
   for (const def of SLOT_DEFS) {
-    state.slots[def.key] = null;
-    updateTile(def.key, null);
+    state.slots[def.key] = { primary: null, alt: null };
+    updateTile(def.key);
   }
   applyTwoHandedLogic(null);
+  state.spells = {};
+  state.spellData = {};
+  rebuildSpellsUI();
+}
+
+/* §11b — Spells & passives ──────────────────────────────── */
+
+// Field keys currently valid for a slot, based on loaded spell data.
+function _fieldKeysForSlot(slot) {
+  const data = state.spellData[slot];
+  if (!data) return [];
+  const prefix = SPELL_SLOT_PREFIX[slot];
+  return (data.apiSlots || []).map(s => `${prefix}_${s.field_suffix}`);
+}
+
+// Fetch (or clear) spell options for a slot's primary item, prune stale
+// selections, then rebuild the spell UI.
+async function refreshSpellData(slot) {
+  const prefix = SPELL_SLOT_PREFIX[slot];
+  if (!prefix) return;  // slot carries no spells (food/potion/…)
+
+  const primary = state.slots[slot] && state.slots[slot].primary;
+  if (!primary) {
+    // Clear this slot's spell data and any chosen spells for its fields.
+    for (const fk of _fieldKeysForSlot(slot)) delete state.spells[fk];
+    delete state.spellData[slot];
+    rebuildSpellsUI();
+    return;
+  }
+
+  // Same item already loaded — nothing to fetch.
+  if (state.spellData[slot] && state.spellData[slot].item_id === primary.item_id) {
+    rebuildSpellsUI();
+    return;
+  }
+
+  // Drop selections tied to the previous item in this slot before loading.
+  for (const fk of _fieldKeysForSlot(slot)) delete state.spells[fk];
+
+  const data = await spellClient.load(primary.item_id);
+  const apiSlots = (data && Array.isArray(data.slots)) ? data.slots : [];
+  if (apiSlots.length === 0) {
+    delete state.spellData[slot];
+  } else {
+    state.spellData[slot] = { item_id: primary.item_id, apiSlots };
+    // Prune selections that are no longer valid options for the new item.
+    for (const apiSlot of apiSlots) {
+      const fk = `${prefix}_${apiSlot.field_suffix}`;
+      const names = new Set(apiSlot.spells.map(sp => sp.name));
+      if (state.spells[fk] && !names.has(state.spells[fk])) {
+        delete state.spells[fk];
+      }
+    }
+  }
+  rebuildSpellsUI();
+}
+
+function _iconUrlForSelection(apiSlot, name) {
+  const sp = (apiSlot.spells || []).find(s => s.name === name);
+  return sp ? sp.icon_url : '';
+}
+
+function rebuildSpellsUI() {
+  if (!elSpells) return;
+  elSpells.innerHTML = '';
+
+  const anyData = SPELL_SLOT_ORDER.some(slot => state.spellData[slot]);
+  if (!anyData) {
+    const p = document.createElement('p');
+    p.className   = 'text-muted';
+    p.id          = 'vbe-spells-empty';
+    p.textContent = 'Select weapons and armor above to choose spells.';
+    elSpells.appendChild(p);
+    return;
+  }
+
+  for (const slot of SPELL_SLOT_ORDER) {
+    const data = state.spellData[slot];
+    if (!data) continue;
+    const prefix = SPELL_SLOT_PREFIX[slot];
+    const def    = SLOT_DEFS.find(s => s.key === slot);
+
+    const group = document.createElement('div');
+    group.className = 'vbe-spell-group';
+
+    const heading = document.createElement('div');
+    heading.className   = 'vbe-spell-group__title';
+    heading.textContent = def ? def.label : slot;
+    group.appendChild(heading);
+
+    for (const apiSlot of data.apiSlots) {
+      const fieldKey = `${prefix}_${apiSlot.field_suffix}`;
+      const selected = state.spells[fieldKey] || '';
+
+      const row = document.createElement('div');
+      row.className    = 'vbe-spell-row';
+      row.dataset.field = fieldKey;
+
+      const icon = document.createElement('img');
+      icon.className = 'vbe-spell-row__icon';
+      icon.alt       = '';
+      const iconUrl = selected ? _iconUrlForSelection(apiSlot, selected) : '';
+      if (iconUrl) { icon.src = iconUrl; } else { icon.style.visibility = 'hidden'; }
+      icon.addEventListener('error', () => { icon.style.visibility = 'hidden'; });
+
+      const label = document.createElement('span');
+      label.className   = 'vbe-spell-row__label';
+      label.textContent = apiSlot.label;
+
+      const select = document.createElement('select');
+      select.className = 'vbe-spell-row__select';
+      const none = document.createElement('option');
+      none.value = '';
+      none.textContent = '— none —';
+      select.appendChild(none);
+      for (const sp of apiSlot.spells) {
+        const opt = document.createElement('option');
+        opt.value = sp.name;
+        opt.textContent = sp.name;
+        if (sp.name === selected) opt.selected = true;
+        select.appendChild(opt);
+      }
+      select.addEventListener('change', () => {
+        const val = select.value;
+        if (val) {
+          state.spells[fieldKey] = val;
+          const u = _iconUrlForSelection(apiSlot, val);
+          if (u) { icon.src = u; icon.style.visibility = ''; }
+          else   { icon.style.visibility = 'hidden'; }
+        } else {
+          delete state.spells[fieldKey];
+          icon.style.visibility = 'hidden';
+        }
+      });
+
+      row.appendChild(icon);
+      row.appendChild(label);
+      row.appendChild(select);
+      group.appendChild(row);
+    }
+
+    elSpells.appendChild(group);
+  }
+}
+
+// Serialize chosen spells for the hidden form field.
+function serializeSpells() {
+  const out = [];
+  for (const [fieldKey, name] of Object.entries(state.spells)) {
+    if (name) out.push({ field_key: fieldKey, spell_name: name });
+  }
+  return JSON.stringify(out);
+}
+
+// Prefill chosen spells from embedded JSON (edit mode). Selections are applied
+// to state now; refreshSpellData() renders them once options are fetched.
+function loadInitialSpells() {
+  const el = document.getElementById('vbe-initial-spells');
+  if (!el) return;
+  let items;
+  try {
+    items = JSON.parse(el.textContent);
+  } catch (e) {
+    console.error('[VBE] Failed to parse initial spells JSON:', e);
+    return;
+  }
+  if (!Array.isArray(items)) return;
+  for (const it of items) {
+    if (it && it.field_key && it.spell_name) {
+      state.spells[it.field_key] = it.spell_name;
+    }
+  }
 }
 
 /* §12 — Loading / empty / error state helpers ───────────── */
@@ -739,12 +1055,22 @@ function initEvents() {
 function serializeSlots() {
   const items = [];
   for (const def of SLOT_DEFS) {
-    const item = state.slots[def.key];
-    if (item) {
+    const slotState = state.slots[def.key] || { primary: null, alt: null };
+    if (slotState.primary) {
       items.push({
         slot:       def.key,
-        item_id:    item.item_id,
+        item_id:    slotState.primary.item_id,
         is_primary: true,
+        priority:   0,
+      });
+    }
+    // Alternatives only make sense alongside a primary.
+    if (slotState.primary && slotState.alt) {
+      items.push({
+        slot:       def.key,
+        item_id:    slotState.alt.item_id,
+        is_primary: false,
+        priority:   1,
       });
     }
   }
@@ -773,32 +1099,49 @@ function loadInitialSlots() {
   for (const item of items) {
     const def = SLOT_DEFS.find(s => s.key === item.slot);
     if (!def) continue;
-    state.slots[item.slot] = item;
+    if (!state.slots[item.slot]) state.slots[item.slot] = { primary: null, alt: null };
+    // is_primary may be a boolean or 0/1; treat missing as primary.
+    const isPrimary = (item.is_primary === undefined) ? true : !!item.is_primary;
+    if (isPrimary) {
+      state.slots[item.slot].primary = item;
+    } else {
+      state.slots[item.slot].alt = item;
+    }
   }
 
   // Re-render all tiles with loaded data
   for (const def of SLOT_DEFS) {
-    updateTile(def.key, state.slots[def.key]);
+    updateTile(def.key);
   }
 
   // Apply two-handed logic if a 2H main weapon is loaded
-  const mainItem = state.slots['main_hand'];
+  const mainItem = state.slots['main_hand'] && state.slots['main_hand'].primary;
   if (mainItem && mainItem.is_two_handed) {
     state.offHandLocked = true;
-    updateTile('off_hand', null);  // disable
+    state.slots['off_hand'] = { primary: null, alt: null };
     const tile = document.querySelector(`[data-slot="off_hand"]`);
     if (tile) {
       tile.classList.add('vbe-slot--disabled');
       tile.setAttribute('disabled', '');
       tile.setAttribute('aria-disabled', 'true');
     }
+    updateTile('off_hand');  // disable + hide alt affordance
     if (elNotice) elNotice.removeAttribute('hidden');
+  }
+
+  // Prefill chosen spells, then fetch options for each equipped spell slot so
+  // the spell rows render with the saved selections applied.
+  loadInitialSpells();
+  for (const slot of SPELL_SLOT_ORDER) {
+    if (state.slots[slot] && state.slots[slot].primary) {
+      refreshSpellData(slot);
+    }
   }
 }
 
 /**
  * Wire up the save form:
- * - On submit, serialize current slot state into the hidden JSON field.
+ * - On submit, serialize current slot and spell state into the hidden fields.
  * - Prevent submission if the form is invalid per HTML5 constraints.
  */
 function initSaveForm() {
@@ -809,6 +1152,10 @@ function initSaveForm() {
     const hiddenField = document.getElementById('vbe-slot-items-json');
     if (hiddenField) {
       hiddenField.value = serializeSlots();
+    }
+    const spellsField = document.getElementById('vbe-spells-json');
+    if (spellsField) {
+      spellsField.value = serializeSpells();
     }
     // HTML5 validation handles required fields; no extra JS needed here.
   });

@@ -25,6 +25,7 @@ from app.albion.item_catalog import (
     VALID_SLOTS,
     get_catalog,
 )
+from app.albion.spell_catalog import get_spells_for_item
 from app.errors import NotFoundError
 
 router = APIRouter(prefix="/api/catalog", tags=["catalog"])
@@ -34,6 +35,32 @@ router = APIRouter(prefix="/api/catalog", tags=["catalog"])
 def list_slots() -> list[str]:
     """Return all valid equipment slot names in alphabetical order."""
     return sorted(VALID_SLOTS)
+
+
+@router.get("/spells")
+def list_spells(
+    item_id: Annotated[str, Query(description="Canonical Albion item ID")] = "",
+) -> dict:
+    """
+    Return the spell / passive options for an Albion item.
+
+    Response shape::
+
+        {"item_type": "weapon", "slots": [
+            {"label": "Q", "field_suffix": "spell_q", "spells": [
+                {"name": "...", "icon_id": "...", "icon_url": "...", "description": "..."}
+            ]}, ...
+        ]}
+
+    Items with no spell data (or an unknown/empty item_id) return an empty slot
+    list rather than a 404, so the editor can degrade gracefully.
+    """
+    if not item_id or len(item_id) > 120:
+        return {"item_type": None, "slots": []}
+    data = get_spells_for_item(item_id)
+    if data is None:
+        return {"item_type": None, "slots": []}
+    return data
 
 
 @router.get("/items/{item_id}")
