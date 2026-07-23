@@ -181,6 +181,54 @@ def test_superadmin_can_change_roles_without_membership():
     assert _member_role(ws["id"], member["user_id"]) == "officer"
 
 
+def test_superadmin_can_self_promote_when_member():
+    # A super-admin who auto-joined as 'member' can grant themselves officer.
+    owner = make_user("Owner SP1")
+    ws = make_workspace(owner_user_id=owner["id"], slug="mr-sp1")
+    admin = use_cases.discord_oauth_login("superadmin-disc-2", "PlatformAdmin2")
+    # Admin is a plain member of the workspace.
+    with database.transaction() as db:
+        repositories.insert_workspace_member(db, {
+            "id": "m-sp1", "guild_workspace_id": ws["id"],
+            "user_id": admin["id"], "role": "member",
+            "created_at": "2026-01-01T00:00:00+00:00",
+        })
+
+    with patch.dict(os.environ, {"IRONKEEP_SUPERADMIN_DISCORD_IDS": "superadmin-disc-2"}):
+        use_cases.set_workspace_member_role(
+            guild_workspace_id=ws["id"], actor_user_id=admin["id"],
+            target_user_id=admin["id"], new_role="officer",
+        )
+    assert _member_role(ws["id"], admin["id"]) == "officer"
+
+
+def test_superadmin_self_promote_creates_membership_when_absent():
+    # A super-admin with no membership row self-promotes → row is created.
+    owner = make_user("Owner SP2")
+    ws = make_workspace(owner_user_id=owner["id"], slug="mr-sp2")
+    admin = use_cases.discord_oauth_login("superadmin-disc-3", "PlatformAdmin3")
+
+    with patch.dict(os.environ, {"IRONKEEP_SUPERADMIN_DISCORD_IDS": "superadmin-disc-3"}):
+        result = use_cases.set_workspace_member_role(
+            guild_workspace_id=ws["id"], actor_user_id=admin["id"],
+            target_user_id=admin["id"], new_role="officer",
+        )
+    assert result["old_role"] is None
+    assert _member_role(ws["id"], admin["id"]) == "officer"
+
+
+def test_non_superadmin_cannot_self_promote():
+    # A regular member (not super-admin) still cannot change their own role.
+    owner = make_user("Owner SP3")
+    ws = make_workspace(owner_user_id=owner["id"], slug="mr-sp3")
+    member = use_cases.add_workspace_member(ws["id"], owner["id"], "Reg Member", "member")
+    with pytest.raises(PermissionDenied):
+        use_cases.set_workspace_member_role(
+            guild_workspace_id=ws["id"], actor_user_id=member["user_id"],
+            target_user_id=member["user_id"], new_role="officer",
+        )
+
+
 # ---------------------------------------------------------------------------
 # 3. Route
 # ---------------------------------------------------------------------------

@@ -753,7 +753,9 @@ def set_workspace_member_role(
       separate flow, never through this command.
     - The target must be an existing member and must not currently be an owner
       (owners are managed through ownership transfer only).
-    - The actor cannot change their own role.
+    - The actor cannot change their own role — EXCEPT a platform super-admin,
+      who may grant themselves officer/member access (god-mode self-service). If
+      the super-admin is not yet a member, a membership row is created.
 
     Emits a WORKSPACE_MEMBER_ROLE_CHANGED audit event. Idempotent: setting the
     role a member already has is a no-op that still returns successfully.
@@ -775,13 +777,38 @@ def set_workspace_member_role(
                 "Only the workspace owner can change member roles."
             )
 
-        if actor_user_id == target_user_id:
+        # Self-change is blocked for everyone except super-admins.
+        if actor_user_id == target_user_id and not is_superadmin:
             raise PermissionDenied("You cannot change your own role.")
 
         target_mem = repositories.get_workspace_membership(
             db, guild_workspace_id, target_user_id
         )
         if not target_mem:
+            # A super-admin promoting themselves in a workspace they aren't a
+            # member of yet: create the membership on the fly.
+            if is_superadmin and actor_user_id == target_user_id:
+                membership = {
+                    "id": str(uuid.uuid4()),
+                    "guild_workspace_id": guild_workspace_id,
+                    "user_id": target_user_id,
+                    "role": new_role,
+                    "created_at": _now(),
+                }
+                repositories.insert_workspace_member(db, membership)
+                event = operational_events.make_event(
+                    guild_workspace_id=guild_workspace_id,
+                    guild_operation_id=None,
+                    event_type=operational_events.WORKSPACE_MEMBER_ROLE_CHANGED,
+                    entity_type="workspace_member",
+                    entity_id=membership["id"],
+                    actor_type="user",
+                    actor_id=actor_user_id,
+                    payload={"target_user_id": target_user_id,
+                             "old_role": None, "new_role": new_role},
+                )
+                repositories.insert_operational_event(db, event)
+                return {"user_id": target_user_id, "old_role": None, "new_role": new_role}
             raise NotFoundError("Member not found in this workspace.")
 
         old_role = target_mem["role"]

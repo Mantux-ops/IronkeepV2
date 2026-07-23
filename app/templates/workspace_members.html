@@ -100,6 +100,16 @@
               {% endif %}
             </td>
             <td style="display:flex;gap:0.3rem;flex-wrap:wrap">
+              {# Super-admin self-service: grant yourself officer access (god-mode). #}
+              {% if is_superadmin and is_self and m.role not in ('owner', 'officer') %}
+              <form method="post"
+                    action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/role"
+                    class="inline-form"
+                    onsubmit="return confirm('Give yourself officer access in this workspace?')">
+                <input type="hidden" name="role" value="officer">
+                <button type="submit" class="btn btn-sm btn-primary" title="Super-admin only">Make me officer</button>
+              </form>
+              {% endif %}
               {# Role management — owners (and super-admins via god-mode) only. #}
               {% if actor_is_owner and not is_self and not is_owner_target %}
                 {% if m.role == 'member' %}

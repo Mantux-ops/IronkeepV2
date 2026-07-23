@@ -1058,6 +1058,7 @@ def get_workspace_members(request: Request, slug: str):
             albion_pids     = [c["albion_player_id"] for c in albion_claims]
             albion_cache    = repositories.get_albion_character_cache_many(db, albion_pids)
             imported_players = repositories.list_workspace_albion_players(db, ws["id"])
+            is_superadmin   = superadmin.is_superadmin(db, user)
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1085,6 +1086,7 @@ def get_workspace_members(request: Request, slug: str):
             "cache_by_player_id":   cache_by_player_id,
             "imported_players":     imported_players,
             "members_by_user_id":   members_by_user_id,
+            "is_superadmin":        is_superadmin,
             "error":                error,
             "success":              success,
             "current_user":         user,
