@@ -94,80 +94,88 @@
       </div>
       <div class="card-body">
 
-        <div class="form-group">
-          <label for="vbe-name">Build name <span class="form-required">*</span></label>
-          <input type="text" id="vbe-name" name="name" required
-                 value="{{ initial_name or '' }}"
-                 placeholder="e.g. Hallowfall Healer"
-                 autocomplete="off" maxlength="100">
-        </div>
+        <div class="vbe-meta-grid">
+          <!-- Left column: identity -->
+          <div class="vbe-meta-col">
+            <div class="form-group">
+              <label for="vbe-name">Build name <span class="form-required">*</span></label>
+              <input type="text" id="vbe-name" name="name" required
+                     value="{{ initial_name or '' }}"
+                     placeholder="e.g. Hallowfall Healer"
+                     autocomplete="off" maxlength="100">
+            </div>
 
-        <div class="form-group">
-          <label for="vbe-description">Description <em>(optional)</em></label>
-          <textarea id="vbe-description" name="description" rows="2"
-                    maxlength="1000"
-                    placeholder="Build purpose, tactics, notes…">{{ initial_description or '' }}</textarea>
-        </div>
+            <div class="form-group">
+              <label for="vbe-description">Description <em>(optional)</em></label>
+              <textarea id="vbe-description" name="description" rows="4"
+                        maxlength="1000"
+                        placeholder="Build purpose, tactics, notes…">{{ initial_description or '' }}</textarea>
+            </div>
 
-        <div class="vbe-meta-row">
-          <div class="form-group">
-            <label for="vbe-role">Role <span class="form-required">*</span></label>
-            <select id="vbe-role" name="role" required>
-              <option value="">— select —</option>
-              {% for r in [('tank','Tank'),('healer','Healer'),('support','Support'),
-                           ('melee_dps','Melee DPS'),('ranged_dps','Ranged DPS'),
-                           ('battlemount','Battlemount'),('utility','Utility')] %}
-              <option value="{{ r[0] }}"{% if initial_role == r[0] %} selected{% endif %}>{{ r[1] }}</option>
-              {% endfor %}
-            </select>
+            {% if edit_build %}
+            <div class="form-group">
+              <label for="vbe-change-summary">Change summary <em>(optional)</em></label>
+              <input type="text" id="vbe-change-summary" name="change_summary"
+                     value="" maxlength="300"
+                     placeholder="What changed in this version?">
+            </div>
+            {% endif %}
           </div>
 
-          <div class="form-group">
-            <label for="vbe-event-type">Event type <span class="form-required">*</span></label>
-            <select id="vbe-event-type" name="event_type" required>
-              <option value="">— select —</option>
-              {% for e in [('cta','CTA'),('zvz','ZvZ'),('gank','Gank'),
-                           ('roam','Roam'),('ava','AvA'),('bomb_squad','Bomb Squad'),('other','Other')] %}
-              <option value="{{ e[0] }}"{% if initial_event_type == e[0] %} selected{% endif %}>{{ e[1] }}</option>
-              {% endfor %}
-            </select>
+          <!-- Right column: taxonomy + status -->
+          <div class="vbe-meta-col">
+            <div class="vbe-meta-row">
+              <div class="form-group">
+                <label for="vbe-role">Role <span class="form-required">*</span></label>
+                <select id="vbe-role" name="role" required>
+                  <option value="">— select —</option>
+                  {% for r in [('tank','Tank'),('healer','Healer'),('support','Support'),
+                               ('melee_dps','Melee DPS'),('ranged_dps','Ranged DPS'),
+                               ('battlemount','Battlemount'),('utility','Utility')] %}
+                  <option value="{{ r[0] }}"{% if initial_role == r[0] %} selected{% endif %}>{{ r[1] }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="vbe-event-type">Event type <span class="form-required">*</span></label>
+                <select id="vbe-event-type" name="event_type" required>
+                  <option value="">— select —</option>
+                  {% for e in [('cta','CTA'),('zvz','ZvZ'),('gank','Gank'),
+                               ('roam','Roam'),('ava','AvA'),('bomb_squad','Bomb Squad'),('other','Other')] %}
+                  <option value="{{ e[0] }}"{% if initial_event_type == e[0] %} selected{% endif %}>{{ e[1] }}</option>
+                  {% endfor %}
+                </select>
+              </div>
+
+              <div class="form-group">
+                <label for="vbe-min-ip">Minimum IP</label>
+                <input type="number" id="vbe-min-ip" name="minimum_ip"
+                       value="{{ initial_minimum_ip or '0' }}"
+                       min="0" max="99999" step="1">
+              </div>
+            </div>
+
+            <!-- Status choice -->
+            <div class="form-group vbe-status-group">
+              <span class="vbe-status-label">Save as</span>
+              <label class="vbe-status-option">
+                <input type="radio" name="intended_status" value="draft"
+                       {% if (initial_status or 'draft') == 'draft' %}checked{% endif %}>
+                <span>Draft</span>
+              </label>
+              <label class="vbe-status-option">
+                <input type="radio" name="intended_status" value="published"
+                       {% if initial_status == 'published' %}checked{% endif %}>
+                <span>Published</span>
+                <em class="text-muted" style="font-size:0.8rem">requires main weapon, head, chest, shoes, food, potion</em>
+              </label>
+            </div>
           </div>
-
-          <div class="form-group">
-            <label for="vbe-min-ip">Minimum IP</label>
-            <input type="number" id="vbe-min-ip" name="minimum_ip"
-                   value="{{ initial_minimum_ip or '0' }}"
-                   min="0" max="99999" step="1">
-          </div>
         </div>
 
-        {% if edit_build %}
-        <div class="form-group">
-          <label for="vbe-change-summary">Change summary <em>(optional)</em></label>
-          <input type="text" id="vbe-change-summary" name="change_summary"
-                 value="" maxlength="300"
-                 placeholder="What changed in this version?">
-        </div>
-        {% endif %}
-
-        <!-- Status choice -->
-        <div class="form-group vbe-status-group">
-          <span class="vbe-status-label">Save as</span>
-          <label class="vbe-status-option">
-            <input type="radio" name="intended_status" value="draft"
-                   {% if (initial_status or 'draft') == 'draft' %}checked{% endif %}>
-            <span>Draft</span>
-          </label>
-          <label class="vbe-status-option">
-            <input type="radio" name="intended_status" value="published"
-                   {% if initial_status == 'published' %}checked{% endif %}>
-            <span>Published</span>
-            <em class="text-muted" style="font-size:0.8rem">requires main weapon, head, chest, shoes, food, potion</em>
-          </label>
-        </div>
-
-        <!-- Save actions -->
-        <div class="action-bar" style="margin-top:var(--space-4)">
+        <!-- Save actions (full width) -->
+        <div class="action-bar vbe-actions">
           <button type="submit" class="btn btn-primary" id="vbe-save-btn">
             {% if edit_build %}Save as new version{% else %}Save build{% endif %}
           </button>

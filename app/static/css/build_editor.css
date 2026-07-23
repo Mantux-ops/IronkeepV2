@@ -62,22 +62,44 @@
 
 /* ── Page wrapper ───────────────────────────────────────── */
 
+/* Two-column workspace: equipment (left) + spells (right) on the top row,
+   build details spanning the full width below. Collapses to a single column
+   on narrow viewports. */
 .vbe-page {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
+  display: grid;
+  grid-template-columns: minmax(300px, 360px) minmax(0, 1fr);
+  grid-template-areas:
+    "equip spells"
+    "meta  meta";
   gap: var(--space-4);
+  align-items: start;
+  max-width: 1080px;
+  margin: 0 auto;
   padding-bottom: var(--space-6);
+}
+
+.vbe-equip-panel  { grid-area: equip; }
+.vbe-spells-panel { grid-area: spells; }
+.vbe-meta-panel   { grid-area: meta; }
+
+@media (max-width: 860px) {
+  .vbe-page {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "equip"
+      "spells"
+      "meta";
+  }
 }
 
 /* ── Equipment panel ────────────────────────────────────── */
 
 .vbe-equip-panel {
   width: 100%;
-  max-width: 400px;
 }
 
-.vbe-equip-panel .card-header {
+.vbe-equip-panel .card-header,
+.vbe-spells-panel .card-header {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -85,7 +107,9 @@
   gap: var(--space-2);
 }
 
-.vbe-equip-panel .card-header__title {
+.vbe-equip-panel .card-header__title,
+.vbe-spells-panel .card-header__title,
+.vbe-meta-panel .card-header__title {
   font-size: var(--text-base);
   font-weight: 700;
   margin: 0;
@@ -773,8 +797,28 @@
 
 /* ── Phase 12.3: Save panel & metadata form ──────────────── */
 
-.vbe-meta-panel {
+/* Two-column details form: text fields left, taxonomy/status right. */
+.vbe-meta-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-1) var(--space-6);
+}
+
+@media (max-width: 720px) {
+  .vbe-meta-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+.vbe-meta-col {
+  display: flex;
+  flex-direction: column;
+}
+
+.vbe-actions {
   margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
 }
 
 .vbe-meta-row {
@@ -872,26 +916,36 @@
 /* ── Build editor — spell picker rows ────────────────────── */
 
 .vbe-spells {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: var(--space-3);
+  align-items: start;
+}
+
+.vbe-spell-group {
+  border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+  padding: var(--space-3);
 }
 
 .vbe-spell-group__title {
   font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.05em;
-  color: var(--text-muted);
-  font-weight: 600;
+  color: var(--text);
+  font-weight: 700;
   margin-bottom: var(--space-2);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--border-1, rgba(255, 255, 255, 0.06));
 }
 
 .vbe-spell-row {
   display: grid;
-  grid-template-columns: 34px 120px 1fr;
+  grid-template-columns: 34px 74px 1fr;
   align-items: center;
   column-gap: var(--space-2);
-  margin-bottom: 6px;
+  padding: 3px 0;
 }
 
 .vbe-spell-row__icon {
@@ -904,12 +958,20 @@
 }
 
 .vbe-spell-row__label {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .vbe-spell-row__select {
   width: 100%;
+}
+
+/* Empty hint centered in the spells panel */
+#vbe-spells-empty {
+  grid-column: 1 / -1;
 }
 
 /* ── Build detail — spell / passive icon row ─────────────── */
