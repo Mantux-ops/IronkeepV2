@@ -23,7 +23,6 @@ Test groups:
  11.  Modal close behaviours (button, Escape, backdrop)
  12.  Focus is trapped inside the modal
  13.  Render-limit notice for large result sets
- 14.  Mount enchantment chips are unavailable
  15.  Body scroll locked while modal is open
  16.  Network error state (automated_browser_test — Phase 12.2c)
  17.  Retry success flow  (automated_browser_test — Phase 12.2c)
@@ -62,9 +61,10 @@ def _open_editor(page: Page, bw: dict) -> None:
 # ---------------------------------------------------------------------------
 
 class TestEditorPageLoad:
-    def test_grid_has_ten_slot_buttons(self, page: Page, browser_workspace):
+    def test_grid_has_eight_slot_buttons(self, page: Page, browser_workspace):
+        # bag and mount were removed from builds — 8 equipment slots remain.
         _open_editor(page, browser_workspace)
-        assert page.locator('.vbe-slot').count() == 10
+        assert page.locator('.vbe-slot').count() == 8
 
     def test_all_slots_start_empty(self, page: Page, browser_workspace):
         _open_editor(page, browser_workspace)
@@ -114,7 +114,7 @@ class TestPickerLoadsItems:
 
     def test_search_input_focused_after_load(self, page: Page, browser_workspace):
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-bag')
+        page.click('#vbe-slot-food')
         page.wait_for_selector('.vbe-item-card', timeout=8000)
         expect(page.locator('#vbe-search')).to_be_focused()
 
@@ -180,10 +180,10 @@ class TestLiveSearch:
 
 class TestFilterChips:
     def test_deactivating_t7_reduces_results(self, page: Page, browser_workspace):
-        # Use mount (25 items total, well below the 100-card render limit)
+        # Use potion (48 items total, well below the 100-card render limit)
         # so we can count exact results without hitting the cap.
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-mount')
+        page.click('#vbe-slot-potion')
         page.wait_for_selector('.vbe-item-card', timeout=8000)
         all_count = page.locator('.vbe-item-card').count()  # T7 + T8
 
@@ -192,16 +192,6 @@ class TestFilterChips:
         t8_count = page.locator('.vbe-item-card').count()  # T8 only
 
         assert t8_count < all_count, f"Expected fewer results after deactivating T7, got {t8_count} vs {all_count}"
-
-    def test_mount_enchantment_chips_disabled(self, page: Page, browser_workspace):
-        """Mount has only .0 items — chips .1/.2/.3 must be disabled."""
-        _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-mount')
-        page.wait_for_selector('.vbe-item-card', timeout=8000)
-
-        for ench in ['1', '2', '3']:
-            chip = page.locator(f'[data-ench="{ench}"]')
-            assert chip.is_disabled(), f"Enchant .{ench} chip should be disabled for mount"
 
 
 # ---------------------------------------------------------------------------
@@ -348,12 +338,12 @@ class TestSlotClear:
 
     def test_clear_does_not_open_picker(self, page: Page, browser_workspace):
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-bag')
+        page.click('#vbe-slot-food')
         page.wait_for_selector('.vbe-item-card', timeout=8000)
         page.locator('.vbe-item-card').first.click()
         expect(page.locator('.vbe-modal')).to_be_hidden(timeout=3000)
 
-        page.locator('#vbe-slot-bag .vbe-slot__clear').click()
+        page.locator('#vbe-slot-food .vbe-slot__clear').click()
         page.wait_for_timeout(300)
         assert page.locator('.vbe-modal').is_hidden()
 
@@ -656,7 +646,7 @@ class TestInvalidJsonResponse:
 
         page.route("**/api/catalog/items**", bad_json)
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-bag')
+        page.click('#vbe-slot-food')
 
         page.wait_for_selector('.vbe-error', timeout=8000)
         expect(page.locator('.vbe-state-wrap button')).to_be_visible()
@@ -703,7 +693,7 @@ class TestNon2xxResponse:
 
         page.route("**/api/catalog/items**", server_error)
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-mount')
+        page.click('#vbe-slot-food')
 
         page.wait_for_selector('.vbe-error', timeout=8000)
         retry_btn = page.locator('.vbe-state-wrap button')
@@ -744,7 +734,7 @@ class TestIconFallback:
         page.route("**render.albiononline.com**", lambda r: r.fulfill(status=404, body=""))
 
         _open_editor(page, browser_workspace)
-        page.click('#vbe-slot-mount')  # 25 items — all visible without scrolling
+        page.click('#vbe-slot-potion')  # 48 items — all visible without scrolling
         page.wait_for_selector('.vbe-item-card', timeout=8000)
 
         # Force the error event on the first card image (covers lazy-load delay in headless)

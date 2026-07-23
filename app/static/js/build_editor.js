@@ -32,8 +32,6 @@ const SLOT_DEFS = [
   { key: 'chest',     label: 'Chest',     area: 'chest'  },
   { key: 'shoes',     label: 'Shoes',     area: 'shoes'  },
   { key: 'cape',      label: 'Cape',      area: 'cape'   },
-  { key: 'bag',       label: 'Bag',       area: 'bag'    },
-  { key: 'mount',     label: 'Mount',     area: 'mount'  },
   { key: 'food',      label: 'Food',      area: 'food'   },
   { key: 'potion',    label: 'Potion',    area: 'potion' },
 ];

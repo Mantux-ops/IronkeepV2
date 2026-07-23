@@ -104,9 +104,7 @@
     ".    head   ."
     "main chest  off"
     ".    shoes  ."
-    "cape .      bag"
-    ".    mount  ."
-    "food .      potion";
+    "cape food   potion";
   gap: 10px;
   justify-content: center;
   padding: var(--space-4) 0;
@@ -751,12 +749,34 @@
 }
 
 .bld-v2-slot {
+  display: grid;
+  grid-template-columns: 44px 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: var(--space-2);
+  row-gap: 0;
+}
+
+.bld-v2-slot__icon {
+  grid-row: 1 / span 2;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--border-1, rgba(255, 255, 255, 0.08));
+  border-radius: 6px;
+}
+
+.bld-v2-slot__icon img {
+  width: 40px;
+  height: 40px;
+  object-fit: contain;
 }
 
 .bld-v2-slot__label {
+  grid-column: 2;
   font-size: 0.75rem;
   color: var(--text-3);
   text-transform: uppercase;
@@ -764,6 +784,7 @@
 }
 
 .bld-v2-slot__item {
+  grid-column: 2;
   font-size: 0.9rem;
   color: var(--text-1);
   font-weight: 500;

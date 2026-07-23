@@ -63,17 +63,20 @@
         'chest':     'Chest',
         'shoes':     'Shoes',
         'cape':      'Cape',
-        'bag':       'Bag',
-        'mount':     'Mount',
         'food':      'Food',
         'potion':    'Potion',
       } %}
-      {% for slot_key in ['main_hand','off_hand','head','chest','shoes','cape','bag','mount','food','potion'] %}
+      {% for slot_key in ['main_hand','off_hand','head','chest','shoes','cape','food','potion'] %}
       {% set items_for_slot = slot_items | selectattr('slot', 'equalto', slot_key) | list %}
       {% if items_for_slot %}
       {% set primary = items_for_slot | selectattr('is_primary') | first %}
       {% if primary %}
       <div class="bld-v2-slot">
+        <span class="bld-v2-slot__icon" aria-hidden="true">
+          <img src="https://render.albiononline.com/v1/item/{{ primary.item_id }}.png?size=64"
+               alt="" loading="lazy"
+               onerror="this.style.display='none'">
+        </span>
         <span class="bld-v2-slot__label">{{ SLOT_LABELS[slot_key] }}</span>
         <span class="bld-v2-slot__item">
           T{{ primary.tier }}.{{ primary.enchantment }} {{ primary.display_name_snapshot }}
