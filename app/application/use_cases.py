@@ -738,6 +738,82 @@ def remove_workspace_member(
         repositories.insert_operational_event(db, event)
 
 
+def set_workspace_member_role(
+    guild_workspace_id: str,
+    actor_user_id: str,
+    target_user_id: str,
+    new_role: str,
+) -> dict:
+    """Promote a member to officer or demote an officer back to member.
+
+    Permission rules:
+    - Only a workspace **owner** (or a platform super-admin) may change roles.
+      Officers cannot change roles — this prevents privilege escalation.
+    - new_role must be 'officer' or 'member'. Ownership is transferred via a
+      separate flow, never through this command.
+    - The target must be an existing member and must not currently be an owner
+      (owners are managed through ownership transfer only).
+    - The actor cannot change their own role.
+
+    Emits a WORKSPACE_MEMBER_ROLE_CHANGED audit event. Idempotent: setting the
+    role a member already has is a no-op that still returns successfully.
+
+    Returns ``{"user_id": ..., "old_role": ..., "new_role": ...}``.
+    """
+    if new_role not in ("officer", "member"):
+        raise ValidationError("Role must be either 'officer' or 'member'.")
+
+    with database.transaction() as db:
+        is_superadmin = _actor_is_superadmin(db, actor_user_id)
+
+        actor_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_user_id
+        )
+        # Owners (or super-admins via god-mode) only.
+        if not is_superadmin and (not actor_mem or actor_mem["role"] != "owner"):
+            raise PermissionDenied(
+                "Only the workspace owner can change member roles."
+            )
+
+        if actor_user_id == target_user_id:
+            raise PermissionDenied("You cannot change your own role.")
+
+        target_mem = repositories.get_workspace_membership(
+            db, guild_workspace_id, target_user_id
+        )
+        if not target_mem:
+            raise NotFoundError("Member not found in this workspace.")
+
+        old_role = target_mem["role"]
+        if old_role == "owner":
+            raise PermissionDenied(
+                "The workspace owner's role cannot be changed here. Use "
+                "ownership transfer instead."
+            )
+
+        if old_role != new_role:
+            repositories.set_workspace_member_role(
+                db, guild_workspace_id, target_user_id, new_role
+            )
+            event = operational_events.make_event(
+                guild_workspace_id=guild_workspace_id,
+                guild_operation_id=None,
+                event_type=operational_events.WORKSPACE_MEMBER_ROLE_CHANGED,
+                entity_type="workspace_member",
+                entity_id=target_mem["id"],
+                actor_type="user",
+                actor_id=actor_user_id,
+                payload={
+                    "target_user_id": target_user_id,
+                    "old_role": old_role,
+                    "new_role": new_role,
+                },
+            )
+            repositories.insert_operational_event(db, event)
+
+    return {"user_id": target_user_id, "old_role": old_role, "new_role": new_role}
+
+
 # ---------------------------------------------------------------------------
 # 2. Create GuildOperation
 # ---------------------------------------------------------------------------

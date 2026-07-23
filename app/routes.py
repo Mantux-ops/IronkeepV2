@@ -1187,6 +1187,37 @@ async def post_remove_workspace_member(
     return _ok_redirect(members_url, "Member removed.")
 
 
+@router.post("/workspaces/{slug}/members/{target_user_id}/role")
+async def post_set_workspace_member_role(
+    request: Request, slug: str, target_user_id: str
+):
+    """Promote a member to officer or demote an officer to member (owner only)."""
+    members_url = f"/workspaces/{slug}/members"
+    form = await request.form()
+    new_role = (form.get("role") or "").strip()
+    try:
+        with database.transaction() as db:
+            user, ws, _access = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        result = use_cases.set_workspace_member_role(
+            guild_workspace_id=ws["id"],
+            actor_user_id=user["id"],
+            target_user_id=target_user_id,
+            new_role=new_role,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError as exc:
+        return _err_redirect(members_url, str(exc))
+    except PermissionDenied as exc:
+        return _err_redirect(members_url, str(exc))
+    except IronkeepError as exc:
+        return _err_redirect(members_url, str(exc))
+    verb = "promoted to officer" if result["new_role"] == "officer" else "set to member"
+    return _ok_redirect(members_url, f"Member {verb}.")
+
+
 @router.get("/workspaces/{slug}/members/add")
 def get_add_workspace_member(request: Request, slug: str):
     try:

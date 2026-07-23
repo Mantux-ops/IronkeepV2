@@ -63,6 +63,9 @@ WORKSPACE_DISCORD_PROVISIONED = "workspace.discord_provisioned"
 WORKSPACE_OWNER_CLAIMED = "workspace.owner_claimed"
 WORKSPACE_DISCORD_CONFIG_UPDATED = "workspace.discord_config.updated"
 WORKSPACE_MEMBER_REMOVED = "workspace.member.removed"
+# Emitted when an owner (or super-admin) changes a member's role (promote to
+# officer / demote to member). Workspace-level, audit-only, not dispatchable.
+WORKSPACE_MEMBER_ROLE_CHANGED = "workspace.member.role_changed"
 # Emitted when a Discord-authenticated user self-joins a workspace by matching
 # their display name to an unlinked Albion guild roster character. Workspace-level,
 # audit-only, not dispatchable.

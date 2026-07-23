@@ -99,7 +99,27 @@
               <span class="text-muted">—</span>
               {% endif %}
             </td>
-            <td>
+            <td style="display:flex;gap:0.3rem;flex-wrap:wrap">
+              {# Role management — owners (and super-admins via god-mode) only. #}
+              {% if actor_is_owner and not is_self and not is_owner_target %}
+                {% if m.role == 'member' %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/role"
+                      class="inline-form"
+                      onsubmit="return confirm('Promote {{ m.display_name }} to officer? Officers can create builds, compositions and operations.')">
+                  <input type="hidden" name="role" value="officer">
+                  <button type="submit" class="btn btn-sm btn-primary">Make officer</button>
+                </form>
+                {% elif m.role == 'officer' %}
+                <form method="post"
+                      action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/role"
+                      class="inline-form"
+                      onsubmit="return confirm('Demote {{ m.display_name }} to member? They will no longer be able to manage builds or operations.')">
+                  <input type="hidden" name="role" value="member">
+                  <button type="submit" class="btn btn-sm">Set as member</button>
+                </form>
+                {% endif %}
+              {% endif %}
               {% if can_remove %}
               <form method="post"
                     action="/workspaces/{{ workspace.slug }}/members/{{ m.user_id }}/remove"
