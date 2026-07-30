@@ -15,7 +15,7 @@ Covers:
                c) build edit does NOT mutate historical operation_slots
   Group 6  — create_albion_composition / update_composition_slots propagation
   Group 7  — Tactical summaries remain role_family-based (doctrine_role excluded)
-  Group 8  — Route GET / POST: builds_new, builds_edit, build create/update
+  Group 8  — Route GET / POST: build create path, builds_edit, build create/update
   Group 9  — Composition template: doctrine_role renders as primary tier in edit/detail
   Group 10 — Nullable / blank semantics: omitting doctrine_role persists NULL
 """
@@ -577,11 +577,13 @@ class TestTacticalSummaryStillRoleFamilyBased:
 # ---------------------------------------------------------------------------
 
 class TestDoctrineRoleRoutes:
-    def test_new_build_form_shows_doctrine_role_input(self):
+    def test_create_path_opens_editor_without_doctrine_role_input(self):
+        """doctrine_role is a legacy flat-build field; the editor does not offer it."""
         client, owner, ws = _make_setup(slug="route-dr-new")
         resp = client.get(f"/workspaces/{ws['slug']}/builds/new")
         assert resp.status_code == 200
-        assert 'name="doctrine_role"' in resp.text
+        assert "vbe-equip-grid" in resp.text
+        assert 'name="doctrine_role"' not in resp.text
 
     def test_edit_build_form_shows_doctrine_role_input(self):
         client, owner, ws = _make_setup(slug="route-dr-edit")

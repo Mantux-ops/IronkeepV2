@@ -239,6 +239,42 @@ class TestBuildMetaValidation:
 
 
 # ---------------------------------------------------------------------------
+# Group 1b — Domain: legacy role normalization (fork into the visual editor)
+# ---------------------------------------------------------------------------
+
+class TestNormalizeLegacyRole:
+    """domain/build_version.py — normalize_legacy_role()"""
+
+    @pytest.mark.parametrize("raw,expected", [
+        ("healer",       "healer"),
+        ("Healer",       "healer"),
+        ("Main Healer",  "healer"),
+        ("melee_dps",    "melee_dps"),
+        ("Melee DPS",    "melee_dps"),
+        ("Ranged DPS",   "ranged_dps"),
+        ("Warbow",       "ranged_dps"),
+        ("Frost Mage",   "ranged_dps"),
+        ("Main Tank",    "tank"),
+        ("Frontline",    "tank"),
+        ("Battlemount",  "battlemount"),
+        ("Support",      "support"),
+        ("Utility",      "utility"),
+    ])
+    def test_maps_legacy_text_onto_a_valid_role(self, raw, expected):
+        result = bv_domain.normalize_legacy_role(raw)
+        if expected is None:
+            assert result is None
+        else:
+            assert result == expected
+            assert result in bv_domain.VALID_ROLES
+
+    @pytest.mark.parametrize("raw", ["", "   ", None, "Flex", "DPS", "Caller"])
+    def test_returns_none_when_ambiguous_or_empty(self, raw):
+        """Bare 'DPS' is ambiguous — the officer must pick melee vs ranged."""
+        assert bv_domain.normalize_legacy_role(raw) is None
+
+
+# ---------------------------------------------------------------------------
 # Group 2 — Domain validation: slot items
 # ---------------------------------------------------------------------------
 

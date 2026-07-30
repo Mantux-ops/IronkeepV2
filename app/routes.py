@@ -38,6 +38,7 @@ from app.auth import session as auth_session
 from app.auth import superadmin
 from app.auth.current_user import get_current_user, require_current_user
 from app.domain import attendance as attendance_domain
+from app.domain import build_version as build_version_domain
 from app.domain import guild_operations
 from app.domain import scout_attendance as scout_attendance_domain
 from app.domain.mass_planner import sort_participants_for_slot
@@ -2152,39 +2153,19 @@ def get_build_editor(request: Request, slug: str):
 
 @router.get("/workspaces/{slug}/builds/new")
 def get_new_build(request: Request, slug: str):
-    """Render the create-build form."""
-    next_url = _safe_next(request.query_params.get("next"))
-    try:
-        with database.transaction() as db:
-            user, ws, access = authz.resolve_workspace_view(db, request, slug)
-            if not access["can_mutate"]:
-                raise PermissionDenied("You do not have permission for this action.")
-    except AuthenticationRequired:
-        return _redirect(authz.login_url(request))
-    except NotFoundError:
-        raise HTTPException(status_code=404, detail="Workspace not found.")
-    except PermissionDenied as exc:
-        raise HTTPException(status_code=403, detail=str(exc))
+    """Send build creation to the visual editor.
 
-    return templates.TemplateResponse(
-        request,
-        "builds_new.html",
-        {
-            "workspace":        ws,
-            "current_user":     user,
-            "error":            None,
-            "next_url":         next_url,
-            "prev":             {},
-            "forked_from_name": None,
-            "forked_from_id":   None,
-            **access,
-        },
-    )
+    Builds are authored in the visual editor only, so equipment resolves to real
+    catalog items instead of freeform strings. This path stays as a redirect so
+    existing links and bookmarks keep working. Auth and workspace resolution are
+    handled by the editor route.
+    """
+    return _redirect(f"/workspaces/{slug}/builds/editor")
 
 
 @router.get("/workspaces/{slug}/builds/{build_id}/fork")
 def get_fork_build(request: Request, slug: str, build_id: str):
-    """Render the create-build form pre-filled from an existing build.
+    """Render the visual editor pre-filled from an existing build.
 
     The fork is a completely independent entity — no FK to the source.
     Snapshot invariants are unaffected; this is a read + GET prefill only.
@@ -2212,31 +2193,28 @@ def get_fork_build(request: Request, slug: str, build_id: str):
             f"/workspaces/{slug}/builds/{build_id}/edit"
         )
 
-    prev = {
-        "name":         f"Copy of {source['name']}",
-        "role":         source["role"],
-        "weapon_name":  source["weapon_name"],
-        "offhand_name": source.get("offhand_name") or "",
-        "head_name":    source.get("head_name") or "",
-        "armor_name":   source.get("armor_name") or "",
-        "shoes_name":   source.get("shoes_name") or "",
-        "cape_name":    source.get("cape_name") or "",
-        "food_name":    source.get("food_name") or "",
-        "potion_name":  source.get("potion_name") or "",
-        "notes":        source.get("notes") or "",
-        "doctrine_role": source.get("doctrine_role") or "",
-    }
+    # The source is a legacy flat build: its equipment is freeform text that
+    # cannot be resolved to catalog item ids. Carry over what transfers cleanly
+    # (name, role, notes) and hand the loadout to the template as read-only
+    # reference so the officer can rebuild it in the grid.
     return templates.TemplateResponse(
         request,
-        "builds_new.html",
+        "build_editor.html",
         {
-            "workspace":        ws,
-            "current_user":     user,
-            "error":            None,
-            "next_url":         f"/workspaces/{slug}/builds",
-            "prev":             prev,
-            "forked_from_name": source["name"],
-            "forked_from_id":   source["id"],
+            "workspace":           ws,
+            "current_user":        user,
+            "edit_build":          None,
+            "fork_source":         source,
+            "initial_name":        f"Copy of {source['name']}",
+            "initial_description": source.get("notes") or "",
+            "initial_role":        build_version_domain.normalize_legacy_role(
+                                       source.get("role")
+                                   ) or "",
+            "initial_event_type":  "other",
+            "initial_minimum_ip":  "0",
+            "initial_status":      "draft",
+            "form_action":         f"/workspaces/{slug}/builds",
+            "error":               None,
             **access,
         },
     )

@@ -616,16 +616,23 @@ class TestEquipmentAccessibility:
         assert "Armour" in resp.text
         assert "Consumables" in resp.text
 
-    def test_build_new_form_has_accessible_labels(self):
-        resp = self.client.get(f"/workspaces/{self.ws['slug']}/builds/new")
+    def test_legacy_build_form_has_accessible_labels(self):
+        """Legacy text fields survive on the edit form for pre-editor builds."""
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{self.build['id']}/edit"
+        )
         assert resp.status_code == 200
         assert 'for="bld-name"' in resp.text
         assert 'for="bld-weapon"' in resp.text
         assert 'for="bld-notes"' in resp.text
 
-    def test_build_new_form_notes_maxlength_is_500(self):
-        resp = self.client.get(f"/workspaces/{self.ws['slug']}/builds/new")
-        assert 'maxlength="500"' in resp.text
+    def test_build_creation_form_has_accessible_labels(self):
+        """Creation happens in the visual editor — its fields are labelled too."""
+        resp = self.client.get(f"/workspaces/{self.ws['slug']}/builds/editor")
+        assert resp.status_code == 200
+        assert 'for="vbe-name"' in resp.text
+        assert 'for="vbe-role"' in resp.text
+        assert 'for="vbe-description"' in resp.text
 
     def test_build_edit_form_notes_maxlength_is_500(self):
         resp = self.client.get(

@@ -70,6 +70,46 @@ ROLE_DISPLAY: dict[str, str] = {
     "utility":    "Utility",
 }
 
+#: Substring hints used to map legacy free-text roles ("Main Healer",
+#: "Peel / Stopper") onto a VALID_ROLES key.  Applied in order, so the more
+#: specific hint must come first.  Bare "dps" is deliberately absent: it does
+#: not distinguish melee from ranged, and guessing would silently mislabel the
+#: forked build.
+_LEGACY_ROLE_HINTS: tuple[tuple[str, str], ...] = (
+    ("tank",        "tank"),
+    ("front",       "tank"),
+    ("brawl",       "tank"),
+    ("heal",        "healer"),
+    ("battlemount", "battlemount"),
+    ("mount",       "battlemount"),
+    ("melee",       "melee_dps"),
+    ("ranged",      "ranged_dps"),
+    ("bow",         "ranged_dps"),
+    ("mage",        "ranged_dps"),
+    ("frost",       "ranged_dps"),
+    ("support",     "support"),
+    ("util",        "utility"),
+)
+
+
+def normalize_legacy_role(role: str | None) -> str | None:
+    """Map a legacy flat build's free-text role onto a VALID_ROLES key.
+
+    Returns ``None`` when the text cannot be mapped with confidence — the
+    caller must then leave the role unselected so the officer picks it
+    explicitly instead of inheriting a wrong role family.
+    """
+    normalized = (role or "").strip().lower().replace(" ", "_").replace("-", "_")
+    if not normalized:
+        return None
+    if normalized in VALID_ROLES:
+        return normalized
+    for hint, mapped in _LEGACY_ROLE_HINTS:
+        if hint in normalized:
+            return mapped
+    return None
+
+
 EVENT_TYPE_DISPLAY: dict[str, str] = {
     "cta":        "CTA",
     "zvz":        "ZvZ",

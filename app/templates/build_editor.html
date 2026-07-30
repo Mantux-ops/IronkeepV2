@@ -1,6 +1,9 @@
 {% extends "base.html" %}
+{% from "_doctrine_macros.html" import doctrine_summary %}
 {% block title %}
-  {% if edit_build %}Edit — {{ edit_build.name }}{% else %}Build Editor{% endif %} — {{ workspace.name }}
+  {% if edit_build %}Edit — {{ edit_build.name }}
+  {%- elif fork_source %}Fork — {{ fork_source.name }}
+  {%- else %}Build Editor{% endif %} — {{ workspace.name }}
 {% endblock %}
 
 {% block head_extra %}
@@ -21,6 +24,11 @@
   <a href="/workspaces/{{ workspace.slug }}/builds/{{ edit_build.id }}">{{ edit_build.name }}</a>
   <span class="sep">›</span>
   <span class="crumb-current">Edit</span>
+  {% elif fork_source %}
+  <span class="sep">›</span>
+  <a href="/workspaces/{{ workspace.slug }}/builds/{{ fork_source.id }}">{{ fork_source.name }}</a>
+  <span class="sep">›</span>
+  <span class="crumb-current">Fork</span>
   {% else %}
   <span class="sep">›</span>
   <span class="crumb-current">Visual Editor</span>
@@ -28,12 +36,38 @@
 {% endblock %}
 
 {% block content %}
-{% set title = 'Edit Build — ' ~ edit_build.name if edit_build else 'New Build — Visual Editor' %}
+{% if edit_build %}
+  {% set title = 'Edit Build — ' ~ edit_build.name %}
+{% elif fork_source %}
+  {% set title = 'Fork Build — ' ~ fork_source.name %}
+{% else %}
+  {% set title = 'New Build — Visual Editor' %}
+{% endif %}
 {% set meta = 'Click any slot to select an item. Fill in the details below and save.' %}
 {% include "page_header.html" %}
 
 {% if error %}
 <div class="alert alert-error" style="margin-bottom:var(--space-4)">{{ error }}</div>
+{% endif %}
+
+{# ── Fork reference — legacy source loadout, read-only ────────────────────── #}
+{% if fork_source %}
+<div class="alert alert-info bld-fork-ref" style="margin-bottom:var(--space-4)">
+  <p class="bld-fork-ref__lead">
+    Forked from <strong>{{ fork_source.name }}</strong> — a legacy text build, so its
+    equipment could not be matched to catalog items. Pick the items below to rebuild
+    the loadout, update the details and save. The source build stays untouched.
+  </p>
+  {% if fork_source.doctrine_role %}
+  <p class="bld-fork-ref__doctrine-role">
+    Doctrine role: <strong>{{ fork_source.doctrine_role }}</strong>
+  </p>
+  {% endif %}
+  <div class="bld-fork-ref__loadout">
+    <span class="bld-fork-ref__label">Source loadout</span>
+    {{ doctrine_summary(fork_source) }}
+  </div>
+</div>
 {% endif %}
 
 {# ── Initial slot data for edit mode (consumed by JS) ─────────────────────── #}

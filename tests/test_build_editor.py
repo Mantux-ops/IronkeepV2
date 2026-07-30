@@ -20,6 +20,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import database
+from app.application import use_cases
 from app.main import app
 from tests.conftest import make_user, make_workspace
 
@@ -243,20 +244,22 @@ class TestBuildEditorRouteRegistration:
         resp = client.get(_editor_url(ws["slug"]))
         assert resp.status_code == 200
 
-    def test_editor_path_distinct_from_builds_new(self):
+    def test_builds_new_redirects_into_the_editor(self):
+        """The legacy text-form path is an alias for the editor, not a rival surface."""
         client = TestClient(app, raise_server_exceptions=True)
         owner = make_user("EditorOwner17")
         ws    = make_workspace(owner_user_id=owner["id"])
         _login(client, owner["display_name"])
 
-        editor_resp = client.get(_editor_url(ws["slug"]))
-        new_resp    = client.get(f"/workspaces/{ws['slug']}/builds/new")
+        redirect = client.get(
+            f"/workspaces/{ws['slug']}/builds/new", follow_redirects=False
+        )
+        assert redirect.status_code in (302, 303)
+        assert redirect.headers["location"].endswith(_editor_url(ws["slug"]))
 
-        assert editor_resp.status_code == 200
-        assert new_resp.status_code == 200
-        # The pages serve different content
-        assert "vbe-equip-grid" in editor_resp.text
-        assert "vbe-equip-grid" not in new_resp.text
+        followed = client.get(f"/workspaces/{ws['slug']}/builds/new")
+        assert followed.status_code == 200
+        assert "vbe-equip-grid" in followed.text
 
 
 # ---------------------------------------------------------------------------
@@ -364,7 +367,7 @@ class TestBuildEditorTwoHandedFilter:
 
 
 # ---------------------------------------------------------------------------
-# 11. Builds list page now includes the Visual Editor link
+# 11. Builds list page routes creation to the Visual Editor
 # ---------------------------------------------------------------------------
 
 class TestBuildsListEditorLink:
@@ -376,7 +379,31 @@ class TestBuildsListEditorLink:
 
         html = client.get(f"/workspaces/{ws['slug']}/builds").text
         assert f"/workspaces/{ws['slug']}/builds/editor" in html
-        assert "Visual Editor" in html
+
+    def test_primary_create_action_points_to_editor(self):
+        """'+ New Build' is the editor — the legacy text form is not offered."""
+        client = TestClient(app, raise_server_exceptions=True)
+        owner = make_user("EditorOwner26b")
+        ws    = make_workspace(owner_user_id=owner["id"])
+        _login(client, owner["display_name"])
+
+        editor_url = f"/workspaces/{ws['slug']}/builds/editor"
+        html = client.get(f"/workspaces/{ws['slug']}/builds").text
+        assert f'href="{editor_url}" class="btn btn-primary">+ New Build' in html
+        assert f"/workspaces/{ws['slug']}/builds/new" not in html
+
+    def test_viewer_can_still_open_the_editor(self):
+        client = TestClient(app, raise_server_exceptions=True)
+        owner  = make_user("EditorOwner26c")
+        ws     = make_workspace(owner_user_id=owner["id"])
+        make_user("EditorViewer26c")
+        use_cases.add_workspace_member(
+            ws["id"], owner["id"], "EditorViewer26c", "member"
+        )
+        _login(client, "EditorViewer26c")
+
+        html = client.get(f"/workspaces/{ws['slug']}/builds").text
+        assert f"/workspaces/{ws['slug']}/builds/editor" in html
 
 
 # ---------------------------------------------------------------------------

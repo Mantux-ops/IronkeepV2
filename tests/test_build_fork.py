@@ -4,7 +4,7 @@ Phase 7 Slice 2 — Build Fork tests.
 Covers:
   Group 1 — Fork route: success cases (200, prefill)
   Group 2 — Fork route: guard cases (404 retired, 403 non-officer)
-  Group 3 — Template: fork banner in builds_new.html
+  Group 3 — Template: fork banner in build_editor.html
   Group 4 — Template: affordances on builds_detail.html
   Group 5 — Template: affordances on builds_list.html
   Group 6 — POST creates independent build; source unchanged
@@ -134,6 +134,45 @@ class TestForkRouteSuccess:
         )
         assert "Main Healer" in resp.text
 
+    def test_fork_opens_the_visual_editor(self):
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{self.build['id']}/fork"
+        )
+        assert "vbe-equip-grid" in resp.text
+        assert 'name="editor_type" value="visual"' in resp.text
+
+    def test_fork_posts_to_the_build_create_route(self):
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{self.build['id']}/fork"
+        )
+        assert f'action="/workspaces/{self.ws["slug"]}/builds"' in resp.text
+
+    def test_legacy_role_text_is_mapped_onto_the_editor_role(self):
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{self.build['id']}/fork"
+        )
+        assert '<option value="healer" selected>' in resp.text
+
+    def test_unmappable_role_leaves_the_selection_empty(self):
+        build = _make_build(
+            self.ws["id"], self.owner["id"], name="Odd Role", role="Flex"
+        )
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{build['id']}/fork"
+        )
+        for role_key in (
+            "tank", "healer", "support", "melee_dps",
+            "ranged_dps", "battlemount", "utility",
+        ):
+            assert f'<option value="{role_key}" selected>' not in resp.text
+
+    def test_source_notes_carry_over_as_description(self):
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/{self.build['id']}/fork"
+        )
+        assert 'name="description"' in resp.text
+        assert "Main heal rotation notes." in resp.text
+
 
 # ---------------------------------------------------------------------------
 # Group 2 — Fork route: guard cases
@@ -180,7 +219,7 @@ class TestForkRouteGuards:
 
 
 # ---------------------------------------------------------------------------
-# Group 3 — Template: fork banner in builds_new.html
+# Group 3 — Template: fork banner in build_editor.html
 # ---------------------------------------------------------------------------
 
 class TestForkBanner:

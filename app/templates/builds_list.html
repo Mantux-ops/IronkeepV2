@@ -23,16 +23,29 @@
 
 <div class="action-bar" style="margin-bottom:var(--space-4)">
   {% if can_mutate %}
-  <a href="/workspaces/{{ workspace.slug }}/builds/new" class="btn btn-primary">+ New Build</a>
-  <a href="/workspaces/{{ workspace.slug }}/builds/import" class="btn btn-sm">Import CSV</a>
-  {% endif %}
+  <a href="/workspaces/{{ workspace.slug }}/builds/editor" class="btn btn-primary">+ New Build</a>
+  {% else %}
   <a href="/workspaces/{{ workspace.slug }}/builds/editor" class="btn btn-sm btn-secondary">⚙ Visual Editor</a>
+  {% endif %}
   {% if not show_retired and retired_count > 0 %}
   <a href="?show_retired=1" class="btn btn-sm btn-muted">Show {{ retired_count }} retired</a>
   {% elif show_retired %}
   <a href="/workspaces/{{ workspace.slug }}/builds" class="btn btn-sm btn-muted">Hide retired</a>
   {% endif %}
 </div>
+
+{% if can_mutate %}
+<details class="bld-utilities">
+  <summary class="bld-utilities__toggle">Library utilities</summary>
+  <div class="bld-utilities__body">
+    <a href="/workspaces/{{ workspace.slug }}/builds/import" class="btn btn-sm btn-ghost">Import CSV</a>
+    <span class="form-hint">
+      Bulk intake for existing spreadsheets — imported rows land as legacy text builds.
+      Individual builds are authored in the visual editor.
+    </span>
+  </div>
+</details>
+{% endif %}
 
 {# Role filter pills — only shown when 2+ distinct roles exist #}
 {% if available_roles | length >= 2 %}
@@ -117,7 +130,7 @@
     <p class="empty-state">
       No builds defined yet.
       {% if can_mutate %}
-      <a href="/workspaces/{{ workspace.slug }}/builds/new">Create your first build →</a>
+      <a href="/workspaces/{{ workspace.slug }}/builds/editor">Create your first build →</a>
       {% endif %}
     </p>
   </div>

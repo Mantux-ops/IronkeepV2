@@ -1254,6 +1254,8 @@ Officers can now see where each build is used across the composition library. Th
 
 ### Build Fork ✅ Shipped (Slice 2 — 2026-05-24)
 
+> **Superseded (2026-07-30):** the fork target is now the visual build editor, not `builds_new.html`. See *Visual-Only Build Creation* below. The route contract (officer-only, 404 on missing/retired, independent row, no FK to source) is unchanged.
+
 Officers can now create an independent copy of any active library build, pre-filled with all source fields. The fork renders the standard create-build form (`builds_new.html`) via a `GET /workspaces/{slug}/builds/{build_id}/fork` route, and the officer POSTs to the existing `/builds` create route — no new write path.
 
 **What changed:**
@@ -1540,6 +1542,36 @@ No routes, use cases, schema, or JS files changed.
 **Tests:** `tests/test_lock_confirmation.py` — 10 tests across 2 groups: operation detail (confirm present, message content, absent on locked/draft ops), planner (confirm present, message content, absent on locked op).
 
 **Validation:** Tier 4: 10/10. Tier 5 not required (template-only change).
+
+---
+
+## Visual-Only Build Creation ✅ Shipped (2026-07-30)
+
+**Problem solved:** Two rival creation surfaces coexisted. `+ New Build` on the build library opened the legacy text form (`builds_new.html`), where equipment was freeform text such as `"T8.3 Hallowfall"`, while the visual editor — the surface that produces versioned builds with real catalog item ids, spells, and IP validation — sat beside it as a secondary `⚙ Visual Editor` button. Officers took the text path by default, so new builds kept landing in the library without resolvable items.
+
+**Decision:** Build authoring happens in the visual editor only. Text remains a *reading* and *bulk intake* format, never an authoring format.
+
+**What changed:**
+
+- **`routes.py` — `get_new_build`:** reduced to a redirect to `/workspaces/{slug}/builds/editor`. Kept as an alias so existing links, bookmarks, and Discord messages keep resolving. Auth, workspace resolution, and 404 handling now come from the editor route.
+- **`routes.py` — `get_fork_build`:** legacy sources now render `build_editor.html` instead of the text form. Name (`"Copy of {source}"`), notes (→ `description`), and role carry over; the freeform loadout cannot be mapped to catalog item ids, so it is passed as read-only reference (`fork_source`) for the officer to rebuild in the grid. Versioned sources still redirect to `/edit` as before.
+- **`domain/build_version.py` — `normalize_legacy_role`:** maps legacy free-text roles (`"Main Healer"`, `"Frontline"`) onto a `VALID_ROLES` key. Returns `None` when ambiguous — notably bare `"DPS"`, which does not distinguish melee from ranged — so the officer picks rather than inheriting a wrong role family.
+- **`build_editor.html`:** fork reference panel (source name, doctrine role, `doctrine_summary` loadout echo), plus fork-specific title and breadcrumb.
+- **`builds_list.html`:** `+ New Build` is now the primary action and points at the editor; the separate `⚙ Visual Editor` button is gone for officers (viewers keep it, since the editor doubles as a read-only exploration surface). CSV import moved into a collapsed `Library utilities` disclosure. Empty-state link points at the editor.
+- **`builds.css`:** `.bld-utilities*` disclosure and `.bld-fork-ref*` panel styles.
+
+**What did NOT change:**
+
+- `builds_new.html` and the legacy branch of `POST /builds` still exist — the POST branch remains the write path for CSV import-shaped data and forked legacy rows, and the template remains its validation re-render surface. Neither is linked from the UI.
+- `builds_edit.html` remains the edit surface for pre-editor legacy builds; their freeform equipment is not migrated.
+- CSV/paste import is unchanged in behaviour and still produces legacy flat builds — bulk intake of existing spreadsheets is a different workflow from authoring one build.
+- No schema change, no data migration, no change to snapshot invariants.
+
+**Behavioural risk:** `/builds/new` no longer 403s for viewers before rendering; it redirects, and the editor (already open to any workspace member) enforces access. Creation itself stays officer-gated at `POST /builds`.
+
+**Tests:** `tests/test_build_editor.py` (redirect alias, primary action points at editor, viewer access), `tests/test_build_fork.py` (fork opens the editor, posts to `/builds` with `editor_type=visual`, role mapping, notes → description), `tests/test_build_version.py` (`normalize_legacy_role` parametrized), plus retargeted assertions in `tests/test_albion_builds.py`, `tests/test_ui_regression.py`, `tests/test_equipment_ux.py`, `tests/test_doctrine_role.py`.
+
+---
 
 ### Responsive Comp Builder Layouts
 

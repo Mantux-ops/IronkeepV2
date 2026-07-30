@@ -471,10 +471,20 @@ class TestBuildRouteGet:
         resp = self.client.get(f"/workspaces/{self.ws['slug']}/builds")
         assert "bld-list" in resp.text or "bld-card" in resp.text
 
-    def test_build_new_form_renders(self):
+    def test_build_new_path_redirects_to_visual_editor(self):
+        resp = self.client.get(
+            f"/workspaces/{self.ws['slug']}/builds/new", follow_redirects=False
+        )
+        assert resp.status_code in (302, 303)
+        assert resp.headers["location"].endswith(
+            f"/workspaces/{self.ws['slug']}/builds/editor"
+        )
+
+    def test_build_new_path_lands_on_equipment_grid(self):
         resp = self.client.get(f"/workspaces/{self.ws['slug']}/builds/new")
         assert resp.status_code == 200
-        assert "bld-form" in resp.text
+        assert "vbe-equip-grid" in resp.text
+        assert "bld-form" not in resp.text
 
     def test_build_detail_renders(self):
         resp = self.client.get(

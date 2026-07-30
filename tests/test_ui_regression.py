@@ -1478,15 +1478,15 @@ class TestPhase3BuildLibrary:
         assert resp.status_code == 200
         assert "P3 Test Build" in resp.text
 
-    def test_build_new_form_accessible_for_officer(self):
-        """GET /builds/new returns 200 for an officer."""
+    def test_build_creation_opens_visual_editor_for_officer(self):
+        """GET /builds/new lands an officer on the visual editor."""
         owner = make_user("P3A5Owner")
         ws    = make_workspace(owner_user_id=owner["id"], slug="p3a-5")
         client = TestClient(app)
         _p3_login(client, "P3A5Owner")
         resp = client.get(f"/workspaces/{ws['slug']}/builds/new")
         assert resp.status_code == 200
-        assert "bld-form" in resp.text
+        assert "vbe-equip-grid" in resp.text
 
     # ── Group B: Build detail and edit pages ─────────────────────────────────
 

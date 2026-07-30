@@ -309,6 +309,67 @@
   color: var(--text-muted);
 }
 
+/* ── Library utilities disclosure ─────────────────────────────────────────── */
+/* Secondary intake paths (CSV import) live here so the primary action bar
+   carries only the visual editor. */
+
+.bld-utilities {
+  margin-bottom: var(--space-4);
+}
+
+.bld-utilities__toggle {
+  font-size: var(--text-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  user-select: none;
+}
+
+.bld-utilities__toggle::-webkit-details-marker {
+  color: var(--text-muted);
+}
+
+.bld-utilities__body {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2) var(--space-3);
+  padding: var(--space-3) 0 0;
+}
+
+.bld-utilities__body .form-hint {
+  flex: 1;
+  min-width: 240px;
+}
+
+/* ── Fork reference panel (visual editor) ─────────────────────────────────── */
+/* Read-only echo of a legacy source build whose freeform equipment cannot be
+   resolved to catalog items. */
+
+.bld-fork-ref__lead {
+  margin: 0;
+}
+
+.bld-fork-ref__doctrine-role {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-sm);
+}
+
+.bld-fork-ref__loadout {
+  margin-top: var(--space-3);
+  padding-top: var(--space-2);
+  border-top: 1px solid var(--border);
+}
+
+.bld-fork-ref__label {
+  display: block;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin-bottom: var(--space-1);
+}
+
 /* ── Slot card doctrine preview (.cb-*) ──────────────────────────────────── */
 
 .cb-slot-doctrine-preview {
