@@ -89,8 +89,8 @@ class TestCloneRouteQueryParam:
         assert resp.status_code == 200
         assert "Copy of ZvZ 5-Man" in resp.text
 
-    def test_clone_route_passes_build_name_datalist(self):
-        """build-name-list datalist is rendered (even if empty) — no KeyError."""
+    def test_clone_route_renders_library_picker_not_free_text(self):
+        """Clone reuses compositions_new.html, so slots are library-only here too."""
         slug = "cv-route-4"
         owner, ws, comp = _setup(slug)
         client = TestClient(app)
@@ -99,8 +99,9 @@ class TestCloneRouteQueryParam:
         resp = client.get(_clone_url(slug, comp["id"]))
 
         assert resp.status_code == 200
-        assert 'id="build-name-list"' in resp.text
-        assert 'id="weapon-name-list"' in resp.text
+        assert 'id="build-name-list"' not in resp.text
+        assert 'id="weapon-name-list"' not in resp.text
+        assert 'name="albion_build_id"' in resp.text
 
 
 # ---------------------------------------------------------------------------

@@ -31,17 +31,16 @@
       assigning players in the Tactical Planner.
     </p>
     {% endif %}
+    {% if not workspace_builds %}
+    <div class="alert alert-info" style="margin-bottom:var(--space-4)">
+      No builds are available to attach yet. Slots take their build, role, and loadout
+      from the library, so
+      <a href="/workspaces/{{ workspace.slug }}/builds/editor">create a build first</a>
+      and publish it — draft builds stay out of compositions.
+    </div>
+    {% endif %}
     <form method="post" action="/workspaces/{{ workspace.slug }}/compositions" class="wide-form">
 
-      {# Build-name and weapon-name datalists — sourced from previously used slot template values.
-         Placed once here; referenced by list= on all build_name / weapon_name inputs on this page,
-         including JS-generated slot cards. #}
-      <datalist id="build-name-list">
-        {% for n in build_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
-      </datalist>
-      <datalist id="weapon-name-list">
-        {% for n in weapon_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
-      </datalist>
       {# Role family suggestions — Tank, Healer, DPS, Support are the four Ironkeep doctrine families.
          Healer is a distinct family from Support; do not use "Support" for healer builds. #}
       <datalist id="role-list">
@@ -65,14 +64,13 @@
 
       <h2>Tactical roles</h2>
       <p class="form-hint">
-        Each card defines one tactical slot. Group cards into parties using Party # — Role and Build name are required per card.
+        Each card defines one tactical slot. Group cards into parties using Party # — every card needs a role and a library build.
         <span style="display:block;margin-top:0.25rem;color:var(--text-faint)">
           After saving, each card becomes one slot in the tactical layout preview, ordered by Party # then Slot #.
-          Role determines the tactical family (tank, healer, dps…); Build name appears on the card.
-          Weapon is optional. Both can be updated after creation.
+          Role determines the tactical family (tank, healer, dps…); build name and weapon come from the selected build.
         </span>
         <span style="display:block;margin-top:0.4rem;color:var(--text-faint)">
-          Slots can be added after saving. A card is only saved when both role and build name are filled in.
+          Slots can be added after saving. A card without a role or a build is skipped.
         </span>
       </p>
 
@@ -168,16 +166,16 @@
                   {% endif %}
                   <input type="text" name="build_name" value="{{ slot.build_name or '' }}"
                          class="cb-slot-build-input"
-                         placeholder="Build name"
-                         list="build-name-list"
+                         placeholder="Pick a build above"
+                         readonly
                          autocomplete="off"
-                         aria-label="Build name">
+                         aria-label="Build name — set by the library selector">
                   <input type="text" name="weapon_name" value="{{ slot.weapon_name or '' }}"
                          class="cb-slot-weapon-input"
-                         placeholder="Weapon (optional)"
-                         list="weapon-name-list"
+                         placeholder="Weapon"
+                         readonly
                          autocomplete="off"
-                         aria-label="Weapon">
+                         aria-label="Weapon — from the selected build">
                 </div>
                 <div class="cb-slot-card__footer">
                   <span class="cb-slot-card__meta">
@@ -265,16 +263,16 @@
                   {% endif %}
                   <input type="text" name="build_name" value=""
                          class="cb-slot-build-input"
-                         placeholder="Build name"
-                         list="build-name-list"
+                         placeholder="Pick a build above"
+                         readonly
                          autocomplete="off"
-                         aria-label="Build name">
+                         aria-label="Build name — set by the library selector">
                   <input type="text" name="weapon_name" value=""
                          class="cb-slot-weapon-input"
-                         placeholder="Weapon (optional)"
-                         list="weapon-name-list"
+                         placeholder="Weapon"
+                         readonly
                          autocomplete="off"
-                         aria-label="Weapon">
+                         aria-label="Weapon — from the selected build">
                 </div>
                 <div class="cb-slot-card__footer">
                   <span class="cb-slot-card__meta">
@@ -460,7 +458,7 @@ function clearSlotBuild(btn) {
   if (openBadge) openBadge.style.display = '';
   var preview = card.querySelector('.cb-slot-doctrine-preview');
   if (preview) { preview.innerHTML = ''; preview.setAttribute('aria-hidden', 'true'); }
-  if (name) name.focus();
+  if (sel) sel.focus();
 }
 
 function _buildSelectHtml() {
@@ -507,16 +505,16 @@ function _createSlotCard(partyNum, slotIndex) {
       _buildSelectHtml() +
       '<input type="text" name="build_name" value=""' +
              ' class="cb-slot-build-input"' +
-             ' placeholder="Build name"' +
-             ' list="build-name-list"' +
+             ' placeholder="Pick a build above"' +
+             ' readonly' +
              ' autocomplete="off"' +
-             ' aria-label="Build name">' +
+             ' aria-label="Build name — set by the library selector">' +
       '<input type="text" name="weapon_name" value=""' +
              ' class="cb-slot-weapon-input"' +
-             ' placeholder="Weapon (optional)"' +
-             ' list="weapon-name-list"' +
+             ' placeholder="Weapon"' +
+             ' readonly' +
              ' autocomplete="off"' +
-             ' aria-label="Weapon">' +
+             ' aria-label="Weapon — from the selected build">' +
     '</div>' +
     '<div class="cb-slot-card__footer">' +
       '<span class="cb-slot-card__meta">' +
@@ -617,8 +615,10 @@ document.addEventListener('change', function(e) {
     var nameInput    = card.querySelector('.cb-slot-build-input');
     var weaponInput  = card.querySelector('.cb-slot-weapon-input');
     var docRoleInput = card.querySelector('.cb-slot-doctrine-role-input');
-    if (nameInput  && buildName)  nameInput.value  = buildName;
-    if (weaponInput)              weaponInput.value = weaponName;
+    /* Deselecting clears the slot: the name field is read-only, so the picker
+       is the only way to empty it back to an open slot. */
+    if (nameInput)   nameInput.value   = buildName;
+    if (weaponInput) weaponInput.value = weaponName;
     var build = WORKSPACE_BUILDS && WORKSPACE_BUILDS.find(function(b) { return b.id === e.target.value; });
     if (docRoleInput && build && !docRoleInput.value.trim()) {
       docRoleInput.value = build.doctrine_role || '';

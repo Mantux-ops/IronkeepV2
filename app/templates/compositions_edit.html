@@ -94,22 +94,22 @@
 
 <div class="card">
   <div class="card-body">
+    {% if not workspace_builds %}
+    <div class="alert alert-info" style="margin-bottom:var(--space-4)">
+      No builds are available to attach. Slots take their build, role, and loadout
+      from the library, so
+      <a href="/workspaces/{{ workspace.slug }}/builds/editor">create a build</a>
+      and publish it — draft builds stay out of compositions. Existing slots keep
+      the loadout they were saved with.
+    </div>
+    {% endif %}
     <form method="post"
           action="/workspaces/{{ workspace.slug }}/compositions/{{ comp.id }}/slots"
           class="wide-form">
 
-      {# Build-name and weapon-name datalists — sourced from previously used slot template values.
-         Referenced by list= on all build_name / weapon_name inputs, including JS-generated cards. #}
-      <datalist id="build-name-list">
-        {% for n in build_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
-      </datalist>
-      <datalist id="weapon-name-list">
-        {% for n in weapon_name_suggestions %}<option value="{{ n | e }}">{% endfor %}
-      </datalist>
-
       <h2>Tactical roles</h2>
       <p class="form-hint" style="margin-bottom:var(--space-4)">
-        Edit slots below. Slots are grouped by party. Role and Build name are required per slot — incomplete cards are skipped on save.
+        Edit slots below. Slots are grouped by party. Every slot needs a role and a library build — incomplete cards are skipped on save.
         <span style="display:block;margin-top:0.25rem;color:var(--text-faint)">
           Change Party # or Slot # on any card to reorganise the layout. All existing slots are replaced on save.
         </span>
@@ -223,16 +223,16 @@
                   {% endif %}
                   <input type="text" name="build_name" value="{{ slot.build_name or '' }}"
                          class="cb-slot-build-input"
-                         placeholder="Build name"
-                         list="build-name-list"
+                         placeholder="Pick a build above"
+                         readonly
                          autocomplete="off"
-                         aria-label="Build name">
+                         aria-label="Build name — set by the library selector">
                   <input type="text" name="weapon_name" value="{{ slot.weapon_name or '' }}"
                          class="cb-slot-weapon-input"
-                         placeholder="Weapon (optional)"
-                         list="weapon-name-list"
+                         placeholder="Weapon"
+                         readonly
                          autocomplete="off"
-                         aria-label="Weapon">
+                         aria-label="Weapon — from the selected build">
                   {# Phase 4: doctrine preview — armour + consumable strip for attached builds #}
                   {% set _has_eq = slot.head_name or slot.armor_name or slot.shoes_name or slot.cape_name or slot.food_name or slot.potion_name %}
                   <div class="cb-slot-doctrine-preview"
@@ -403,7 +403,7 @@ function duplicateSlotCard(btn) {
 
 /* Phase 6 — Clear build: resets all mutable doctrine fields on this card
    to empty, turning it into an "open" planning slot.  Useful for quick
-   replace workflow: clear then type or select a new build. */
+   replace workflow: clear then select a different library build. */
 function clearSlotBuild(btn) {
   var card = btn.closest('.cb-slot-card');
   if (!card) return;
@@ -427,8 +427,8 @@ function clearSlotBuild(btn) {
   var preview = card.querySelector('.cb-slot-doctrine-preview');
   if (preview) { preview.innerHTML = ''; preview.setAttribute('aria-hidden', 'true'); }
 
-  /* Focus build_name so officer can type the new build immediately */
-  if (name) name.focus();
+  /* Focus the picker so the officer can attach a different build immediately */
+  if (sel) sel.focus();
 }
 
 function _buildSelectHtml() {
@@ -472,16 +472,16 @@ function _createSlotCard(partyNum, slotIndex) {
       _buildSelectHtml() +
       '<input type="text" name="build_name" value=""' +
              ' class="cb-slot-build-input"' +
-             ' placeholder="Build name"' +
-             ' list="build-name-list"' +
+             ' placeholder="Pick a build above"' +
+             ' readonly' +
              ' autocomplete="off"' +
-             ' aria-label="Build name">' +
+             ' aria-label="Build name — set by the library selector">' +
       '<input type="text" name="weapon_name" value=""' +
              ' class="cb-slot-weapon-input"' +
-             ' placeholder="Weapon (optional)"' +
-             ' list="weapon-name-list"' +
+             ' placeholder="Weapon"' +
+             ' readonly' +
              ' autocomplete="off"' +
-             ' aria-label="Weapon">' +
+             ' aria-label="Weapon — from the selected build">' +
       '<div class="cb-slot-doctrine-preview" aria-label="Equipment summary" aria-hidden="true"></div>' +
     '</div>' +
     '<div class="cb-slot-card__footer">' +
@@ -604,6 +604,10 @@ document.addEventListener('change', function(e) {
         preview.removeAttribute('aria-hidden');
       }
     } else {
+      /* Deselecting clears the slot: the name field is read-only, so the picker
+         is the only way to empty it back to an open slot. */
+      if (nameInput)   nameInput.value   = '';
+      if (weaponInput) weaponInput.value = '';
       if (preview) { preview.innerHTML = ''; preview.setAttribute('aria-hidden', 'true'); }
     }
     /* Update open/assigned card state */

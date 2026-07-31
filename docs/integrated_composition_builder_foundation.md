@@ -1232,7 +1232,7 @@ Officers can now see where each build is used across the composition library. Th
 - No schema change — reads the existing `albion_build_id` FK
 - No new use case, no new domain entity
 - No write paths touched — entirely read-only discovery
-- String-based slots (FK = NULL) and FK-linked slots continue to coexist permanently
+- String-based slots (FK = NULL) and FK-linked slots continue to coexist permanently — still true for slots already saved, but Library-Only Composition Slots (2026-07-30) means newly saved slots always carry the FK
 - No blocking or gating — all signals are informational
 
 **Files shipped:**
@@ -1570,6 +1570,42 @@ No routes, use cases, schema, or JS files changed.
 **Behavioural risk:** `/builds/new` no longer 403s for viewers before rendering; it redirects, and the editor (already open to any workspace member) enforces access. Creation itself stays officer-gated at `POST /builds`.
 
 **Tests:** `tests/test_build_editor.py` (redirect alias, primary action points at editor, viewer access), `tests/test_build_fork.py` (fork opens the editor, posts to `/builds` with `editor_type=visual`, role mapping, notes → description), `tests/test_build_version.py` (`normalize_legacy_role` parametrized), plus retargeted assertions in `tests/test_albion_builds.py`, `tests/test_ui_regression.py`, `tests/test_equipment_ux.py`, `tests/test_doctrine_role.py`.
+
+---
+
+## Library-Only Composition Slots ✅ Shipped (2026-07-30)
+
+**Problem solved:** Visual-Only Build Creation made the editor the only way to author a build, but compositions could not consume what it produced. Every composition surface loaded its slot picker with `get_albion_builds(..., legacy_only=True)`, whose `current_version_id IS NULL` clause excludes versioned builds by definition. The dropdown was therefore empty in any workspace that had migrated to the editor, and the free-typed `build_name` beside it was the only path that worked. Officers were pushed back into text one layer down from the surface that had just been closed off.
+
+A second, quieter defect sat underneath: `_resolve_build_for_slot` snapshotted a build by copying the flat equipment columns off the `albion_builds` row. Those columns are NULL on versioned builds, whose equipment lives in `albion_build_slot_items`. Lifting the filter alone would have attached builds with a correct name and an empty loadout.
+
+**Decisions:**
+
+- **Eligible builds** are non-retired legacy builds plus versioned builds with `status = 'published'`. Drafts are withheld so a half-finished loadout cannot reach an operation; archived builds are excluded outright.
+- **The picker is the only way to name a slot.** `build_name` and `weapon_name` stay in the form as read-only derived fields; deselecting clears them back to an open slot.
+- **The planner keeps free-typed build edits.** It mutates `operation_slots` during a live operation, where an officer needs to record a substitution faster than the library can be updated.
+
+**What changed:**
+
+- **`domain/build_version.py`:** `LEGACY_SLOT_FIELDS` maps a build slot onto the flat snapshot column it fills; `format_item_label` renders `T8.3 Hallowfall`, matching the tier.enchantment convention already used by `_build_equipment.html`; `flatten_slot_items_to_legacy_fields` collapses a version's primary items into that flat shape. `bag` and `mount` are dropped — the legacy snapshot shape has no column for them.
+- **`repositories.py` — `get_composition_eligible_builds`:** one query expressing the eligibility rule above, replacing `legacy_only=True` at the composition call sites. `get_albion_builds(legacy_only=True)` stays for import, fork, and suggestions.
+- **`use_cases.py` — `_flatten_build_equipment`:** resolves a versioned build's current version into the flat fields and maps `role` through `ROLE_DISPLAY`, since slots carry human-readable roles rather than enum keys. Used by both the picker and the snapshot path, so what the officer previews is what gets stored.
+- **`use_cases.py` — `list_composition_build_options`:** the picker's data source. Takes an open connection so route handlers read inside their existing request transaction.
+- **`use_cases.py` — `_resolve_build_for_slot`:** flattens versioned builds before snapshotting, and now treats `status = 'archived'` like `retired_at` (FK cleared, submitted text preserved).
+- **Validation order in `create_albion_composition` and `update_composition_slots`:** slots are validated *after* build resolution instead of before. A slot carrying only an `albion_build_id` now inherits its name from the build rather than being rejected for an empty `build_name`, which is what a read-only name field submits when the browser runs no JavaScript. An unresolvable FK still fails as a `ValidationError` on the resolved slot, so the NOT NULL constraint on `build_name` is never reached. Both use cases resolve and validate before any write, so the atomic replace still rolls back intact.
+- **`compositions_new.html`, `compositions_edit.html`, `compositions_detail.html`:** `build_name` and `weapon_name` are `readonly` on all four card variants (server-rendered, blank initial, JS-generated, quick edit). The build/weapon suggestion datalists are gone from these surfaces along with the context that fed them. Deselecting in the picker clears the derived fields. An empty library renders a notice linking to the build editor.
+- **`composition_builder.css`, `tactical.css`:** dashed borders on the read-only derived fields so they read as reported values.
+
+**What did NOT change:**
+
+- The Build Snapshot Invariant. Slots still store their own text at save time and `operation_slots` are still frozen; publishing a new build version does not touch an attached slot. The FK is now the required *source* at save time, not a live link.
+- String-based slots stay valid. Existing free-typed slots keep their names through an edit — the read-only field renders what was saved, and a slot with no FK resolves to its own text. `Promote to library →` remains the path that converts one.
+- The planner's inline build edit, `POST .../slots/{slot_id}/build`, and `apply-to-template`.
+- No schema change and no data migration.
+
+**Behavioural consequence:** a workspace with no published builds can no longer add slots to a composition — cards without a build are skipped on save, and `update_composition_slots` rejects an empty slot set. This is the intended ordering (author builds, then compose) and both surfaces say so with a link to the editor, but it does make the build library a hard prerequisite where it used to be optional.
+
+**Tests:** `tests/test_composition_library_builds.py` (label formatting, flattening, eligibility filtering, loadout resolution in the picker, versioned attachment snapshots, FK-only slot submission, rollback on rejection, snapshot invariant across a new version, route rendering). Retargeted: `tests/test_build_suggestions.py` (composition surfaces asserted free of the datalists; planner coverage kept), `tests/test_composition_edit.py` (aria-label assertion).
 
 ---
 

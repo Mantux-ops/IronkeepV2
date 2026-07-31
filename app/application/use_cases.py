@@ -22,6 +22,7 @@ from app.domain import (
     albion_builds as albion_builds_domain,
     albion_compositions,
     attendance as attendance_domain,
+    build_version as build_version_domain,
     guild_operations,
     guild_workspace,
     mass_planner,
@@ -1009,6 +1010,52 @@ def archive_operation(guild_workspace_id: str, guild_operation_id: str) -> dict:
 # 3a. AlbionBuild CRUD
 # ---------------------------------------------------------------------------
 
+def _flatten_build_equipment(db, build: dict) -> dict:
+    """Return a build row whose flat equipment fields describe its loadout.
+
+    Legacy builds already carry their loadout as flat text and pass through
+    untouched.  Versioned builds keep their equipment in the current version's
+    slot items, so those are read and rendered into the same flat shape the slot
+    snapshot expects.  ``role`` is mapped to its display form ("Melee DPS") since
+    composition slots carry human-readable roles, not enum keys.
+    """
+    version_id = build.get("current_version_id")
+    if not version_id:
+        return build
+
+    slot_items = repositories.get_build_slot_items(
+        db, version_id, build["guild_workspace_id"]
+    )
+    flattened = {
+        field: None for field in build_version_domain.LEGACY_SLOT_FIELDS.values()
+    }
+    flattened.update(
+        build_version_domain.flatten_slot_items_to_legacy_fields(slot_items)
+    )
+    return {
+        **build,
+        **flattened,
+        "role": build_version_domain.ROLE_DISPLAY.get(
+            build.get("role"), build.get("role")
+        ),
+    }
+
+
+def list_composition_build_options(db, guild_workspace_id: str) -> list[dict]:
+    """Builds offered in composition slot pickers, loadouts resolved.
+
+    Takes an open connection so callers can read within their existing request
+    transaction. Versioned builds arrive flattened, which lets the slot card
+    markup and its client-side doctrine preview treat every build identically.
+    """
+    return [
+        _flatten_build_equipment(db, build)
+        for build in repositories.get_composition_eligible_builds(
+            db, guild_workspace_id
+        )
+    ]
+
+
 def _resolve_build_for_slot(
     db,
     guild_workspace_id: str,
@@ -1020,7 +1067,8 @@ def _resolve_build_for_slot(
     valid, non-retired build in this workspace, the slot's doctrine fields
     (build_name, weapon_name, offhand_name, head_name, armor_name,
     shoes_name, cape_name, food_name, potion_name) are overwritten from the
-    build record and the FK is kept.
+    build record and the FK is kept.  Versioned builds are flattened from their
+    current version first, so a slot never snapshots an empty loadout.
 
     If the FK is absent, empty, or does not resolve (not found / retired /
     wrong workspace), the FK is cleared and the slot's existing text fields
@@ -1046,7 +1094,7 @@ def _resolve_build_for_slot(
         }
 
     build = repositories.get_albion_build(db, bid, guild_workspace_id)
-    if not build or build.get("retired_at"):
+    if not build or build.get("retired_at") or build.get("status") == "archived":
         return {
             **slot,
             "albion_build_id": None,
@@ -1060,6 +1108,7 @@ def _resolve_build_for_slot(
             "doctrine_role": slot.get("doctrine_role"),
         }
 
+    build = _flatten_build_equipment(db, build)
     return {
         **slot,
         "build_name":    build["name"],
@@ -2241,9 +2290,12 @@ def create_albion_composition(
     slots must be a list of dicts with keys:
       party_number, slot_index, role, build_name, weapon_name (opt), priority (opt)
     Returns the full albion_compositions row.
+
+    Slots are validated after build resolution, so a slot that carries only an
+    albion_build_id inherits its name from the library build instead of being
+    rejected for an empty build_name.
     """
     albion_compositions.validate_composition_name(name)
-    albion_compositions.validate_slot_templates(slots)
 
     with database.transaction() as db:
         ws = repositories.get_workspace_by_id(db, guild_workspace_id)
@@ -2259,9 +2311,10 @@ def create_albion_composition(
             "created_at": now,
             "updated_at": now,
         }
-        repositories.insert_albion_composition(db, composition)
-
         resolved = [_resolve_build_for_slot(db, guild_workspace_id, s) for s in slots]
+        albion_compositions.validate_slot_templates(resolved)
+
+        repositories.insert_albion_composition(db, composition)
         templates = [
             {
                 "id": str(uuid.uuid4()),
@@ -2463,13 +2516,16 @@ def update_composition_slots(
     Editing may NOT clear all slots to zero.  Zero-slot compositions may only
     be created via create_albion_composition — accidental blanking through the
     edit form is rejected here.  Use retire_composition to decommission.
+
+    Slots are validated after build resolution, so a slot that carries only an
+    albion_build_id inherits its name from the library build instead of being
+    rejected for an empty build_name.
     """
     if not slots:
         raise ValidationError(
             "Clearing all slots via Edit is not allowed. "
             "Use Retire to decommission a composition."
         )
-    albion_compositions.validate_slot_templates(slots)
 
     with database.transaction() as db:
         actor_mem = repositories.get_workspace_membership(
@@ -2487,8 +2543,10 @@ def update_composition_slots(
             raise ConflictError("Cannot edit slots on a retired composition.")
 
         now = _now()
-        repositories.delete_composition_slot_templates(db, composition_id, guild_workspace_id)
         resolved = [_resolve_build_for_slot(db, guild_workspace_id, s) for s in slots]
+        albion_compositions.validate_slot_templates(resolved)
+
+        repositories.delete_composition_slot_templates(db, composition_id, guild_workspace_id)
         new_templates = [
             {
                 "id": str(uuid.uuid4()),

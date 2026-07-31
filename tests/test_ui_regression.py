@@ -1284,7 +1284,7 @@ class TestPhase2CompositionBuilderCards:
         resp = client.get(f"/workspaces/{ws['slug']}/compositions/{comp['id']}/edit")
         assert resp.status_code == 200
         assert 'aria-label="Role' in resp.text
-        assert 'aria-label="Build name"' in resp.text
+        assert 'aria-label="Build name' in resp.text
         assert 'aria-label="Party number"' in resp.text
 
     # ── Group B: New composition surface ────────────────────────────────────

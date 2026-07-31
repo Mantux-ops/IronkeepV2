@@ -3,16 +3,18 @@ Build-name and weapon-name suggestion tests (Slice 3).
 
 Covers:
   Group 1 — Repository: get_distinct_slot_build_suggestions
-  Group 2 — Route GET /compositions/new renders datalists + list= attributes
-  Group 3 — Route GET /compositions/{id}/edit renders datalists + list= attributes
+  Group 2 — Composition surfaces no longer free-type build names
   Group 4 — Route GET /operations/{id}/planner renders datalists + list= attributes
-  Group 5 — JS-generated slot card template strings include list= attributes
+
+Free-typed build names were removed from the composition surfaces when slots
+became library-only, so the suggestion datalists now serve the planner alone —
+the one surface where an officer still edits a build under time pressure.
+Group 2 guards that the datalists stay gone from new/edit.
 
 Intentionally NOT covered here:
   - CSS / visual rendering
   - Browser autocomplete behaviour
   - albion_builds table queries (slice explicitly excludes that source)
-  - Tier 5 full-suite run (read-only addition; no use-case or mutation changes)
 """
 
 from __future__ import annotations
@@ -219,98 +221,51 @@ class TestGetDistinctSlotBuildSuggestions:
 
 
 # ---------------------------------------------------------------------------
-# Group 2 — Route GET /compositions/new
+# Group 2 — Composition surfaces are library-only
 # ---------------------------------------------------------------------------
 
-class TestNewCompositionDatalistRendering:
-    """GET /compositions/new renders datalists and wires list= attributes."""
+class TestCompositionSurfacesHaveNoFreeTypedBuildNames:
+    """New and edit compositions drive build names from the library picker.
 
-    def _get(self, slug: str) -> "Response":
-        owner  = make_user(f"new-owner-{slug}")
-        ws     = make_workspace(owner_user_id=owner["id"], slug=slug)
-        # Seed a composition so the workspace has suggestions.
+    The suggestion datalists belong to the planner now.  Leaving them wired up
+    on the composition surfaces would re-offer free-typed names as the fast
+    path, which is exactly what the library-only slot rule removes.
+    """
+
+    def test_new_composition_has_no_build_name_datalist(self):
+        owner  = make_user("new-nodl-owner")
+        ws     = make_workspace(owner_user_id=owner["id"], slug="new-nodl")
         make_composition(ws["id"], slots=[
             {"party_number": 1, "slot_index": 1, "role": "Tank",
              "build_name": "Tombhammer", "weapon_name": "1H Mace", "priority": "core"},
         ])
         client = TestClient(app)
-        _login(client, f"new-owner-{slug}")
-        return client.get(f"/workspaces/{slug}/compositions/new")
-
-    def test_build_name_datalist_present(self):
-        resp = self._get("new-dl-1")
+        _login(client, "new-nodl-owner")
+        resp = client.get(f"/workspaces/{ws['slug']}/compositions/new")
         assert resp.status_code == 200
-        assert 'id="build-name-list"' in resp.text
+        assert 'id="build-name-list"' not in resp.text
+        assert 'id="weapon-name-list"' not in resp.text
+        assert 'list="build-name-list"' not in resp.text
+        assert 'list="weapon-name-list"' not in resp.text
 
-    def test_weapon_name_datalist_present(self):
-        resp = self._get("new-dl-2")
+    def test_edit_composition_has_no_build_name_datalist(self):
+        client, _owner, _ws, comp = _make_workspace_with_comp("edit-nodl")
+        resp = client.get(f"/workspaces/edit-nodl/compositions/{comp['id']}/edit")
         assert resp.status_code == 200
-        assert 'id="weapon-name-list"' in resp.text
+        assert 'id="build-name-list"' not in resp.text
+        assert 'id="weapon-name-list"' not in resp.text
+        assert 'list="build-name-list"' not in resp.text
+        assert 'list="weapon-name-list"' not in resp.text
 
-    def test_build_name_datalist_contains_suggestion(self):
-        resp = self._get("new-dl-3")
-        assert "Tombhammer" in resp.text
-
-    def test_weapon_name_datalist_contains_suggestion(self):
-        resp = self._get("new-dl-4")
-        assert "1H Mace" in resp.text
-
-    def test_build_name_input_has_list_attribute(self):
-        resp = self._get("new-dl-5")
-        assert 'list="build-name-list"' in resp.text
-
-    def test_weapon_name_input_has_list_attribute(self):
-        resp = self._get("new-dl-6")
-        assert 'list="weapon-name-list"' in resp.text
-
-    def test_datalists_render_for_empty_workspace(self):
-        """Datalists should still render (empty) when no templates exist."""
-        owner  = make_user("new-empty-owner")
-        ws     = make_workspace(owner_user_id=owner["id"], slug="new-dl-empty")
+    def test_role_datalist_still_present_on_new(self):
+        """Only the build/weapon datalists go — role suggestions are unaffected."""
+        owner  = make_user("new-roledl-owner")
+        make_workspace(owner_user_id=owner["id"], slug="new-roledl")
         client = TestClient(app)
-        _login(client, "new-empty-owner")
-        resp = client.get(f"/workspaces/new-dl-empty/compositions/new")
+        _login(client, "new-roledl-owner")
+        resp = client.get("/workspaces/new-roledl/compositions/new")
         assert resp.status_code == 200
-        assert 'id="build-name-list"' in resp.text
-        assert 'id="weapon-name-list"' in resp.text
-
-
-# ---------------------------------------------------------------------------
-# Group 3 — Route GET /compositions/{id}/edit
-# ---------------------------------------------------------------------------
-
-class TestEditCompositionDatalistRendering:
-    """GET /compositions/{id}/edit renders datalists and wires list= attributes."""
-
-    def _get(self, slug: str) -> "Response":
-        client, owner, ws, comp = _make_workspace_with_comp(f"edit-dl-{slug}")
-        return client.get(f"/workspaces/edit-dl-{slug}/compositions/{comp['id']}/edit")
-
-    def test_build_name_datalist_present(self):
-        resp = self._get("1")
-        assert resp.status_code == 200
-        assert 'id="build-name-list"' in resp.text
-
-    def test_weapon_name_datalist_present(self):
-        resp = self._get("2")
-        assert resp.status_code == 200
-        assert 'id="weapon-name-list"' in resp.text
-
-    def test_build_name_datalist_contains_suggestion(self):
-        resp = self._get("3")
-        assert "Tombhammer" in resp.text
-
-    def test_weapon_name_datalist_contains_suggestion(self):
-        resp = self._get("4")
-        assert "1H Mace" in resp.text
-
-    def test_build_name_input_has_list_attribute(self):
-        resp = self._get("5")
-        assert 'list="build-name-list"' in resp.text
-
-    def test_weapon_name_input_has_list_attribute(self):
-        resp = self._get("6")
-        assert 'list="weapon-name-list"' in resp.text
+        assert 'id="role-list"' in resp.text
 
 
 # ---------------------------------------------------------------------------
@@ -376,27 +331,19 @@ class TestPlannerDatalistRendering:
 
 
 # ---------------------------------------------------------------------------
-# Group 5 — JS-generated slot card strings include list= attributes
+# Group 5 — Planner JS-generated markup keeps the datalist wiring
 # ---------------------------------------------------------------------------
 
-class TestJsGeneratedSlotCardListAttributes:
-    """The JS _createSlotCard string in new/edit templates includes list= attrs."""
+class TestPlannerSlotBuildEditListAttributes:
+    """The planner's inline build edit stays datalist-backed and free-typed."""
 
-    def test_new_comp_js_build_name_has_list_attr(self):
-        owner  = make_user("js-new-owner")
-        ws     = make_workspace(owner_user_id=owner["id"], slug="js-new-1")
-        client = TestClient(app)
-        _login(client, "js-new-owner")
-        resp = client.get(f"/workspaces/js-new-1/compositions/new")
-        assert resp.status_code == 200
-        # The JS string literal must contain the list= attribute so dynamically
-        # created cards also participate in the datalist.
-        assert 'list="build-name-list"' in resp.text
-        assert 'list="weapon-name-list"' in resp.text
-
-    def test_edit_comp_js_build_name_has_list_attr(self):
-        client, _, ws, comp = _make_workspace_with_comp("js-edit-1")
-        resp = client.get(f"/workspaces/js-edit-1/compositions/{comp['id']}/edit")
+    def test_planner_build_inputs_have_list_attrs(self):
+        client, _owner, ws, comp = _make_workspace_with_comp("js-plan-1")
+        op = make_operation(ws["id"])
+        use_cases.attach_operation_plan(ws["id"], op["id"], comp["id"])
+        use_cases.publish_operation(ws["id"], op["id"])
+        use_cases.generate_operation_slots(ws["id"], op["id"])
+        resp = client.get(f"/workspaces/js-plan-1/operations/{op['id']}/planner")
         assert resp.status_code == 200
         assert 'list="build-name-list"' in resp.text
         assert 'list="weapon-name-list"' in resp.text

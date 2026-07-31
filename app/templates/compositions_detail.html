@@ -336,19 +336,21 @@
               <span>Build</span>
               <input type="text" name="build_name"
                      value="{{ slot.build_name or '' }}"
-                     placeholder="Build name"
+                     placeholder="Pick a build"
                      class="sqe-input sqe-build-name"
+                     readonly
                      autocomplete="off"
-                     aria-label="Build name for slot #{{ slot.slot_index }}">
+                     aria-label="Build name for slot #{{ slot.slot_index }} — set by the library selector">
             </label>
             <label class="sqe-label">
               <span>Weapon</span>
               <input type="text" name="weapon_name"
                      value="{{ slot.weapon_name or '' }}"
-                     placeholder="Weapon (optional)"
+                     placeholder="Weapon"
                      class="sqe-input sqe-weapon-name"
+                     readonly
                      autocomplete="off"
-                     aria-label="Weapon for slot #{{ slot.slot_index }}">
+                     aria-label="Weapon for slot #{{ slot.slot_index }} — from the selected build">
             </label>
             <div class="sqe-actions">
               <button type="submit" class="btn btn-sm btn-primary sqe-save">Save</button>

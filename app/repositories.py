@@ -633,6 +633,33 @@ def get_albion_builds(
     return _rows(db.execute(sql, (guild_workspace_id,)).fetchall())
 
 
+def get_composition_eligible_builds(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+) -> list[dict]:
+    """Return builds an officer may attach to a composition slot.
+
+    Eligible: every non-retired legacy build, plus versioned builds whose status
+    is 'published'.  Draft versioned builds are withheld so half-finished
+    loadouts cannot reach an operation, and archived ones are excluded outright.
+
+    Equipment for versioned builds lives in albion_build_slot_items, not on these
+    rows — callers that need the flat loadout must resolve the current version.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM albion_builds
+            WHERE guild_workspace_id = ?
+              AND retired_at IS NULL
+              AND (current_version_id IS NULL OR status = 'published')
+            ORDER BY name
+            """,
+            (guild_workspace_id,),
+        ).fetchall()
+    )
+
+
 def update_albion_build_fields(
     db: sqlite3.Connection,
     build_id: str,

@@ -364,6 +364,19 @@
 
 .cb-slot-weapon-input::placeholder { color: var(--text-faint); }
 
+/* Build name and weapon are derived from the attached library build, never typed.
+   Read them as reported values rather than editable fields. */
+.cb-slot-build-input[readonly],
+.cb-slot-weapon-input[readonly] {
+  cursor: default;
+  border-style: dashed;
+}
+
+.cb-slot-build-input[readonly]:focus,
+.cb-slot-weapon-input[readonly]:focus {
+  box-shadow: none;
+}
+
 /* ── Card footer: metadata + remove button ───────────── */
 
 .cb-slot-card__footer {

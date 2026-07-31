@@ -710,7 +710,7 @@ class TestPhase2SlotCardSystem:
         )
         assert resp.status_code == 200
         assert 'aria-label="Role' in resp.text
-        assert 'aria-label="Build name"' in resp.text
+        assert 'aria-label="Build name' in resp.text
         assert 'aria-label="Party number"' in resp.text
 
     def test_post_submission_still_works_via_card_layout(self):

@@ -3257,8 +3257,7 @@ def get_new_composition(request: Request, slug: str):
             user, ws, access = authz.resolve_workspace_view(db, request, slug)
             if not access["can_mutate"]:
                 raise PermissionDenied("You do not have permission for this action.")
-            workspace_builds    = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
-            build_suggestions   = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+            workspace_builds    = use_cases.list_composition_build_options(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -3272,8 +3271,6 @@ def get_new_composition(request: Request, slug: str):
             "workspace":               ws,
             "current_user":            user,
             "workspace_builds":        workspace_builds,
-            "build_name_suggestions":  build_suggestions["build_names"],
-            "weapon_name_suggestions": build_suggestions["weapon_names"],
             "error":                   None,
             "prev_name":               "",
             "prev_description":        "",
@@ -3309,9 +3306,8 @@ def get_composition_detail(request: Request, slug: str, comp_id: str):
                 db, comp_id, ws["id"]
             )
             # Workspace builds passed to detail page for quick-edit build selector.
-            # Only legacy builds are eligible for composition slot assignment.
             workspace_builds = (
-                repositories.get_albion_builds(db, ws["id"], legacy_only=True)
+                use_cases.list_composition_build_options(db, ws["id"])
                 if access.get("can_mutate")
                 else []
             )
@@ -3472,8 +3468,7 @@ def get_clone_composition(request: Request, slug: str, comp_id: str):
             slot_templates = repositories.get_composition_slot_templates(
                 db, comp_id, ws["id"]
             )
-            workspace_builds  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
-            build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+            workspace_builds  = use_cases.list_composition_build_options(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -3523,8 +3518,6 @@ def get_clone_composition(request: Request, slug: str, comp_id: str):
             "workspace":               ws,
             "current_user":            user,
             "workspace_builds":        workspace_builds,
-            "build_name_suggestions":  build_suggestions["build_names"],
-            "weapon_name_suggestions": build_suggestions["weapon_names"],
             "error":                   None,
             "prev_name":               prev_name,
             "prev_description":        comp["description"] or "",
@@ -3566,8 +3559,7 @@ def get_edit_composition(request: Request, slug: str, comp_id: str):
             active_operations = repositories.get_operations_using_composition(
                 db, comp_id, ws["id"]
             )
-            workspace_builds  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
-            build_suggestions = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+            workspace_builds  = use_cases.list_composition_build_options(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -3604,8 +3596,6 @@ def get_edit_composition(request: Request, slug: str, comp_id: str):
             "edit_comp_summary":   edit_comp_summary,
             "edit_integrity":          edit_integrity,
             "workspace_builds":        workspace_builds,
-            "build_name_suggestions":  build_suggestions["build_names"],
-            "weapon_name_suggestions": build_suggestions["weapon_names"],
             "active_operations":       active_operations,
             "error":                   error,
             **access,
@@ -3754,11 +3744,9 @@ async def post_create_composition(request: Request, slug: str):
             _prev_warnings = []
         try:
             with database.transaction() as db:
-                _wb  = repositories.get_albion_builds(db, ws["id"], legacy_only=True)
-                _bsg = repositories.get_distinct_slot_build_suggestions(db, ws["id"])
+                _wb = use_cases.list_composition_build_options(db, ws["id"])
         except Exception:
-            _wb  = []
-            _bsg = {"build_names": [], "weapon_names": []}
+            _wb = []
         return templates.TemplateResponse(
             request,
             "compositions_new.html",
@@ -3766,8 +3754,6 @@ async def post_create_composition(request: Request, slug: str):
                 "workspace":               ws,
                 "current_user":            user,
                 "workspace_builds":        _wb,
-                "build_name_suggestions":  _bsg["build_names"],
-                "weapon_name_suggestions": _bsg["weapon_names"],
                 "error":                   str(exc),
                 "prev_name":               name,
                 "prev_description":        description or "",

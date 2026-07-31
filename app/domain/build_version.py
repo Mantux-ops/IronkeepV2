@@ -60,6 +60,59 @@ PUBLISHED_REQUIRED_SLOTS: frozenset[str] = frozenset({
     "main_hand", "head", "chest", "shoes", "food", "potion",
 })
 
+#: Maps a versioned build's equipment slot onto the flat text column that
+#: composition slot templates and operation slots snapshot it into.  `bag` and
+#: `mount` have no flat equivalent and are intentionally dropped: the legacy
+#: snapshot shape predates them and operation surfaces never displayed them.
+LEGACY_SLOT_FIELDS: dict[str, str] = {
+    "main_hand": "weapon_name",
+    "off_hand":  "offhand_name",
+    "head":      "head_name",
+    "chest":     "armor_name",
+    "shoes":     "shoes_name",
+    "cape":      "cape_name",
+    "food":      "food_name",
+    "potion":    "potion_name",
+}
+
+
+def format_item_label(tier: int | None, enchantment: int | None, name: str) -> str:
+    """Render an equipped item as ``T8.3 Hallowfall``.
+
+    Matches the tier.enchantment convention already used by the equipment strip
+    in templates. Falls back to the bare name when tier data is missing.
+    """
+    label = (name or "").strip()
+    if not label:
+        return ""
+    if tier is None:
+        return label
+    return f"T{tier}.{enchantment or 0} {label}"
+
+
+def flatten_slot_items_to_legacy_fields(slot_items: list[dict]) -> dict[str, str]:
+    """Collapse a version's slot items into the flat legacy equipment fields.
+
+    Only primary items are used: alternates exist for officer flexibility and
+    have no slot in the single-value legacy shape. Returned keys are a subset of
+    LEGACY_SLOT_FIELDS values — absent slots are omitted rather than blanked, so
+    callers can distinguish "not equipped" from "explicitly cleared".
+    """
+    flattened: dict[str, str] = {}
+    for item in slot_items:
+        field = LEGACY_SLOT_FIELDS.get(item.get("slot"))
+        if not field or not item.get("is_primary"):
+            continue
+        label = format_item_label(
+            item.get("tier"),
+            item.get("enchantment"),
+            item.get("display_name_snapshot") or "",
+        )
+        if label:
+            flattened[field] = label
+    return flattened
+
+
 ROLE_DISPLAY: dict[str, str] = {
     "tank":       "Tank",
     "healer":     "Healer",

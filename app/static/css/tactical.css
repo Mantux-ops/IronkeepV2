@@ -736,6 +736,12 @@
   border-color: var(--accent);
 }
 
+/* Build name and weapon are derived from the attached library build, never typed. */
+.sqe-input[readonly] {
+  cursor: default;
+  border-style: dashed;
+}
+
 .sqe-actions {
   display: flex;
   gap: var(--space-2);
