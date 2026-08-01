@@ -70,6 +70,10 @@ def _item_icon_url(item_id: str, size: int = 64) -> str:
         return ""
 templates.env.globals["item_icon_url"] = _item_icon_url
 
+# Operation types are stored as lowercase keys; templates that show them to a
+# user go through the domain's label map so "zvz" renders as "ZvZ".
+templates.env.filters["op_type_label"] = guild_operations.operation_type_label
+
 def _is_production() -> bool:
     """Read IRONKEEP_ENV fresh on each call so test patches take effect."""
     return os.getenv("IRONKEEP_ENV", "dev").strip().lower() == "production"
@@ -94,6 +98,32 @@ def _enrich_discord_meta(meta_map: dict) -> dict:
     }
 
 
+def _role_colour(extra_json: str | None) -> str | None:
+    """Discord's packed RGB integer as a CSS hex colour, or None when unset.
+
+    Discord uses 0 for "no colour", which renders as the default text colour
+    rather than black.
+    """
+    import json as _json  # noqa: PLC0415
+    try:
+        packed = int((_json.loads(extra_json or "{}") or {}).get("color") or 0)
+    except (ValueError, TypeError):
+        return None
+    return f"#{packed:06x}" if 0 < packed <= 0xFFFFFF else None
+
+
+def _role_options(db, workspace_id: str) -> list[dict]:
+    """Cached guild roles as picker options: id, name, colour."""
+    return [
+        {
+            "id":     row["discord_entity_id"],
+            "name":   row["name"],
+            "colour": _role_colour(row.get("extra_json")),
+        }
+        for row in repositories.get_discord_metadata_by_type(db, workspace_id, "role")
+    ]
+
+
 def _ping_role_context(db, ws: dict) -> dict:
     """Template context for picking which content roles an event pings.
 
@@ -105,13 +135,15 @@ def _ping_role_context(db, ws: dict) -> dict:
     role_ids = guild_workspace_domain.parse_role_ids(
         ws.get("discord_content_role_ids_json")
     )
-    names = {
-        row["discord_entity_id"]: row["name"]
-        for row in repositories.get_discord_metadata_by_type(db, ws["id"], "role")
-    }
+    cached = {row["id"]: row for row in _role_options(db, ws["id"])}
+    names = {rid: row["name"] for rid, row in cached.items()}
     return {
         "content_role_options": [
-            {"id": rid, "name": names.get(rid) or f"…{rid[-4:]}"}
+            {
+                "id":     rid,
+                "name":   names.get(rid) or f"…{rid[-4:]}",
+                "colour": (cached.get(rid) or {}).get("colour"),
+            }
             for rid in role_ids
         ],
         "cta_ping_role_id":   ws.get("discord_cta_ping_role_id") or "",
@@ -1676,9 +1708,7 @@ def get_discord_settings(request: Request, slug: str):
             channel_options = repositories.get_discord_metadata_by_type(
                 db, ws["id"], "channel"
             )
-            role_options = repositories.get_discord_metadata_by_type(
-                db, ws["id"], "role"
-            )
+            role_options = _role_options(db, ws["id"])
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:

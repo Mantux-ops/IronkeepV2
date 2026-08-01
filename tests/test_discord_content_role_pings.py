@@ -34,6 +34,7 @@ Covers:
   16. Excludes @everyone and managed roles.
   17. Orders highest position first.
   18. Raises DiscordApiError on failure.
+  18a. Reports the role colour so pickers can tint each role.
 
   Use case — config
   19. Ping config is persisted from the settings form.
@@ -53,6 +54,8 @@ Covers:
 
   Route / UI
   29. Settings page renders the role pickers.
+  29a. Roles render as pill toggles tinted with their Discord colour.
+  29b. A colourless role gets no inline tint.
   30. Settings save persists ping config.
   31. New-operation form offers the curated content roles.
   32. Operation detail shows who will be pinged and saves a change.
@@ -60,6 +63,7 @@ Covers:
 
 from __future__ import annotations
 
+import json as _json
 import uuid
 from datetime import datetime, timezone
 from unittest.mock import patch
@@ -134,7 +138,12 @@ def _setup_pinging_workspace(slug: str, name: str, **overrides):
     return owner, ws
 
 
-def _seed_role_cache(ws_id: str, entries: list[tuple[str, str]]) -> None:
+def _seed_role_cache(
+    ws_id: str,
+    entries: list[tuple[str, str]],
+    *,
+    colour: int = 0,
+) -> None:
     now = datetime.now(timezone.utc).isoformat()
     with database.transaction() as db:
         for snowflake, role_name in entries:
@@ -144,7 +153,9 @@ def _seed_role_cache(ws_id: str, entries: list[tuple[str, str]]) -> None:
                 "entity_type": "role",
                 "discord_entity_id": snowflake,
                 "name": role_name,
-                "extra_json": '{"mentionable": true}',
+                "extra_json": _json.dumps(
+                    {"mentionable": True, "color": colour}
+                ),
                 "fetched_at": now,
             })
 
@@ -311,6 +322,21 @@ def test_fetch_guild_roles_orders_highest_first():
          patch("httpx.get", return_value=httpx.Response(200, json=payload)):
         roles = rest_client.fetch_guild_roles(_GUILD_ID)
     assert [r["id"] for r in roles] == ["high", "mid", "low"]
+
+
+def test_fetch_guild_roles_reports_colour():
+    """The role colour is what makes a picker recognisable at a glance."""
+    import httpx  # noqa: PLC0415
+    payload = [
+        {"id": _ROAM_ROLE, "name": "Roaming", "position": 3, "color": 0x9B59B6},
+        {"id": _GANK_ROLE, "name": "Ganking", "position": 2},
+    ]
+    with patch.dict(__import__("os").environ, _BOT_ENV), \
+         patch("httpx.get", return_value=httpx.Response(200, json=payload)):
+        roles = rest_client.fetch_guild_roles(_GUILD_ID)
+    assert roles[0]["color"] == 0x9B59B6
+    # Discord omits or zeroes the field for "no colour set".
+    assert roles[1]["color"] == 0
 
 
 def test_fetch_guild_roles_raises_on_failure():
@@ -506,6 +532,32 @@ def test_settings_renders_role_pickers():
     assert '<select id="cta_ping_role_id" name="cta_ping_role_id">' in body
     assert "@Roaming" in body
     assert f'name="content_role_ids" value="{_GANK_ROLE}"' in body
+
+
+def test_role_pickers_render_as_tinted_pill_toggles():
+    """Roles are picked as pills carrying their Discord colour, not bare checkboxes.
+
+    The native checkbox must stay in the markup: the pill is styling only, so the
+    form keeps submitting a plain repeated field with no JavaScript involved.
+    """
+    _owner, ws = _setup_pinging_workspace("ui-role-pills", "UiRolePillsOwner")
+    _seed_role_cache(ws["id"], [(_ROAM_ROLE, "Roaming")], colour=0x9B59B6)
+    resp = _login("UiRolePillsOwner").get("/workspaces/ui-role-pills/settings/discord")
+    assert resp.status_code == 200
+    body = resp.text
+    assert 'class="pill-toggles"' in body
+    assert f'name="content_role_ids" value="{_ROAM_ROLE}"' in body
+    assert "--pill-accent: #9b59b6" in body
+
+
+def test_colourless_role_pill_has_no_inline_tint():
+    """A role with Discord's default colour falls back to the stylesheet."""
+    _owner, ws = _setup_pinging_workspace("ui-role-plain", "UiRolePlainOwner")
+    _seed_role_cache(ws["id"], [(_ROAM_ROLE, "Roaming")], colour=0)
+    resp = _login("UiRolePlainOwner").get("/workspaces/ui-role-plain/settings/discord")
+    assert resp.status_code == 200
+    assert "@Roaming" in resp.text
+    assert "--pill-accent" not in resp.text
 
 
 def test_settings_save_persists_ping_config():

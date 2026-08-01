@@ -153,11 +153,13 @@ def fetch_channel_metadata(channel_id: str) -> dict:
     }
 
 
-#: Discord channel types the bot can post an operation announcement into.
-#: 0 = GUILD_TEXT, 5 = GUILD_ANNOUNCEMENT.  Voice, category, forum and thread
-#: types are excluded because a plain message POST either fails or lands
-#: somewhere an officer did not intend.
-POSTABLE_CHANNEL_TYPES: frozenset[int] = frozenset({0, 5})
+#: Discord channel types offered as an announcement destination.
+#: Plain text channels only (0 = GUILD_TEXT).  Announcement/news channels (5)
+#: are postable too but are deliberately left out: their messages can be
+#: published to following servers, which is not what a guild operation post is
+#: for.  Voice, stage, category, forum and media types cannot take a plain
+#: message POST at all.
+POSTABLE_CHANNEL_TYPES: frozenset[int] = frozenset({0})
 
 
 def fetch_guild_channels(guild_id: str) -> list[dict]:
@@ -225,7 +227,9 @@ def fetch_guild_roles(guild_id: str) -> list[dict]:
     """
     List the roles an announcement can ping, highest first.
 
-    Returns each role as: id, name, position, mentionable
+    Returns each role as: id, name, position, mentionable, color
+
+    ``color`` is Discord's packed RGB integer, 0 meaning "no colour set".
 
     Excluded:
       - @everyone, whose role ID equals the guild ID — pinging it is never a
@@ -259,6 +263,7 @@ def fetch_guild_roles(guild_id: str) -> list[dict]:
             "name":        r.get("name") or "",
             "position":    r.get("position") or 0,
             "mentionable": bool(r.get("mentionable")),
+            "color":       int(r.get("color") or 0),
         }
         for r in resp.json()
         if str(r.get("id")) != str(guild_id) and not r.get("managed")

@@ -228,20 +228,28 @@ def test_validate_routing_collapses_duplicates():
 # 15-18: fetch_guild_channels
 # ---------------------------------------------------------------------------
 
-def test_fetch_guild_channels_filters_to_postable_types():
+def test_fetch_guild_channels_offers_text_channels_only():
+    """Only plain text channels (type 0) are offered as a destination.
+
+    News, voice, stage, category, forum and media channels are all excluded —
+    news deliberately, since publishing an operation post to following servers
+    is never intended.
+    """
     import httpx  # noqa: PLC0415
     payload = [
-        {"id": "1", "name": "text",        "type": 0, "position": 0},
-        {"id": "2", "name": "news",        "type": 5, "position": 1},
-        {"id": "3", "name": "Voice",       "type": 2, "position": 2},
-        {"id": "4", "name": "Category",    "type": 4, "position": 3},
-        {"id": "5", "name": "forum",       "type": 15, "position": 4},
+        {"id": "1", "name": "text",     "type": 0,  "position": 0},
+        {"id": "2", "name": "news",     "type": 5,  "position": 1},
+        {"id": "3", "name": "Voice",    "type": 2,  "position": 2},
+        {"id": "4", "name": "Category", "type": 4,  "position": 3},
+        {"id": "5", "name": "forum",    "type": 15, "position": 4},
+        {"id": "6", "name": "Stage",    "type": 13, "position": 5},
+        {"id": "7", "name": "media",    "type": 16, "position": 6},
     ]
     with patch.dict(__import__("os").environ, _BOT_ENV), \
          patch("httpx.get", return_value=httpx.Response(200, json=payload)):
         channels = rest_client.fetch_guild_channels(_GUILD_ID)
-    assert [c["id"] for c in channels] == ["1", "2"]
-    assert channels[1]["channel_type"] == 5
+    assert [c["id"] for c in channels] == ["1"]
+    assert channels[0]["channel_type"] == 0
 
 
 def test_fetch_guild_channels_orders_by_category_then_position():

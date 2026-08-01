@@ -26,6 +26,23 @@ from datetime import datetime, timezone
 from app.errors import ConflictError, ValidationError
 
 VALID_OPERATION_TYPES = frozenset({"zvz", "ganking", "roads", "hellgate", "avalon", "other"})
+
+#: Display labels for the stored type keys.  Title-casing the keys would render
+#: "zvz" as "Zvz", which reads as a typo to an Albion player.
+OPERATION_TYPE_LABELS: dict[str, str] = {
+    "zvz":      "ZvZ",
+    "ganking":  "Ganking",
+    "roads":    "Roads",
+    "hellgate": "Hellgate",
+    "avalon":   "Avalon",
+    "other":    "Other",
+}
+
+
+def operation_type_label(operation_type: str | None) -> str:
+    """Human label for a stored operation type, falling back to the raw key."""
+    key = (operation_type or "").strip()
+    return OPERATION_TYPE_LABELS.get(key, key)
 VALID_STATUSES = frozenset({"draft", "planning", "locked", "completed", "archived"})
 SIGNUP_SUBMISSION_ALLOWED_STATUSES = frozenset({"planning"})
 PLAN_ATTACHMENT_ALLOWED_STATUSES = frozenset({"draft"})

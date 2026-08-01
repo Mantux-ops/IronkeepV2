@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% from "_discord_macros.html" import channel_select, discord_name, role_select %}
+{% from "_discord_macros.html" import channel_select, discord_name, pill_toggle, role_select, role_toggles %}
 {% block title %}Discord Settings — {{ workspace.name }}{% endblock %}
 
 {% block workspace_nav %}
@@ -34,6 +34,8 @@
       </div>
       {% endif %}
 
+      <h3 class="form-section-title">Channels</h3>
+
       <div class="form-group">
         <label for="cta_channel_id">CTA Channel</label>
         {{ channel_select('cta_channel_id', cta_channel_id, channel_options) }}
@@ -53,20 +55,25 @@
       </div>
 
       <div class="form-group">
+        <label for="officer_channel_id">Officer Channel</label>
+        {{ channel_select('officer_channel_id', workspace.discord_officer_channel_id or '', channel_options) }}
+        <small class="form-hint">Channel for officer-only notifications. Leave unselected to disable.</small>
+      </div>
+
+      <div class="form-group">
         <label>Which operation types count as a CTA?</label>
-        <div class="checkbox-grid">
+        <div class="pill-toggles">
           {% for op_type in operation_types %}
-          <label class="checkbox-inline">
-            <input type="checkbox" name="cta_operation_types" value="{{ op_type }}"
-                   {% if op_type in cta_operation_types %}checked{% endif %}>
-            {{ op_type | replace('_', ' ') | title }}
-          </label>
+          {{ pill_toggle('cta_operation_types', op_type,
+                         op_type | op_type_label, op_type in cta_operation_types) }}
           {% endfor %}
         </div>
         <small class="form-hint">
-          Checked types go to the CTA channel; everything else goes to the event channel.
+          Selected types go to the CTA channel; everything else goes to the event channel.
         </small>
       </div>
+
+      <h3 class="form-section-title">Pings</h3>
 
       <div class="form-group">
         <label for="cta_ping_role_id">CTA Ping Role</label>
@@ -79,15 +86,7 @@
       <div class="form-group">
         <label>Content Roles</label>
         {% if role_options %}
-        <div class="checkbox-grid">
-          {% for row in role_options %}
-          <label class="checkbox-inline">
-            <input type="checkbox" name="content_role_ids" value="{{ row.discord_entity_id }}"
-                   {% if row.discord_entity_id in content_role_ids %}checked{% endif %}>
-            @{{ row.name }}
-          </label>
-          {% endfor %}
-        </div>
+        {{ role_toggles('content_role_ids', role_options, content_role_ids) }}
         {% else %}
         <p class="form-hint">No roles loaded yet — use <em>Refresh Discord Names</em>.</p>
         {% endif %}
@@ -95,12 +94,6 @@
           The roles an officer may ping per event. Keep this to your actual content
           roles so the per-event picker stays short.
         </small>
-      </div>
-
-      <div class="form-group">
-        <label for="officer_channel_id">Officer Channel</label>
-        {{ channel_select('officer_channel_id', workspace.discord_officer_channel_id or '', channel_options) }}
-        <small class="form-hint">Channel for officer-only notifications. Leave unselected to disable.</small>
       </div>
 
       <div class="form-group">
@@ -141,7 +134,7 @@
     {% if workspace.discord_guild_id %}
     <div class="card-section">
       <div style="display:flex;align-items:baseline;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:0.75rem">
-        <h3 style="font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-muted); margin:0">Current Configuration</h3>
+        <h3 class="form-section-title" style="margin:0;border-bottom:none;padding-bottom:0">Current Configuration</h3>
         {% set any_stale = discord_meta.values() | selectattr('is_stale') | list | length > 0 %}
         {% set any_meta  = discord_meta | length > 0 %}
         {% if any_meta %}
@@ -188,7 +181,7 @@
         <dt>Counts as CTA</dt>
         <dd>
           {% if cta_operation_types %}
-            {{ cta_operation_types | sort | map('replace', '_', ' ') | map('title') | join(', ') }}
+            {{ cta_operation_types | sort | map('op_type_label') | join(', ') }}
           {% else %}
             <span class="page-meta">nothing — every operation posts to the event channel</span>
           {% endif %}

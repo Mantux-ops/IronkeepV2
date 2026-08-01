@@ -4172,6 +4172,7 @@ def refresh_discord_metadata(guild_workspace_id: str) -> dict:
             for role in roles:
                 _upsert("role", role["id"], role["name"], {
                     "mentionable": role["mentionable"],
+                    "color":       role.get("color", 0),
                 })
             configured_role_ids = [
                 rid for rid in [

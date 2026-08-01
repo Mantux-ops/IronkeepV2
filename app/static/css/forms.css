@@ -53,22 +53,84 @@ textarea { min-height: 4rem; resize: vertical; }
 .inline-form { display: inline; max-width: none; }
 .inline-form button { margin: 0; }
 
-/* ── Checkbox groups ───────────────────────────────────── */
-/* A set of related toggles read as one answer, so they wrap into a block
-   rather than stacking one per line like independent settings do.        */
-.checkbox-grid {
+/* ── Form section heading ──────────────────────────────── */
+/* Groups related fields inside one long form (channels vs. pings) so the page
+   reads as a few decisions instead of a flat list of inputs.               */
+.form-section-title {
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin: var(--space-2) 0 0;
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--border);
+}
+
+/* ── Pill toggles ──────────────────────────────────────── */
+/* Multi-select where the options are named things an officer recognises
+   (Discord roles, operation types) rather than independent yes/no settings.
+   The native checkbox stays in the DOM — hidden, not removed — so keyboard
+   and form semantics are untouched and no JavaScript is needed.            */
+.pill-toggles {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--space-1) var(--space-3);
+  gap: var(--space-1) var(--space-2);
+  padding: var(--space-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  /* Long role lists scroll instead of pushing the rest of the form away. */
+  max-height: 13rem;
+  overflow-y: auto;
 }
-.checkbox-inline {
-  display: flex;
+.pill-toggle { position: relative; display: inline-flex; cursor: pointer; font-weight: normal; }
+.pill-toggle input[type="checkbox"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+.pill-toggle__face {
+  --pill-accent: var(--text-muted);
+  display: inline-flex;
   align-items: center;
   gap: 0.4rem;
-  font-weight: normal;
-  cursor: pointer;
+  padding: 0.25rem 0.6rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-3);
+  color: var(--text-muted);
+  font-size: 0.8125rem;
+  line-height: 1.4;
+  white-space: nowrap;
+  transition: border-color .15s, background .15s, color .15s;
 }
-.checkbox-inline input[type="checkbox"] { width: auto; cursor: pointer; }
+.pill-toggle__dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: var(--pill-accent);
+  flex: none;
+  opacity: .5;
+  transition: opacity .15s;
+}
+.pill-toggle:hover .pill-toggle__face { border-color: var(--accent); color: var(--text); }
+.pill-toggle input:checked + .pill-toggle__face {
+  border-color: var(--pill-accent);
+  /* Tint the selected pill with the role's own Discord colour; the flat accent
+     fill is the fallback for engines without color-mix().                    */
+  background: var(--accent-dim);
+  background: color-mix(in srgb, var(--pill-accent) 22%, var(--surface));
+  color: var(--text);
+  font-weight: 600;
+}
+.pill-toggle input:checked + .pill-toggle__face .pill-toggle__dot { opacity: 1; }
+.pill-toggle input:focus-visible + .pill-toggle__face {
+  outline: none;
+  box-shadow: var(--shadow-focus-sm);
+  border-color: var(--accent);
+}
 
 /* ── Composition slot editor ───────────────────────────── */
 .slot-table { max-width: 100%; }

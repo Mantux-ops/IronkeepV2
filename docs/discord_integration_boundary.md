@@ -218,12 +218,18 @@ an existing announcement is edited where it lives, because Discord cannot move
 a message and an edit against the wrong channel 404s.
 
 **Channels are selected, not typed.** `rest_client.fetch_guild_channels()` lists
-the guild's text and announcement channels (types 0 and 5) and the refresh
-caches them as `discord_metadata_cache` rows of `entity_type='channel'`. The
-settings form renders dropdowns from that cache; the snowflake text inputs are
-gone. A configured channel that the listing no longer returns is preserved in
-the cache and still rendered as selected — losing bot access to a channel must
-not silently clear a working configuration on the next save.
+the guild's channels and the refresh caches them as `discord_metadata_cache` rows
+of `entity_type='channel'`. The settings form renders dropdowns from that cache;
+the snowflake text inputs are gone. A configured channel that the listing no
+longer returns is preserved in the cache and still rendered as selected — losing
+bot access to a channel must not silently clear a working configuration on the
+next save.
+
+**Text channels only.** `POSTABLE_CHANNEL_TYPES = {0}` — plain text channels.
+Voice, stage, category, forum and media channels cannot take a message POST at
+all. Announcement/news channels (type 5) technically can, but are excluded on
+purpose: their messages can be published to following servers, which is not what
+an operation post is for.
 
 **Non-changes.** No new field on an operation. Announcements and rosters remain
 explicit officer actions — routing decides *where* a post lands, never *whether*
@@ -282,6 +288,13 @@ re-ping, which is Discord's own behaviour for edits.
 **Excluded from the role picker.** `@everyone` (whose role ID equals the guild
 ID) and managed bot/integration roles are filtered out at the REST layer: neither
 is a content role and pinging the first by accident is unrecoverable.
+
+**The picker looks like Discord.** Roles render as pill toggles tinted with the
+role's own Discord colour, cached as `color` in the metadata row's `extra_json`.
+An officer recognises `@Ganking` by its colour, so a column of identical
+checkboxes makes a 30-role server hard to read. The pill is styling only: the
+native checkbox stays in the DOM (hidden, still focusable), so the form submits a
+plain repeated field and needs no JavaScript.
 
 ---
 

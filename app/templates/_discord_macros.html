@@ -84,16 +84,18 @@
 {#
   role_select(field_name, selected_id, options)
 
-  Renders a Discord role picker, same contract as channel_select.  Roles are
-  prefixed with @ to match how Discord shows them.
+  Renders a single-choice Discord role picker, same contract as channel_select.
+  Roles are prefixed with @ to match how Discord shows them.
+
+  options — list of {id, name, colour} dicts (see routes._role_options)
 #}
 {% macro role_select(field_name, selected_id, options) %}
-{% set option_ids = options | map(attribute='discord_entity_id') | list %}
+{% set option_ids = options | map(attribute='id') | list %}
 <select id="{{ field_name }}" name="{{ field_name }}">
   <option value="">— none —</option>
   {% for row in options %}
-  <option value="{{ row.discord_entity_id }}"
-          {% if row.discord_entity_id == selected_id %}selected{% endif %}>
+  <option value="{{ row.id }}"
+          {% if row.id == selected_id %}selected{% endif %}>
     @{{ row.name }}
   </option>
   {% endfor %}
@@ -101,6 +103,43 @@
   <option value="{{ selected_id }}" selected>…{{ selected_id[-4:] }} (not in list)</option>
   {% endif %}
 </select>
+{% endmacro %}
+
+{#
+  pill_toggle(field_name, value, label, checked, colour)
+
+  One checkbox drawn as a clickable pill.  The native input stays in the DOM
+  (hidden but focusable) so the control keeps checkbox keyboard behaviour and
+  submits as a plain repeated form field — no JavaScript involved.
+
+  Callers wrap a set of these in <div class="pill-toggles">; role_toggles does
+  that for the common role-picker case.
+#}
+{% macro pill_toggle(field_name, value, label, checked, colour=none) %}
+<label class="pill-toggle">
+  <input type="checkbox" name="{{ field_name }}" value="{{ value }}"
+         {% if checked %}checked{% endif %}>
+  <span class="pill-toggle__face"{% if colour %} style="--pill-accent: {{ colour }}"{% endif %}>
+    <span class="pill-toggle__dot" aria-hidden="true"></span>{{ label }}
+  </span>
+</label>
+{% endmacro %}
+
+{#
+  role_toggles(field_name, options, selected_ids)
+
+  Multi-select Discord role picker.  Roles read as @name pills tinted with their
+  Discord colour, which is how an officer recognises them in Discord itself; a
+  bare checkbox column makes a 30-role server unreadable.
+
+  options — list of {id, name, colour} dicts (see routes._role_options)
+#}
+{% macro role_toggles(field_name, options, selected_ids) %}
+<div class="pill-toggles">
+  {% for row in options %}
+  {{ pill_toggle(field_name, row.id, '@' ~ row.name, row.id in selected_ids, row.colour) }}
+  {% endfor %}
+</div>
 {% endmacro %}
 
 {% macro discord_name(snowflake, meta_dict) %}

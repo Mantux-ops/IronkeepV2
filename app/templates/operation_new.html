@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "_discord_macros.html" import role_toggles %}
 {% block title %}New Operation — {{ workspace.name }}{% endblock %}
 
 {% block workspace_nav %}
@@ -40,7 +41,7 @@
         <select id="operation_type" name="operation_type">
           {% set types = ["zvz", "ganking", "roads", "hellgate", "avalon", "other"] %}
           {% for t in types %}
-          <option value="{{ t }}" {% if prev_type == t %}selected{% endif %}>{{ t }}</option>
+          <option value="{{ t }}" {% if prev_type == t %}selected{% endif %}>{{ t | op_type_label }}</option>
           {% endfor %}
         </select>
       </div>
@@ -50,20 +51,12 @@
         <label>Ping on announcement</label>
         {% if cta_ping_role_name %}
         <p class="form-hint">
-          CTA types ({{ cta_operation_types | join(', ') }}) always ping
+          CTA types ({{ cta_operation_types | map('op_type_label') | join(', ') }}) always ping
           <strong>@{{ cta_ping_role_name }}</strong>.
         </p>
         {% endif %}
         {% if content_role_options %}
-        <div class="checkbox-grid">
-          {% for role in content_role_options %}
-          <label class="checkbox-inline">
-            <input type="checkbox" name="ping_role_ids" value="{{ role.id }}"
-                   {% if role.id in prev_ping_role_ids %}checked{% endif %}>
-            @{{ role.name }}
-          </label>
-          {% endfor %}
-        </div>
+        {{ role_toggles('ping_role_ids', content_role_options, prev_ping_role_ids) }}
         <small class="form-hint">
           Content roles to mention for a non-CTA event. Ignored for CTA types.
           You can change this later on the operation page.
