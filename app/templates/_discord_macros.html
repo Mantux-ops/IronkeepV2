@@ -51,6 +51,58 @@
   meta_dict is the dict returned by get_discord_metadata_map(), enriched with
   an `is_stale` boolean by the route helper _enrich_discord_meta().
 #}
+{#
+  channel_select(field_name, selected_id, options)
+
+  Renders a Discord channel picker.  Officers choose a channel by name instead
+  of pasting a snowflake, so the list comes from the cached channel metadata.
+
+  field_name  — form field name, also used as the element id
+  selected_id — currently stored snowflake, or '' when unset
+  options     — discord_metadata_cache rows of entity_type 'channel'
+
+  A stored channel that is not in the cached list is still rendered as a
+  selected option: the bot may have lost the ability to list it, and dropping
+  it would silently clear a working configuration on the next save.
+#}
+{% macro channel_select(field_name, selected_id, options) %}
+{% set option_ids = options | map(attribute='discord_entity_id') | list %}
+<select id="{{ field_name }}" name="{{ field_name }}">
+  <option value="">— none —</option>
+  {% for row in options %}
+  <option value="{{ row.discord_entity_id }}"
+          {% if row.discord_entity_id == selected_id %}selected{% endif %}>
+    #{{ row.name }}
+  </option>
+  {% endfor %}
+  {% if selected_id and selected_id not in option_ids %}
+  <option value="{{ selected_id }}" selected>…{{ selected_id[-4:] }} (not in list)</option>
+  {% endif %}
+</select>
+{% endmacro %}
+
+{#
+  role_select(field_name, selected_id, options)
+
+  Renders a Discord role picker, same contract as channel_select.  Roles are
+  prefixed with @ to match how Discord shows them.
+#}
+{% macro role_select(field_name, selected_id, options) %}
+{% set option_ids = options | map(attribute='discord_entity_id') | list %}
+<select id="{{ field_name }}" name="{{ field_name }}">
+  <option value="">— none —</option>
+  {% for row in options %}
+  <option value="{{ row.discord_entity_id }}"
+          {% if row.discord_entity_id == selected_id %}selected{% endif %}>
+    @{{ row.name }}
+  </option>
+  {% endfor %}
+  {% if selected_id and selected_id not in option_ids %}
+  <option value="{{ selected_id }}" selected>…{{ selected_id[-4:] }} (not in list)</option>
+  {% endif %}
+</select>
+{% endmacro %}
+
 {% macro discord_name(snowflake, meta_dict) %}
 {%- if snowflake -%}
   {%- set row = meta_dict.get(snowflake) if meta_dict else none -%}

@@ -374,12 +374,12 @@ def insert_guild_operation(db: sqlite3.Connection, operation: dict) -> None:
         """
         INSERT INTO guild_operations
             (id, guild_workspace_id, title, operation_type, scheduled_start_at,
-             status, created_at, updated_at)
+             status, discord_ping_role_ids_json, created_at, updated_at)
         VALUES
             (:id, :guild_workspace_id, :title, :operation_type, :scheduled_start_at,
-             :status, :created_at, :updated_at)
+             :status, :discord_ping_role_ids_json, :created_at, :updated_at)
         """,
-        operation,
+        {"discord_ping_role_ids_json": "[]", **operation},
     )
 
 
@@ -2538,6 +2538,90 @@ def update_workspace_discord_config(
     )
 
 
+def update_workspace_discord_routing(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    cta_channel_id: str | None,
+    event_channel_id: str | None,
+    cta_operation_types_json: str,
+) -> None:
+    """Set announcement routing on a workspace. Pass None to clear a channel.
+
+    Deliberately separate from update_workspace_discord_config: that function
+    overwrites every column it names, and most of its callers predate routing.
+    Splitting them means linking a Discord server can never silently wipe a
+    configured CTA or event channel.
+    """
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET discord_cta_channel_id           = :cta_channel_id,
+            discord_event_channel_id         = :event_channel_id,
+            discord_cta_operation_types_json = :cta_operation_types_json,
+            updated_at                       = :updated_at
+        WHERE id = :id
+        """,
+        {
+            "id": workspace_id,
+            "cta_channel_id": cta_channel_id,
+            "event_channel_id": event_channel_id,
+            "cta_operation_types_json": cta_operation_types_json,
+            "updated_at": _now(),
+        },
+    )
+
+
+def update_workspace_discord_ping_roles(
+    db: sqlite3.Connection,
+    workspace_id: str,
+    cta_ping_role_id: str | None,
+    content_role_ids_json: str,
+) -> None:
+    """Set the workspace ping configuration. Pass None to clear the CTA role."""
+    db.execute(
+        """
+        UPDATE guild_workspaces
+        SET discord_cta_ping_role_id      = :cta_ping_role_id,
+            discord_content_role_ids_json = :content_role_ids_json,
+            updated_at                    = :updated_at
+        WHERE id = :id
+        """,
+        {
+            "id": workspace_id,
+            "cta_ping_role_id": cta_ping_role_id,
+            "content_role_ids_json": content_role_ids_json,
+            "updated_at": _now(),
+        },
+    )
+
+
+def update_operation_ping_roles(
+    db: sqlite3.Connection,
+    guild_operation_id: str,
+    guild_workspace_id: str,
+    ping_role_ids_json: str,
+) -> None:
+    """Set which content roles an operation's announcement pings.
+
+    Workspace-scoped in the WHERE clause so an operation ID from another tenant
+    silently matches nothing rather than writing across the boundary.
+    """
+    db.execute(
+        """
+        UPDATE guild_operations
+        SET discord_ping_role_ids_json = :ping_role_ids_json,
+            updated_at                 = :updated_at
+        WHERE id = :id AND guild_workspace_id = :guild_workspace_id
+        """,
+        {
+            "id": guild_operation_id,
+            "guild_workspace_id": guild_workspace_id,
+            "ping_role_ids_json": ping_role_ids_json,
+            "updated_at": _now(),
+        },
+    )
+
+
 def get_workspace_by_discord_guild_id(
     db: sqlite3.Connection,
     discord_guild_id: str,
@@ -2861,6 +2945,55 @@ def get_discord_metadata(
             (guild_workspace_id, entity_type, discord_entity_id),
         ).fetchone()
     )
+
+
+def get_discord_metadata_by_type(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    entity_type: str,
+) -> list[dict]:
+    """Return every cached entity of one type for a workspace, in cache order.
+
+    Feeds the channel picker in Discord settings.  Rows are inserted in the
+    order Discord listed them, so ``rowid`` preserves the server's own channel
+    ordering without storing a position column.
+    """
+    return _rows(
+        db.execute(
+            """
+            SELECT * FROM discord_metadata_cache
+            WHERE guild_workspace_id = ? AND entity_type = ?
+            ORDER BY rowid
+            """,
+            (guild_workspace_id, entity_type),
+        ).fetchall()
+    )
+
+
+def prune_discord_metadata(
+    db: sqlite3.Connection,
+    guild_workspace_id: str,
+    entity_type: str,
+    keep_ids: list[str],
+) -> int:
+    """Drop cached entities of one type that are no longer wanted.
+
+    Upserts alone cannot detect a channel deleted in Discord, so a refresh that
+    successfully listed the guild prunes whatever it did not see.  Callers pass
+    the configured channels in ``keep_ids`` as well, so a channel the bot can no
+    longer list keeps its cached name — a stale name reads better than a raw
+    snowflake.  Returns the number of rows removed.
+    """
+    placeholders = ",".join("?" for _ in keep_ids)
+    clause = f" AND discord_entity_id NOT IN ({placeholders})" if keep_ids else ""
+    cur = db.execute(
+        f"""
+        DELETE FROM discord_metadata_cache
+        WHERE guild_workspace_id = ? AND entity_type = ?{clause}
+        """,
+        (guild_workspace_id, entity_type, *keep_ids),
+    )
+    return cur.rowcount or 0
 
 
 def get_discord_metadata_map(
@@ -3280,15 +3413,19 @@ def get_operations_eligible_for_reminders(
     - scheduled_start_at > now_iso                    — never fire after start
     - workspace discord_guild_id IS NOT NULL          — Discord linked
     - workspace discord_reminders_enabled = 1         — workspace opted in
-    - workspace has announcement OR officer channel   — somewhere to post
+    - workspace has any outbound channel configured   — somewhere to post
 
-    Returns full guild_operations rows joined with workspace discord fields.
+    Returns full guild_operations rows joined with workspace discord fields,
+    including the routing columns so the caller can resolve the operation's own
+    announcement channel without a second query.
     """
     return _rows(
         db.execute(
             """
             SELECT o.*, w.discord_guild_id, w.discord_announcement_channel_id,
-                   w.discord_officer_channel_id, w.discord_reminders_enabled
+                   w.discord_officer_channel_id, w.discord_reminders_enabled,
+                   w.discord_cta_channel_id, w.discord_event_channel_id,
+                   w.discord_cta_operation_types_json
             FROM guild_operations o
             JOIN guild_workspaces w ON w.id = o.guild_workspace_id
             WHERE o.status IN ('planning', 'locked')
@@ -3298,6 +3435,8 @@ def get_operations_eligible_for_reminders(
               AND (
                   w.discord_announcement_channel_id IS NOT NULL
                   OR w.discord_officer_channel_id IS NOT NULL
+                  OR w.discord_cta_channel_id IS NOT NULL
+                  OR w.discord_event_channel_id IS NOT NULL
               )
             ORDER BY o.scheduled_start_at
             """,

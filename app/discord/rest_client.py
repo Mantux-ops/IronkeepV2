@@ -153,6 +153,121 @@ def fetch_channel_metadata(channel_id: str) -> dict:
     }
 
 
+#: Discord channel types the bot can post an operation announcement into.
+#: 0 = GUILD_TEXT, 5 = GUILD_ANNOUNCEMENT.  Voice, category, forum and thread
+#: types are excluded because a plain message POST either fails or lands
+#: somewhere an officer did not intend.
+POSTABLE_CHANNEL_TYPES: frozenset[int] = frozenset({0, 5})
+
+
+def fetch_guild_channels(guild_id: str) -> list[dict]:
+    """
+    List the channels an announcement can be posted into.
+
+    Returns channels of POSTABLE_CHANNEL_TYPES ordered the way Discord shows
+    them (category position, then channel position), each as:
+      id, name, channel_type, parent_id
+
+    Unlike fetch_channel_metadata this needs no channel ID up front, which is
+    what lets an officer pick a channel from a list instead of pasting a
+    snowflake.  Requires only that the bot is a guild member — no privileged
+    intent.
+
+    Raises DiscordApiError on non-2xx or timeout.  Callers must treat failure
+    as non-fatal and fall back to whatever is already cached.
+    """
+    try:
+        resp = httpx.get(
+            f"{_API_BASE}/guilds/{guild_id}/channels",
+            headers=_headers(),
+            timeout=_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        raise DiscordApiError(
+            0,
+            f"Guild channel fetch timed out after {_TIMEOUT}s. "
+            "Discord may be temporarily unavailable.",
+        )
+    _raise_for_status(resp)
+
+    raw = resp.json()
+    # Category positions order the groups; a channel's own position orders it
+    # within its group.  Categories are type 4 and are never postable.
+    category_position = {
+        str(c.get("id")): c.get("position") or 0
+        for c in raw
+        if c.get("type") == 4
+    }
+
+    channels = [
+        {
+            "id":           str(c.get("id")),
+            "name":         c.get("name") or "",
+            "channel_type": c.get("type", 0),
+            "parent_id":    str(c["parent_id"]) if c.get("parent_id") else None,
+        }
+        for c in raw
+        if c.get("type") in POSTABLE_CHANNEL_TYPES
+    ]
+    position = {
+        str(c.get("id")): c.get("position") or 0
+        for c in raw
+    }
+    channels.sort(key=lambda c: (
+        category_position.get(c["parent_id"], -1) if c["parent_id"] else -1,
+        position.get(c["id"], 0),
+        c["name"],
+    ))
+    return channels
+
+
+def fetch_guild_roles(guild_id: str) -> list[dict]:
+    """
+    List the roles an announcement can ping, highest first.
+
+    Returns each role as: id, name, position, mentionable
+
+    Excluded:
+      - @everyone, whose role ID equals the guild ID — pinging it is never a
+        content-role decision and would be catastrophic by accident.
+      - managed roles (bot and integration roles), which no member self-assigns.
+
+    ``mentionable`` is reported but not filtered on: a bot with Mention Everyone
+    permission can ping a non-mentionable role, so hiding those would remove
+    valid options.  Requires no privileged intent.
+
+    Raises DiscordApiError on non-2xx or timeout.  Callers must treat failure as
+    non-fatal and fall back to whatever is already cached.
+    """
+    try:
+        resp = httpx.get(
+            f"{_API_BASE}/guilds/{guild_id}/roles",
+            headers=_headers(),
+            timeout=_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        raise DiscordApiError(
+            0,
+            f"Guild role fetch timed out after {_TIMEOUT}s. "
+            "Discord may be temporarily unavailable.",
+        )
+    _raise_for_status(resp)
+
+    roles = [
+        {
+            "id":          str(r.get("id")),
+            "name":        r.get("name") or "",
+            "position":    r.get("position") or 0,
+            "mentionable": bool(r.get("mentionable")),
+        }
+        for r in resp.json()
+        if str(r.get("id")) != str(guild_id) and not r.get("managed")
+    ]
+    # Discord's own ordering: highest position first, as shown in server settings.
+    roles.sort(key=lambda r: (-r["position"], r["name"]))
+    return roles
+
+
 def fetch_guild_members(guild_id: str, *, page_limit: int = 1000, max_pages: int = 20) -> list[dict]:
     """
     Fetch the full member list of a Discord guild, including server nicknames.

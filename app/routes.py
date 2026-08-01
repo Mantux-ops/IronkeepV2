@@ -40,6 +40,7 @@ from app.auth.current_user import get_current_user, require_current_user
 from app.domain import attendance as attendance_domain
 from app.domain import build_version as build_version_domain
 from app.domain import guild_operations
+from app.domain import guild_workspace as guild_workspace_domain
 from app.domain import scout_attendance as scout_attendance_domain
 from app.domain.mass_planner import sort_participants_for_slot
 from app.errors import (
@@ -90,6 +91,36 @@ def _enrich_discord_meta(meta_map: dict) -> dict:
     return {
         snowflake: {**row, "is_stale": row.get("fetched_at", "") < cutoff}
         for snowflake, row in meta_map.items()
+    }
+
+
+def _ping_role_context(db, ws: dict) -> dict:
+    """Template context for picking which content roles an event pings.
+
+    Only the workspace's curated content roles are offered — the full guild role
+    list would bury them under colour and admin roles.  Names come from the
+    metadata cache; a role with no cached name still appears, labelled by its
+    trailing digits, so an unfetched cache cannot hide a configured role.
+    """
+    role_ids = guild_workspace_domain.parse_role_ids(
+        ws.get("discord_content_role_ids_json")
+    )
+    names = {
+        row["discord_entity_id"]: row["name"]
+        for row in repositories.get_discord_metadata_by_type(db, ws["id"], "role")
+    }
+    return {
+        "content_role_options": [
+            {"id": rid, "name": names.get(rid) or f"…{rid[-4:]}"}
+            for rid in role_ids
+        ],
+        "cta_ping_role_id":   ws.get("discord_cta_ping_role_id") or "",
+        "cta_ping_role_name": names.get(ws.get("discord_cta_ping_role_id") or ""),
+        "cta_operation_types": sorted(
+            guild_workspace_domain.parse_cta_operation_types(
+                ws.get("discord_cta_operation_types_json")
+            )
+        ),
     }
 
 
@@ -1642,6 +1673,12 @@ def get_discord_settings(request: Request, slug: str):
             discord_meta = _enrich_discord_meta(
                 repositories.get_discord_metadata_map(db, ws["id"])
             )
+            channel_options = repositories.get_discord_metadata_by_type(
+                db, ws["id"], "channel"
+            )
+            role_options = repositories.get_discord_metadata_by_type(
+                db, ws["id"], "role"
+            )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -1655,6 +1692,24 @@ def get_discord_settings(request: Request, slug: str):
             "workspace": ws,
             "current_user": user,
             "discord_meta": discord_meta,
+            "channel_options": channel_options,
+            "role_options": role_options,
+            "cta_ping_role_id": ws.get("discord_cta_ping_role_id") or "",
+            "content_role_ids": guild_workspace_domain.parse_role_ids(
+                ws.get("discord_content_role_ids_json")
+            ),
+            # An unrouted workspace preselects its legacy channel, so the first
+            # save moves it onto routing without the officer noticing a change.
+            "cta_channel_id": (
+                ws.get("discord_cta_channel_id")
+                or ws.get("discord_announcement_channel_id")
+                or ""
+            ),
+            "event_channel_id": ws.get("discord_event_channel_id") or "",
+            "cta_operation_types": guild_workspace_domain.parse_cta_operation_types(
+                ws.get("discord_cta_operation_types_json")
+            ),
+            "operation_types": sorted(guild_operations.VALID_OPERATION_TYPES),
             "metadata_ttl_hours": use_cases._METADATA_CACHE_TTL_HOURS,
             **access,
         },
@@ -1665,8 +1720,21 @@ def get_discord_settings(request: Request, slug: str):
 async def post_discord_settings(request: Request, slug: str):
     form = await request.form()
     discord_guild_id = form.get("discord_guild_id", "").strip()
-    announcement_channel_id = form.get("announcement_channel_id", "").strip()
     officer_channel_id = form.get("officer_channel_id", "").strip()
+    cta_channel_id = form.get("cta_channel_id", "").strip()
+    event_channel_id = form.get("event_channel_id", "").strip()
+    cta_operation_types = [
+        str(v).strip() for v in form.getlist("cta_operation_types") if str(v).strip()
+    ]
+    cta_ping_role_id = form.get("cta_ping_role_id", "").strip()
+    content_role_ids = [
+        str(v).strip() for v in form.getlist("content_role_ids") if str(v).strip()
+    ]
+    # The legacy single channel is no longer edited directly; it stays as the
+    # routing fallback and is cleared once the CTA channel takes over.
+    announcement_channel_id = form.get(
+        "announcement_channel_id", cta_channel_id
+    ).strip()
     # Checkbox: present = enabled, absent = disabled (standard HTML checkbox behaviour)
     auto_dispatch = form.get("discord_auto_dispatch") == "1"
     reminders_enabled = form.get("discord_reminders_enabled") == "1"
@@ -1684,6 +1752,13 @@ async def post_discord_settings(request: Request, slug: str):
             officer_channel_id=officer_channel_id or None,
             auto_dispatch=auto_dispatch,
             reminders_enabled=reminders_enabled,
+            routing={
+                "cta_channel_id": cta_channel_id or None,
+                "event_channel_id": event_channel_id or None,
+                "cta_operation_types": cta_operation_types,
+                "cta_ping_role_id": cta_ping_role_id or None,
+                "content_role_ids": content_role_ids,
+            },
         )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -3790,6 +3865,7 @@ def get_new_operation(request: Request, slug: str):
                 _comp = repositories.get_albion_composition(db, preset_comp_id, ws["id"])
                 if _comp and not _comp.get("deleted_at"):
                     preset_comp = _comp
+            ping_context = _ping_role_context(db, ws)
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
     except NotFoundError:
@@ -3807,6 +3883,8 @@ def get_new_operation(request: Request, slug: str):
             "error":        None,
             "prev_title":   "",
             "prev_type":    "zvz",
+            "prev_ping_role_ids": [],
+            **ping_context,
             **access,
         },
     )
@@ -3819,6 +3897,9 @@ async def post_create_operation(request: Request, slug: str):
     operation_type     = form.get("operation_type", "zvz")
     scheduled_start_at = form.get("scheduled_start_at", "").strip()
     composition_id     = form.get("composition_id", "").strip()
+    ping_role_ids      = [
+        str(v).strip() for v in form.getlist("ping_role_ids") if str(v).strip()
+    ]
 
     new_url = f"/workspaces/{slug}/operations/new"
     try:
@@ -3831,6 +3912,7 @@ async def post_create_operation(request: Request, slug: str):
             title=title,
             operation_type=operation_type,
             scheduled_start_at=scheduled_start_at,
+            ping_role_ids=ping_role_ids,
         )
     except AuthenticationRequired:
         return _redirect(authz.login_url(request))
@@ -3840,6 +3922,8 @@ async def post_create_operation(request: Request, slug: str):
         return _err_redirect(new_url, str(exc))
     except IronkeepError as exc:
         access_ctx = authz.membership_context(mem)
+        with database.transaction() as db:
+            ping_context = _ping_role_context(db, ws)
         return templates.TemplateResponse(
             request,
             "operation_new.html",
@@ -3851,6 +3935,8 @@ async def post_create_operation(request: Request, slug: str):
                 "error":        str(exc),
                 "prev_title":   title,
                 "prev_type":    operation_type,
+                "prev_ping_role_ids": ping_role_ids,
+                **ping_context,
                 **access_ctx,
             },
         )
@@ -3930,10 +4016,15 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
     discord_preview = None
     discord_config_gap = None
     discord_announcement_msg = None
+    # Which channel this operation posts to, given its type. Shown in the
+    # preview so an officer sees the destination before pressing post.
+    discord_target_channel_id = guild_workspace_domain.resolve_announcement_channel(
+        ws, op.get("operation_type")
+    )
     if access.get("can_mutate"):
         if not ws.get("discord_guild_id"):
             discord_config_gap = "no_guild"
-        elif not ws.get("discord_announcement_channel_id"):
+        elif not discord_target_channel_id:
             discord_config_gap = "no_channel"
         else:
             base = str(request.base_url).rstrip("/")
@@ -3958,6 +4049,18 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
         discord_meta = _enrich_discord_meta(
             repositories.get_discord_metadata_map(db, ws["id"])
         )
+        ping_context = _ping_role_context(db, ws)
+    # What a post right now would actually mention, after filtering against the
+    # workspace's current content-role list.
+    ping_context["resolved_ping_role_ids"] = (
+        guild_workspace_domain.resolve_ping_role_ids(ws, op)
+    )
+    ping_context["operation_ping_role_ids"] = guild_workspace_domain.parse_role_ids(
+        op.get("discord_ping_role_ids_json")
+    )
+    ping_context["operation_is_cta"] = guild_workspace_domain.is_cta_operation_type(
+        ws, op.get("operation_type")
+    )
 
     return templates.TemplateResponse(
         request,
@@ -3975,7 +4078,9 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
             "discord_preview":          discord_preview,
             "discord_config_gap":       discord_config_gap,
             "discord_announcement_msg": discord_announcement_msg,
+            "discord_target_channel_id": discord_target_channel_id,
             "discord_meta":             discord_meta,
+            **ping_context,
             "active_tab":               "overview",
             "error":                    error,
             "success":                  success,
@@ -4022,6 +4127,37 @@ async def post_discord_announce(request: Request, slug: str, op_id: str):
         else "Discord announcement updated."
     )
     return _ok_redirect(detail_url, msg)
+
+
+@router.post("/workspaces/{slug}/operations/{op_id}/discord/ping-roles")
+async def post_operation_ping_roles(request: Request, slug: str, op_id: str):
+    """Set which content roles the next announcement for this operation pings."""
+    form = await request.form()
+    ping_role_ids = [
+        str(v).strip() for v in form.getlist("ping_role_ids") if str(v).strip()
+    ]
+    detail_url = f"/workspaces/{slug}/operations/{op_id}"
+    try:
+        with database.transaction() as db:
+            user, ws, _mem = authz.authorize_workspace_action(
+                db, request, slug, require_mutator=True
+            )
+        use_cases.update_operation_ping_roles(
+            guild_workspace_id=ws["id"],
+            guild_operation_id=op_id,
+            actor_id=user["id"],
+            ping_role_ids=ping_role_ids,
+        )
+    except AuthenticationRequired:
+        return _redirect(authz.login_url(request))
+    except NotFoundError:
+        raise HTTPException(status_code=404, detail="Workspace or operation not found.")
+    except PermissionDenied as exc:
+        return _err_redirect(detail_url, str(exc))
+    except IronkeepError as exc:
+        return _err_redirect(detail_url, str(exc))
+
+    return _ok_redirect(detail_url, "Ping roles saved.")
 
 
 # ---------------------------------------------------------------------------
@@ -4314,10 +4450,14 @@ def get_planner(request: Request, slug: str, op_id: str):
     # Discord roster preview — pure formatting, owner/officer only, no API calls.
     discord_roster_preview = None
     discord_roster_config_gap = None
+    # The roster follows its operation's announcement channel.
+    discord_target_channel_id = guild_workspace_domain.resolve_announcement_channel(
+        ws, op.get("operation_type")
+    )
     if access.get("can_mutate"):
         if not ws.get("discord_guild_id"):
             discord_roster_config_gap = "no_guild"
-        elif not ws.get("discord_announcement_channel_id"):
+        elif not discord_target_channel_id:
             discord_roster_config_gap = "no_channel"
         elif slots:
             roster_assignments = [
@@ -4429,6 +4569,7 @@ def get_planner(request: Request, slug: str, op_id: str):
             "discord_roster_preview":     discord_roster_preview,
             "discord_roster_config_gap":  discord_roster_config_gap,
             "discord_roster_msg":         discord_roster_msg,
+            "discord_target_channel_id":  discord_target_channel_id,
             "discord_meta":               discord_meta,
             "reliability_scores":         reliability_scores,
             "build_name_suggestions":     build_suggestions["build_names"],

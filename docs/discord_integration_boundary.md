@@ -169,7 +169,7 @@ This prevents roster messages from flickering with each individual assignment ch
 
 | OperationalEvent | Trigger type | Discord action | Channel | Editable later? |
 |------------------|-------------|---------------|---------|-----------------|
-| `guild_operation.published` | Automatic | Post announcement embed | `#cta-announcements` | Yes — update when status changes |
+| `guild_operation.published` | Automatic | Post announcement embed | Routed (see §5a) | Yes — update when status changes |
 | `guild_operation.locked` | Automatic | Edit announcement embed: "Roster locked" | Same message | Yes |
 | `guild_operation.completed` | Automatic | Edit announcement embed: "Completed" | Same message | No further edits |
 | `guild_operation.archived` | — | No action | — | — |
@@ -177,10 +177,111 @@ This prevents roster messages from flickering with each individual assignment ch
 | `operation_plan.attached` | — | No action | — | — |
 | `signup_intent.submitted` | Automatic | Ephemeral confirmation to player | Ephemeral | No |
 | `assignment.created` | — | No automatic message | — | — |
-| `readiness_snapshot.created` | Automatic | Post/edit readiness summary in officer channel | `#officer-board` | Yes — edit existing if present |
+| `readiness_snapshot.created` | Automatic | Post/edit readiness summary | Routed (see §5a) | Yes — edit existing if present |
 | `discord_roster.posted` | Explicit (officer) | Post roster embed | Officer-chosen channel | Yes — on explicit "Update Roster Post" |
 | `attendance.recorded` | — | No action | — | — |
 | `scout_attendance.recorded` | — | No action | — | — |
+
+---
+
+## 5a. Announcement Channel Routing ✅ Shipped (2026-08-01)
+
+**Problem.** Guilds do not run one kind of content. A mid-scale ZvZ CTA and a
+crystal-creature run reach different people and belong in different channels,
+but every outbound message resolved `discord_announcement_channel_id` — one
+column, one destination. Officers could either spam the CTA channel with small
+events or not announce them at all.
+
+**Decision: route on the existing `operation_type`, do not add a category field.**
+The codebase already carries two overlapping type vocabularies
+(`guild_operations.operation_type` and `albion_builds.event_type`). A third
+would compound the confusion. Instead a workspace declares *which operation
+types count as a CTA*; everything else is an event.
+
+| Column | Meaning |
+|--------|---------|
+| `discord_cta_channel_id` | Destination for CTA-typed operations |
+| `discord_event_channel_id` | Destination for everything else |
+| `discord_cta_operation_types_json` | JSON array of `operation_type` values that are CTAs; defaults to `["zvz"]` |
+
+`guild_workspace.resolve_announcement_channel(workspace, operation_type)` is the
+single resolver. Every outbound path uses it: announcement, roster, readiness
+auto-dispatch, and scheduled reminders. Its fallback chain is
+`routed channel → discord_announcement_channel_id → None`, so a workspace that
+has never configured routing keeps posting exactly where it did before. `None`
+means "not configured" and is never guessed at.
+
+**Invariant: a posted message never moves.** `discord_messages` stores the
+channel a message was posted to, and edits use that stored channel rather than
+the resolved one. Re-declaring `ganking` a CTA retargets *future* posts only —
+an existing announcement is edited where it lives, because Discord cannot move
+a message and an edit against the wrong channel 404s.
+
+**Channels are selected, not typed.** `rest_client.fetch_guild_channels()` lists
+the guild's text and announcement channels (types 0 and 5) and the refresh
+caches them as `discord_metadata_cache` rows of `entity_type='channel'`. The
+settings form renders dropdowns from that cache; the snowflake text inputs are
+gone. A configured channel that the listing no longer returns is preserved in
+the cache and still rendered as selected — losing bot access to a channel must
+not silently clear a working configuration on the next save.
+
+**Non-changes.** No new field on an operation. Announcements and rosters remain
+explicit officer actions — routing decides *where* a post lands, never *whether*
+it happens. The officer channel keeps its distinct purpose and is still the last
+resort for reminders. `discord_announcement_channel_id` is retained as the
+fallback and is mirrored to the CTA channel on save.
+
+**Consequence.** A workspace that configures only an event channel can no longer
+post CTA-typed operations: resolution returns `None` and the use case raises.
+That is intentional — silently posting a CTA to the small-events channel is
+worse than refusing.
+
+---
+
+## 5b. Content-Role Pings ✅ Shipped (2026-08-01)
+
+**Problem.** An announcement reached nobody unless they happened to read the
+channel. Guilds already run self-assigned "content roles" (@Roaming, @Ganking,
+@Crystal) so members can opt into the content they care about, but Ironkeep had
+no mention capability at all — no `allowed_mentions`, no `<@&` anywhere.
+
+**Decision: the roles stay in Discord.** Members self-assign them there, through
+whatever reaction-role or onboarding flow the guild already uses. Ironkeep stores
+only snowflakes and mentions them. There is deliberately no per-member interest
+table: duplicating role membership would create a second, immediately stale
+source of truth for something Discord already owns well.
+
+| Column | Meaning |
+|--------|---------|
+| `guild_workspaces.discord_cta_ping_role_id` | The single role every CTA pings |
+| `guild_workspaces.discord_content_role_ids_json` | Curated roles an officer may ping per event |
+| `guild_operations.discord_ping_role_ids_json` | Roles selected for this one event |
+
+**Asymmetric by design.** A CTA pings one fixed role because a call to arms has
+one audience and should not be a per-operation decision. Events are the opposite:
+an outpost run and a crystal reach different people, so the officer picks per
+event from the curated list.
+
+`guild_workspace.resolve_ping_role_ids(workspace, operation)` decides. For an
+event it intersects the operation's selection with the workspace's current
+content-role list, so **removing a role in settings immediately stops it being
+pinged** without rewriting historical operations.
+
+**Mentions must sit in message content.** Role mentions inside an embed render
+as a link but never notify. `format_operation_announcement` therefore puts them
+in `content` and always sends an `allowed_mentions` object — `{"parse": [],
+"roles": [...]}` — even when no roles are configured, which is what stops a stray
+`@everyone` in an operation title from pinging the whole server.
+
+**Non-changes.** Only announcements ping. Rosters, readiness summaries and
+scheduled reminders deliberately stay silent: a T-2h reminder that pings a role
+again turns an informational post into noise. Saving ping roles never posts
+anything — the officer still presses post. Editing an announcement does not
+re-ping, which is Discord's own behaviour for edits.
+
+**Excluded from the role picker.** `@everyone` (whose role ID equals the guild
+ID) and managed bot/integration roles are filtered out at the REST layer: neither
+is a content role and pinging the first by accident is unrecoverable.
 
 ---
 

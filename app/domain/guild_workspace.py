@@ -131,3 +131,165 @@ def validate_discord_config(
         validate_discord_snowflake(announcement_channel_id, "Announcement Channel ID"),
         validate_discord_snowflake(officer_channel_id, "Officer Channel ID"),
     )
+
+
+# ---------------------------------------------------------------------------
+# Announcement routing
+# ---------------------------------------------------------------------------
+
+#: Fallback set of operation types treated as a CTA when a workspace has no
+#: explicit configuration.  Mid-scale ZvZ is the CTA in every guild that has
+#: asked for this split; everything else is a smaller, opt-in event.
+DEFAULT_CTA_OPERATION_TYPES: tuple[str, ...] = ("zvz",)
+
+
+def validate_announcement_routing(
+    cta_channel_id: str | None,
+    event_channel_id: str | None,
+    cta_operation_types: list[str] | None,
+    valid_operation_types: frozenset[str] | set[str],
+) -> tuple[str | None, str | None, str]:
+    """Validate the two routing channels and the CTA type list.
+
+    ``valid_operation_types`` is injected rather than imported: domain modules
+    in this codebase do not depend on each other, and the operation type
+    vocabulary belongs to the guild_operations domain.
+
+    Returns (cta_channel_id, event_channel_id, cta_operation_types_json) with
+    empty strings normalised to None.  An empty selection is allowed and means
+    "nothing is a CTA" — every operation then routes to the event channel.
+    """
+    import json  # noqa: PLC0415
+
+    selected = [str(t).strip().lower() for t in (cta_operation_types or []) if str(t).strip()]
+    for op_type in selected:
+        if op_type not in valid_operation_types:
+            raise ValidationError(
+                f"'{op_type}' is not a valid operation type for CTA routing."
+            )
+    # Deduplicate while keeping a stable stored order so the JSON column does
+    # not churn between saves that select the same set.
+    ordered = sorted(set(selected))
+    return (
+        validate_discord_snowflake(cta_channel_id, "CTA Channel"),
+        validate_discord_snowflake(event_channel_id, "Event Channel"),
+        json.dumps(ordered),
+    )
+
+
+def parse_cta_operation_types(raw: str | None) -> set[str]:
+    """Read the stored JSON array of CTA operation types.
+
+    Corrupt or non-list JSON falls back to the default rather than raising:
+    announcement routing must never be the reason an operation page fails to
+    render, and the worst case is a post landing in the CTA channel.
+    """
+    import json  # noqa: PLC0415
+
+    if not raw:
+        return set(DEFAULT_CTA_OPERATION_TYPES)
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return set(DEFAULT_CTA_OPERATION_TYPES)
+    if not isinstance(parsed, list):
+        return set(DEFAULT_CTA_OPERATION_TYPES)
+    return {str(t).strip().lower() for t in parsed if str(t).strip()}
+
+
+def is_cta_operation_type(workspace: dict, operation_type: str | None) -> bool:
+    """Whether an operation of this type is announced as a CTA."""
+    cta_types = parse_cta_operation_types(
+        workspace.get("discord_cta_operation_types_json")
+    )
+    return (operation_type or "").strip().lower() in cta_types
+
+
+def parse_role_ids(raw: str | None) -> list[str]:
+    """Read a stored JSON array of Discord role snowflakes, order preserved.
+
+    Corrupt JSON yields an empty list rather than raising: a broken ping list
+    must degrade to "ping nobody", never to a failed announcement.
+    """
+    import json  # noqa: PLC0415
+
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(parsed, list):
+        return []
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in parsed:
+        role_id = str(value).strip()
+        if role_id and role_id not in seen:
+            seen.add(role_id)
+            ordered.append(role_id)
+    return ordered
+
+
+def validate_ping_role_config(
+    cta_ping_role_id: str | None,
+    content_role_ids: list[str] | None,
+) -> tuple[str | None, str]:
+    """Validate the workspace-level ping configuration.
+
+    Returns (cta_ping_role_id, content_role_ids_json) with empty strings
+    normalised to None.  Content roles keep the order they were submitted in so
+    the per-event picker matches the order shown in settings.
+    """
+    import json  # noqa: PLC0415
+
+    ordered: list[str] = []
+    for value in content_role_ids or []:
+        role_id = validate_discord_snowflake(value, "Content role")
+        if role_id and role_id not in ordered:
+            ordered.append(role_id)
+    return (
+        validate_discord_snowflake(cta_ping_role_id, "CTA ping role"),
+        json.dumps(ordered),
+    )
+
+
+def resolve_ping_role_ids(workspace: dict, operation: dict) -> list[str]:
+    """Which Discord roles an announcement for this operation should ping.
+
+    A CTA always pings the single configured CTA role — that audience is the
+    whole point of a call to arms and is not a per-operation choice.  Every other
+    type pings the roles selected on the operation, filtered to the workspace's
+    current content-role list so a role removed from settings stops being pinged
+    without having to rewrite past operations.
+    """
+    if is_cta_operation_type(workspace, operation.get("operation_type")):
+        role_id = workspace.get("discord_cta_ping_role_id")
+        return [role_id] if role_id else []
+
+    allowed = set(parse_role_ids(workspace.get("discord_content_role_ids_json")))
+    return [
+        role_id
+        for role_id in parse_role_ids(operation.get("discord_ping_role_ids_json"))
+        if role_id in allowed
+    ]
+
+
+def resolve_announcement_channel(
+    workspace: dict,
+    operation_type: str | None,
+) -> str | None:
+    """Pick the channel an operation of this type is announced in.
+
+    CTA types resolve to the CTA channel, everything else to the event channel.
+    Either falls back to the legacy single announcement channel, so a workspace
+    that has not configured routing keeps posting exactly where it did before.
+
+    Returns None when nothing is configured — callers must treat that as
+    "Discord is not set up" rather than posting to a guessed channel.
+    """
+    if is_cta_operation_type(workspace, operation_type):
+        primary = workspace.get("discord_cta_channel_id")
+    else:
+        primary = workspace.get("discord_event_channel_id")
+    return primary or workspace.get("discord_announcement_channel_id") or None

@@ -63,10 +63,18 @@ This must match `DISCORD_OAUTH_REDIRECT_URI` exactly.
 2. **Create a workspace** — After login, click "Create workspace". Choose a
    short, memorable slug (e.g. `crimson-order`). This appears in all URLs.
 
-3. **Configure Discord settings** — Go to
-   `Settings → Discord` and enter:
-   - The channel ID where announcements should be posted
-   - The channel ID for roster posts (can be the same channel)
+3. **Configure Discord settings** — Go to `Settings → Discord`, enter your
+   Discord Server ID, save, then click **Refresh Discord Names** to load the
+   channel list. Now pick:
+   - The **CTA channel** — where mid-scale ZvZ announcements, rosters and
+     reminders are posted
+   - The **event channel** — where smaller events (roaming, outposts, ganking,
+     crystal creatures) are posted
+   - Which **operation types count as a CTA** (defaults to ZvZ); everything
+     else routes to the event channel
+   - The **CTA ping role** — mentioned on every CTA announcement
+   - Your **content roles** — the Discord roles an officer may ping per event.
+     Members join these in Discord itself; Ironkeep only mentions them.
    - Whether to enable operation reminders
 
 4. **Invite other officers** — Go to `Settings → Members`. Other officers log in
@@ -99,7 +107,9 @@ A complete operation lifecycle looks like this:
    slots. Use Quick Assign to auto-fill unassigned slots.
 
 6. **Post announcement** — Click "Post to Discord" to send a rich embed
-   announcement to the configured channel with a sign-up button.
+   announcement with a sign-up button. It lands in the CTA or event channel
+   depending on the operation's type. A CTA mentions the CTA ping role; an event
+   mentions the content roles ticked on the operation page.
 
 7. **Update Roster Post** — After assignments are finalised, click "Update Roster
    Post" to push the confirmed roster to the Discord announcement.
@@ -123,8 +133,8 @@ the page to see the latest state.
 ### Operation reminders
 
 If `discord_reminders_enabled` is checked in workspace Discord settings,
-the scheduler automatically sends a reminder message to the announcement channel
-before each published operation. The reminder window and exact timing is
+the scheduler automatically sends a reminder message before each published
+operation, to the same channel that operation is announced in. The reminder window and exact timing is
 controlled by the scheduler poll interval (`SCHEDULER_POLL_SECONDS`, default 5
 minutes). Reminders are sent once per operation — a restart or re-poll will not
 produce duplicates.

@@ -53,6 +53,23 @@ textarea { min-height: 4rem; resize: vertical; }
 .inline-form { display: inline; max-width: none; }
 .inline-form button { margin: 0; }
 
+/* ── Checkbox groups ───────────────────────────────────── */
+/* A set of related toggles read as one answer, so they wrap into a block
+   rather than stacking one per line like independent settings do.        */
+.checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+.checkbox-inline {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-weight: normal;
+  cursor: pointer;
+}
+.checkbox-inline input[type="checkbox"] { width: auto; cursor: pointer; }
+
 /* ── Composition slot editor ───────────────────────────── */
 .slot-table { max-width: 100%; }
 .slot-table input[type="number"] { width: 4em; }

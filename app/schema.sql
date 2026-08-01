@@ -15,8 +15,24 @@ CREATE TABLE IF NOT EXISTS guild_workspaces (
     primary_game TEXT NOT NULL DEFAULT 'albion',
     -- Discord integration (nullable until workspace owner links a Discord server)
     discord_guild_id                TEXT UNIQUE,
+    -- Legacy single outbound channel.  Still read as the fallback for both
+    -- routing targets below so pre-routing workspaces keep posting.
     discord_announcement_channel_id TEXT,
     discord_officer_channel_id      TEXT,
+    -- Announcement routing: CTAs and smaller events go to separate channels.
+    -- An operation routes by its operation_type: types listed in
+    -- discord_cta_operation_types_json go to the CTA channel, all others to the
+    -- event channel.  Both channel columns fall back to
+    -- discord_announcement_channel_id when NULL.
+    discord_cta_channel_id          TEXT,
+    discord_event_channel_id        TEXT,
+    discord_cta_operation_types_json TEXT NOT NULL DEFAULT '["zvz"]',
+    -- Content-role pings.  The roles themselves live in Discord (members
+    -- self-assign them there); only their snowflakes are stored here.
+    -- A CTA pings discord_cta_ping_role_id; an event pings the roles selected
+    -- on the operation, constrained to discord_content_role_ids_json.
+    discord_cta_ping_role_id        TEXT,
+    discord_content_role_ids_json   TEXT NOT NULL DEFAULT '[]',
     -- 0 = auto-dispatch disabled (default); 1 = readiness summaries auto-post/edit
     discord_auto_dispatch           INTEGER NOT NULL DEFAULT 0,
     created_at  TEXT NOT NULL,
@@ -200,9 +216,15 @@ CREATE TABLE IF NOT EXISTS guild_operations (
     id                  TEXT PRIMARY KEY,
     guild_workspace_id  TEXT NOT NULL REFERENCES guild_workspaces(id),
     title               TEXT NOT NULL,
-    operation_type      TEXT NOT NULL DEFAULT 'zvz',   -- zvz | ganking | roads | hellgate
+    -- zvz | ganking | roads | hellgate | avalon | other
+    -- Also decides the Discord channel: see guild_workspaces routing columns.
+    operation_type      TEXT NOT NULL DEFAULT 'zvz',
     scheduled_start_at  TEXT NOT NULL,                  -- ISO-8601 UTC
     status              TEXT NOT NULL DEFAULT 'draft',  -- draft | planning | locked | completed | archived
+    -- JSON array of Discord role snowflakes to ping when this operation is
+    -- announced.  Only consulted for non-CTA types; a CTA uses the workspace's
+    -- single discord_cta_ping_role_id instead.
+    discord_ping_role_ids_json TEXT NOT NULL DEFAULT '[]',
     created_at          TEXT NOT NULL,
     updated_at          TEXT NOT NULL
 );

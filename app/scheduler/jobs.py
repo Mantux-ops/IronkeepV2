@@ -525,10 +525,17 @@ def _reminder_channel(operation_row: dict) -> str | None:
     Return the Discord channel ID to post the reminder to, or None if none
     is configured.
 
-    Preference: announcement channel first, then officer channel.
+    The row carries both the operation and its workspace's Discord columns, so
+    the reminder lands in the same channel the operation is announced in
+    (CTA or event, per routing).  The officer channel remains the last resort
+    for a workspace that configured only that.
     """
+    from app.domain import guild_workspace  # noqa: PLC0415
+
     return (
-        operation_row.get("discord_announcement_channel_id")
+        guild_workspace.resolve_announcement_channel(
+            operation_row, operation_row.get("operation_type")
+        )
         or operation_row.get("discord_officer_channel_id")
     ) or None
 

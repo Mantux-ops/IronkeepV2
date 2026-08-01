@@ -118,10 +118,30 @@ def _format_scheduled_time(scheduled_start_at: str) -> str:
 # 1. Operation announcement
 # ---------------------------------------------------------------------------
 
+def format_role_mentions(role_ids: list[str] | None) -> str:
+    """Render Discord role snowflakes as a mention string.
+
+    Returns "" for an empty list so callers can use it as a falsy value.
+    """
+    return " ".join(f"<@&{role_id}>" for role_id in (role_ids or []) if role_id)
+
+
+def build_allowed_mentions(role_ids: list[str] | None) -> dict:
+    """Restrict a message's pings to exactly these roles.
+
+    ``parse: []`` suppresses @everyone, @here and user mentions that happen to
+    appear in embed text.  Without an explicit allowed_mentions object Discord
+    resolves every mention it finds, so this is what keeps a ping deliberate
+    rather than a side effect of message content.
+    """
+    return {"parse": [], "roles": [rid for rid in (role_ids or []) if rid]}
+
+
 def format_operation_announcement(
     operation: dict,
     readiness: dict | None = None,
     signup_url: str | None = None,
+    ping_role_ids: list[str] | None = None,
 ) -> dict:
     """
     Build a Discord message payload announcing a new or updated operation.
@@ -130,6 +150,9 @@ def format_operation_announcement(
     readiness (optional): total_slots, assigned_slots, open_slots
     signup_url (optional): when provided, adds an "Open Signup Page" link button.
                            If None, only check-in buttons are included.
+    ping_role_ids (optional): Discord role snowflakes to mention.  Mentions must
+                           sit in the message content — text inside an embed is
+                           rendered but never pings.
     """
     fields: list[dict] = [
         {"name": "Type",   "value": operation["operation_type"], "inline": True},
@@ -162,10 +185,18 @@ def format_operation_announcement(
         "footer":      {"text": _FOOTER},
     }
 
-    return {
+    payload: dict = {
         "embeds":     [embed],
         "components": _build_components(operation.get("id", ""), signup_url),
     }
+
+    # allowed_mentions is always set, even with no roles: it is the only thing
+    # stopping an unexpected @everyone in a title from pinging the server.
+    payload["allowed_mentions"] = build_allowed_mentions(ping_role_ids)
+    mentions = format_role_mentions(ping_role_ids)
+    if mentions:
+        payload["content"] = mentions
+    return payload
 
 
 # ---------------------------------------------------------------------------

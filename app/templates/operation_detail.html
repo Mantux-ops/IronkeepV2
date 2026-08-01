@@ -298,8 +298,45 @@
         <p class="discord-preview-target">
           Server: {{ discord_name(workspace.discord_guild_id, discord_meta) }}
           &nbsp;·&nbsp;
-          Channel: #{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}
+          Channel: #{{ discord_name(discord_target_channel_id, discord_meta) }}
+          {% if resolved_ping_role_ids %}
+          &nbsp;·&nbsp;
+          Pings:
+          {% for role_id in resolved_ping_role_ids %}@{{ discord_name(role_id, discord_meta) }}{% if not loop.last %}, {% endif %}{% endfor %}
+          {% endif %}
         </p>
+
+        {% if operation_is_cta %}
+          {% if not cta_ping_role_id %}
+          <p class="form-hint">
+            No CTA ping role configured, so this announcement mentions nobody.
+            <a href="/workspaces/{{ workspace.slug }}/settings/discord">Set one</a>.
+          </p>
+          {% endif %}
+        {% elif content_role_options %}
+        <form method="post"
+              action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/discord/ping-roles"
+              class="form" style="margin-top:0.6rem;max-width:none">
+          <div class="form-group">
+            <label>Content roles to ping</label>
+            <div class="checkbox-grid">
+              {% for role in content_role_options %}
+              <label class="checkbox-inline">
+                <input type="checkbox" name="ping_role_ids" value="{{ role.id }}"
+                       {% if role.id in operation_ping_role_ids %}checked{% endif %}>
+                @{{ role.name }}
+              </label>
+              {% endfor %}
+            </div>
+            <small class="form-hint">
+              Saving only changes who the next post mentions — it does not post anything.
+            </small>
+          </div>
+          <div class="action-bar">
+            <button type="submit" class="btn btn-sm">Save ping roles</button>
+          </div>
+        </form>
+        {% endif %}
         <form method="post"
               action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/discord/announce"
               class="inline-form"

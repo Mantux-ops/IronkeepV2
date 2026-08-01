@@ -224,6 +224,20 @@ _COLUMN_MIGRATIONS: list[str] = [
     # NULL = active; ISO-8601 timestamp = soft-deleted (hidden from normal users).
     "ALTER TABLE guild_workspaces ADD COLUMN deleted_at TEXT NULL",
     "ALTER TABLE guild_workspaces ADD COLUMN deleted_by TEXT NULL REFERENCES users(id)",
+    # Announcement routing: guilds run CTAs and smaller events in separate
+    # channels.  Both are NULL until an officer picks them; the resolver falls
+    # back to discord_announcement_channel_id so existing setups keep posting.
+    "ALTER TABLE guild_workspaces ADD COLUMN discord_cta_channel_id   TEXT NULL",
+    "ALTER TABLE guild_workspaces ADD COLUMN discord_event_channel_id TEXT NULL",
+    # JSON array of operation_type values that count as a CTA.  Everything not
+    # listed routes to the event channel.
+    """ALTER TABLE guild_workspaces ADD COLUMN discord_cta_operation_types_json TEXT NOT NULL DEFAULT '["zvz"]'""",
+    # Content-role pings.  Roles live in Discord; Ironkeep stores only their IDs
+    # and mentions them.  A CTA always pings one fixed role; events ping a
+    # per-operation selection drawn from the curated content-role list.
+    "ALTER TABLE guild_workspaces ADD COLUMN discord_cta_ping_role_id TEXT NULL",
+    "ALTER TABLE guild_workspaces ADD COLUMN discord_content_role_ids_json TEXT NOT NULL DEFAULT '[]'",
+    "ALTER TABLE guild_operations ADD COLUMN discord_ping_role_ids_json TEXT NOT NULL DEFAULT '[]'",
 ]
 
 

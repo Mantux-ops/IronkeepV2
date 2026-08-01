@@ -851,14 +851,23 @@ def create_guild_operation(
     title: str,
     operation_type: str,
     scheduled_start_at: str,
+    ping_role_ids: list[str] | None = None,
 ) -> dict:
     """
     Create a new operation inside a workspace.
     Returns the full guild_operations row.
+
+    ping_role_ids are the content roles to mention when this operation is
+    announced.  They are stored as submitted; resolve_ping_role_ids filters them
+    against the workspace's content-role list at post time, and a CTA-typed
+    operation ignores them in favour of the single configured CTA role.
     """
     guild_operations.validate_operation_title(title)
     guild_operations.validate_operation_type(operation_type)
     guild_operations.validate_scheduled_start_at(scheduled_start_at)
+    _, ping_role_ids_json = guild_workspace.validate_ping_role_config(
+        None, ping_role_ids
+    )
 
     with database.transaction() as db:
         ws = repositories.get_workspace_by_id(db, guild_workspace_id)
@@ -873,6 +882,7 @@ def create_guild_operation(
             "operation_type": operation_type,
             "scheduled_start_at": scheduled_start_at,
             "status": "draft",
+            "discord_ping_role_ids_json": ping_role_ids_json,
             "created_at": now,
             "updated_at": now,
         }
@@ -951,6 +961,46 @@ def publish_operation(guild_workspace_id: str, guild_operation_id: str) -> dict:
             db, guild_workspace_id, guild_operation_id,
             target_status="planning",
             event_type=operational_events.GUILD_OPERATION_PUBLISHED,
+        )
+
+
+def update_operation_ping_roles(
+    guild_workspace_id: str,
+    guild_operation_id: str,
+    actor_id: str,
+    ping_role_ids: list[str] | None,
+) -> dict:
+    """Change which content roles an operation's announcement pings.
+
+    Editable for the life of the operation: officers routinely decide who to
+    reach after the operation exists, and an already posted announcement can be
+    updated.  Editing this never re-posts or re-pings by itself — the officer
+    still has to press post.
+    """
+    _, ping_role_ids_json = guild_workspace.validate_ping_role_config(
+        None, ping_role_ids
+    )
+
+    with database.transaction() as db:
+        membership = repositories.get_workspace_membership(
+            db, guild_workspace_id, actor_id
+        )
+        if not membership or membership["role"] not in ("owner", "officer"):
+            raise PermissionDenied(
+                "Only workspace owners and officers can change ping roles."
+            )
+
+        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
+        if not op:
+            raise NotFoundError(
+                f"Operation '{guild_operation_id}' not found in this workspace."
+            )
+
+        repositories.update_operation_ping_roles(
+            db, guild_operation_id, guild_workspace_id, ping_role_ids_json
+        )
+        return repositories.get_guild_operation(
+            db, guild_operation_id, guild_workspace_id
         )
 
 
@@ -3912,6 +3962,7 @@ def update_workspace_discord_config(
     officer_channel_id: str | None,
     auto_dispatch: bool = False,
     reminders_enabled: bool = False,
+    routing: dict | None = None,
 ) -> dict:
     """
     Update the Discord server, channel IDs, auto-dispatch flag, and reminders
@@ -3924,12 +3975,31 @@ def update_workspace_discord_config(
     reminders_enabled enables the send_operation_reminders scheduler job for
     this workspace (T-2h and T-30m posts to announcement/officer channel).
 
+    ``routing`` optionally sets announcement routing and ping configuration with
+    the keys ``cta_channel_id``, ``event_channel_id``, ``cta_operation_types``
+    (a list), ``cta_ping_role_id`` and ``content_role_ids`` (a list).  Omitting
+    it leaves both untouched — only the settings form submits them, and every
+    other caller must not clear them by accident.
+
     The route is responsible for enforcing owner/officer access before
     calling this use case.
     """
     guild_id, ann_id, off_id = guild_workspace.validate_discord_config(
         discord_guild_id, announcement_channel_id, officer_channel_id
     )
+    routing_values = None
+    ping_values = None
+    if routing is not None:
+        routing_values = guild_workspace.validate_announcement_routing(
+            routing.get("cta_channel_id"),
+            routing.get("event_channel_id"),
+            routing.get("cta_operation_types"),
+            guild_operations.VALID_OPERATION_TYPES,
+        )
+        ping_values = guild_workspace.validate_ping_role_config(
+            routing.get("cta_ping_role_id"),
+            routing.get("content_role_ids"),
+        )
 
     with database.transaction() as db:
         ws = repositories.get_workspace_by_id(db, guild_workspace_id)
@@ -3948,6 +4018,14 @@ def update_workspace_discord_config(
             auto_dispatch=auto_dispatch,
             reminders_enabled=reminders_enabled,
         )
+        if routing_values is not None:
+            repositories.update_workspace_discord_routing(
+                db, guild_workspace_id, *routing_values
+            )
+        if ping_values is not None:
+            repositories.update_workspace_discord_ping_roles(
+                db, guild_workspace_id, *ping_values
+            )
 
         updated_ws = repositories.get_workspace_by_id(db, guild_workspace_id)
 
@@ -3965,6 +4043,13 @@ def update_workspace_discord_config(
                 "officer_channel_id": off_id,
                 "auto_dispatch": auto_dispatch,
                 "reminders_enabled": reminders_enabled,
+                **({
+                    "cta_channel_id": routing_values[0],
+                    "event_channel_id": routing_values[1],
+                    "cta_operation_types_json": routing_values[2],
+                    "cta_ping_role_id": ping_values[0],
+                    "content_role_ids_json": ping_values[1],
+                } if routing_values is not None else {}),
             },
         )
         repositories.insert_operational_event(db, event)
@@ -3998,8 +4083,10 @@ def refresh_discord_metadata(guild_workspace_id: str) -> dict:
 
     Returns a result summary dict:
       {
-        "guild":    "ok" | "skipped" | "error:<message>",
-        "channels": {"<snowflake>": "ok" | "skipped" | "error:<message>", ...},
+        "guild":        "ok" | "skipped" | "error:<message>",
+        "channel_list": "ok" | "error:<message>",   # absent when unlinked
+        "role_list":    "ok" | "error:<message>",   # absent when unlinked
+        "channels":     {"<snowflake>": "ok" | "error:<message>", ...},
       }
     """
     import json as _json  # noqa: PLC0415
@@ -4037,11 +4124,74 @@ def refresh_discord_metadata(guild_workspace_id: str) -> dict:
             result["guild"] = f"error:{exc}"
 
     # --- Channels ---
-    for channel_id in filter(None, [
-        ws.get("discord_announcement_channel_id"),
-        ws.get("discord_officer_channel_id"),
-    ]):
-        if channel_id in result["channels"]:
+    # Listing the whole guild is what powers the channel picker, so an officer
+    # never has to paste a snowflake.  It also covers the configured channels,
+    # making the per-channel lookups below a fallback for the case where the
+    # bot may read a channel but not list the guild.
+    configured_ids = [
+        cid for cid in [
+            ws.get("discord_announcement_channel_id"),
+            ws.get("discord_officer_channel_id"),
+            ws.get("discord_cta_channel_id"),
+            ws.get("discord_event_channel_id"),
+        ] if cid
+    ]
+
+    listed_ids: set[str] = set()
+    if guild_id:
+        try:
+            channels = rest_client.fetch_guild_channels(guild_id)
+        except Exception as exc:  # noqa: BLE001
+            result["channel_list"] = f"error:{exc}"
+        else:
+            for channel in channels:
+                _upsert("channel", channel["id"], channel["name"], {
+                    "channel_type": channel["channel_type"],
+                    "parent_id":    channel.get("parent_id"),
+                })
+                listed_ids.add(channel["id"])
+                result["channels"][channel["id"]] = "ok"
+            with database.transaction() as db:
+                result["channels_pruned"] = repositories.prune_discord_metadata(
+                    db,
+                    guild_workspace_id,
+                    "channel",
+                    sorted(listed_ids | set(configured_ids)),
+                )
+            result["channel_list"] = "ok"
+
+    # --- Roles ---
+    # Content roles are Discord roles that members self-assign there; Ironkeep
+    # only needs their names to render pickers and their IDs to mention them.
+    if guild_id:
+        try:
+            roles = rest_client.fetch_guild_roles(guild_id)
+        except Exception as exc:  # noqa: BLE001
+            result["role_list"] = f"error:{exc}"
+        else:
+            for role in roles:
+                _upsert("role", role["id"], role["name"], {
+                    "mentionable": role["mentionable"],
+                })
+            configured_role_ids = [
+                rid for rid in [
+                    ws.get("discord_cta_ping_role_id"),
+                    *guild_workspace.parse_role_ids(
+                        ws.get("discord_content_role_ids_json")
+                    ),
+                ] if rid
+            ]
+            with database.transaction() as db:
+                result["roles_pruned"] = repositories.prune_discord_metadata(
+                    db,
+                    guild_workspace_id,
+                    "role",
+                    sorted({r["id"] for r in roles} | set(configured_role_ids)),
+                )
+            result["role_list"] = "ok"
+
+    for channel_id in configured_ids:
+        if channel_id in listed_ids or channel_id in result["channels"]:
             continue
         try:
             ch_data = rest_client.fetch_channel_metadata(channel_id)
@@ -4198,18 +4348,22 @@ def post_discord_announcement(
         if not ws:
             raise NotFoundError("Workspace not found.")
 
-        channel_id = ws.get("discord_announcement_channel_id")
+        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
+        if not op:
+            raise NotFoundError(
+                f"Operation '{guild_operation_id}' not found in this workspace."
+            )
+
+        # Routed by operation type: CTAs and smaller events go to separate
+        # channels when configured, else both fall back to the legacy one.
+        channel_id = guild_workspace.resolve_announcement_channel(
+            ws, op.get("operation_type")
+        )
         discord_guild_id = ws.get("discord_guild_id")
         if not discord_guild_id or not channel_id:
             raise ValidationError(
                 "Discord server and announcement channel must be configured "
                 "in Workspace Settings before posting."
-            )
-
-        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
-        if not op:
-            raise NotFoundError(
-                f"Operation '{guild_operation_id}' not found in this workspace."
             )
 
         readiness = repositories.get_latest_readiness_snapshot(
@@ -4218,6 +4372,12 @@ def post_discord_announcement(
         existing_msg = repositories.get_discord_message(
             db, guild_workspace_id, guild_operation_id, "announcement"
         )
+
+    # An existing message lives in the channel it was posted to.  Re-routing
+    # in settings must not make an edit target a channel that has no such
+    # message, so the stored channel wins for edits.
+    if existing_msg and not existing_msg.get("is_deleted"):
+        channel_id = existing_msg.get("discord_channel_id") or channel_id
 
 
     # ------------------------------------------------------------------
@@ -4233,7 +4393,12 @@ def post_discord_announcement(
             f"{web_base_url}/workspaces/{ws['slug']}/operations/{guild_operation_id}/signup"
             if web_base_url else None
         )
-    payload = format_operation_announcement(op, readiness, signup_url=signup_url)
+    payload = format_operation_announcement(
+        op,
+        readiness,
+        signup_url=signup_url,
+        ping_role_ids=guild_workspace.resolve_ping_role_ids(ws, op),
+    )
     # ------------------------------------------------------------------
     # REST call â€” outside any DB transaction
     # DiscordApiError propagates to the caller; Phase 2 is skipped entirely.
@@ -4324,18 +4489,22 @@ def post_discord_roster(
         if not ws:
             raise NotFoundError("Workspace not found.")
 
-        channel_id = ws.get("discord_announcement_channel_id")
+        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
+        if not op:
+            raise NotFoundError(
+                f"Operation '{guild_operation_id}' not found in this workspace."
+            )
+
+        # The roster follows its operation's announcement channel so both
+        # messages about one operation stay in the same place.
+        channel_id = guild_workspace.resolve_announcement_channel(
+            ws, op.get("operation_type")
+        )
         discord_guild_id = ws.get("discord_guild_id")
         if not discord_guild_id or not channel_id:
             raise ValidationError(
                 "Discord server and announcement channel must be configured "
                 "in Workspace Settings before posting."
-            )
-
-        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
-        if not op:
-            raise NotFoundError(
-                f"Operation '{guild_operation_id}' not found in this workspace."
             )
 
         slots = repositories.get_operation_slots(db, guild_operation_id, guild_workspace_id)
@@ -4345,6 +4514,9 @@ def post_discord_roster(
         existing_msg = repositories.get_discord_message(
             db, guild_workspace_id, guild_operation_id, "roster"
         )
+
+    if existing_msg and not existing_msg.get("is_deleted"):
+        channel_id = existing_msg.get("discord_channel_id") or channel_id
 
     # ------------------------------------------------------------------
     # Format payload (pure, no DB or API)

@@ -318,8 +318,11 @@ def test_discord_settings_get_renders_for_owner():
     response = client.get(_settings_url("render-ws"))
     assert response.status_code == 200
     assert b"discord_guild_id" in response.content
-    assert b"Announcement Channel ID" in response.content
-    assert b"Officer Channel ID" in response.content
+    # Channels are picked from a list of the guild's channels, so these are
+    # labelled selects rather than "… Channel ID" text inputs.
+    assert b"CTA Channel" in response.content
+    assert b"Event Channel" in response.content
+    assert b"Officer Channel" in response.content
 
 
 def test_discord_settings_get_renders_for_officer():

@@ -237,9 +237,17 @@ def test_fetch_channel_metadata_404_raises():
 # 12-16: Use case — refresh_discord_metadata
 # ---------------------------------------------------------------------------
 
+_CHANNEL_LIST_RESP = [
+    {"id": _ANN_ID, "name": "announcements", "type": 5, "position": 0, "parent_id": None},
+    {"id": _OFF_ID, "name": "officer-chat",  "type": 0, "position": 1, "parent_id": None},
+]
+
+
 def _mock_get(url, **kwargs):
     """Route mocked GET calls by URL path."""
     import httpx  # noqa: PLC0415
+    if url.endswith("/channels"):
+        return httpx.Response(200, json=_CHANNEL_LIST_RESP)
     if "/guilds/" in url:
         return httpx.Response(200, json={"name": "Orbie Gaming", "icon": "abc123"})
     if "/channels/" in url:
@@ -269,6 +277,8 @@ def test_refresh_discord_metadata_writes_three_rows():
 def test_refresh_channel_failure_does_not_abort_guild():
     import httpx  # noqa: PLC0415
     def _selective_fail(url, **kwargs):
+        if url.endswith("/channels"):
+            raise httpx.TimeoutException("timeout")
         if "/guilds/" in url:
             return httpx.Response(200, json={"name": "Orbie Gaming", "icon": None})
         raise httpx.TimeoutException("timeout")
@@ -288,6 +298,8 @@ def test_refresh_channel_failure_does_not_abort_guild():
 def test_refresh_guild_failure_does_not_abort_channels():
     import httpx  # noqa: PLC0415
     def _selective_fail(url, **kwargs):
+        if url.endswith("/channels"):
+            return httpx.Response(200, json=_CHANNEL_LIST_RESP)
         if "/guilds/" in url:
             raise httpx.TimeoutException("timeout")
         return httpx.Response(200, json={"name": "announcements", "type": 5})
@@ -310,7 +322,11 @@ def test_refresh_skips_guild_when_not_configured():
 
 
 def test_refresh_deduplicated_channel_ids():
-    """If announcement == officer channel, it is only fetched once."""
+    """If announcement == officer channel, it is only fetched once.
+
+    The guild listing is mocked as empty so the per-channel fallback path is
+    the one under test here.
+    """
     owner = make_user("SameChannelOwner")
     ws = make_workspace(slug="same-channel-ws", owner_user_id=owner["id"])
     use_cases.update_workspace_discord_config(
@@ -325,6 +341,8 @@ def test_refresh_deduplicated_channel_ids():
     def _counting_get(url, **kwargs):
         import httpx  # noqa: PLC0415
         call_count.append(url)
+        if url.endswith("/channels"):
+            return httpx.Response(200, json=[])
         if "/guilds/" in url:
             return httpx.Response(200, json={"name": "G", "icon": None})
         return httpx.Response(200, json={"name": "ann", "type": 0})
@@ -349,6 +367,8 @@ def test_post_discord_settings_triggers_metadata_refresh():
     def _log_get(url, **kwargs):
         import httpx  # noqa: PLC0415
         call_log.append(url)
+        if url.endswith("/channels"):
+            return httpx.Response(200, json=_CHANNEL_LIST_RESP)
         if "/guilds/" in url:
             return httpx.Response(200, json={"name": "G", "icon": None})
         return httpx.Response(200, json={"name": "ann", "type": 0})

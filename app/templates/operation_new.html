@@ -45,6 +45,33 @@
         </select>
       </div>
 
+      {% if content_role_options or cta_ping_role_name %}
+      <div class="form-group">
+        <label>Ping on announcement</label>
+        {% if cta_ping_role_name %}
+        <p class="form-hint">
+          CTA types ({{ cta_operation_types | join(', ') }}) always ping
+          <strong>@{{ cta_ping_role_name }}</strong>.
+        </p>
+        {% endif %}
+        {% if content_role_options %}
+        <div class="checkbox-grid">
+          {% for role in content_role_options %}
+          <label class="checkbox-inline">
+            <input type="checkbox" name="ping_role_ids" value="{{ role.id }}"
+                   {% if role.id in prev_ping_role_ids %}checked{% endif %}>
+            @{{ role.name }}
+          </label>
+          {% endfor %}
+        </div>
+        <small class="form-hint">
+          Content roles to mention for a non-CTA event. Ignored for CTA types.
+          You can change this later on the operation page.
+        </small>
+        {% endif %}
+      </div>
+      {% endif %}
+
       <div class="form-group">
         <label for="scheduled_start_at">Scheduled start</label>
         <input type="datetime-local" id="scheduled_start_at" name="scheduled_start_at"

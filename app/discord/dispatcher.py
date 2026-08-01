@@ -46,7 +46,7 @@ from app.discord.formatters import (
     format_operation_announcement,
     format_readiness_summary,
 )
-from app.domain import operational_events as ev
+from app.domain import guild_workspace, operational_events as ev
 
 _log = logging.getLogger(__name__)
 
@@ -106,11 +106,17 @@ def _message_action(
         message_type,
     )
 
-    channel_id = (
-        workspace.get("discord_announcement_channel_id")
-        if channel_type == "announcement"
-        else workspace.get("discord_officer_channel_id")
-    )
+    if channel_type == "announcement":
+        channel_id = guild_workspace.resolve_announcement_channel(
+            workspace, operation.get("operation_type")
+        )
+    else:
+        channel_id = workspace.get("discord_officer_channel_id")
+
+    # An already tracked message must be edited where it lives; a routing
+    # change in settings must not retarget it to a channel it is not in.
+    if existing and not existing.get("is_deleted"):
+        channel_id = existing.get("discord_channel_id") or channel_id
 
     base = {
         "message_type":        message_type,
@@ -146,12 +152,15 @@ def _handle_operation_status_event(event: dict, db) -> dict:
     workspace = repositories.get_workspace_by_id(db, ws_id)
     if not workspace or not workspace.get("discord_guild_id"):
         return _noop(event, "workspace has no discord_guild_id configured")
-    if not workspace.get("discord_announcement_channel_id"):
-        return _noop(event, "workspace has no announcement channel configured")
 
     operation = repositories.get_guild_operation(db, op_id, ws_id)
     if not operation:
         return _noop(event, "operation not found")
+
+    if not guild_workspace.resolve_announcement_channel(
+        workspace, operation.get("operation_type")
+    ):
+        return _noop(event, "workspace has no announcement channel configured")
 
     readiness = repositories.get_latest_readiness_snapshot(db, op_id, ws_id)
 
@@ -185,12 +194,15 @@ def _handle_readiness_event(event: dict, db) -> dict:
     workspace = repositories.get_workspace_by_id(db, ws_id)
     if not workspace or not workspace.get("discord_guild_id"):
         return _noop(event, "workspace has no discord_guild_id configured")
-    if not workspace.get("discord_announcement_channel_id"):
-        return _noop(event, "workspace has no announcement channel configured")
 
     operation = repositories.get_guild_operation(db, op_id, ws_id)
     if not operation:
         return _noop(event, "operation not found")
+
+    if not guild_workspace.resolve_announcement_channel(
+        workspace, operation.get("operation_type")
+    ):
+        return _noop(event, "workspace has no announcement channel configured")
 
     readiness = repositories.get_latest_readiness_snapshot(db, op_id, ws_id)
     if not readiness:

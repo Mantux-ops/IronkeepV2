@@ -177,7 +177,7 @@
     <p class="discord-preview-target">
       Server: {{ discord_name(workspace.discord_guild_id, discord_meta) }}
       &nbsp;·&nbsp;
-      Channel: #{{ discord_name(workspace.discord_announcement_channel_id, discord_meta) }}
+      Channel: #{{ discord_name(discord_target_channel_id, discord_meta) }}
     </p>
     <form method="post"
           action="/workspaces/{{ workspace.slug }}/operations/{{ operation.id }}/discord/roster"
