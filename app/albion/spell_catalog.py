@@ -47,15 +47,31 @@ SPELL_SLOT_PREFIX: dict[str, str] = {
     "cape":      "cape",
 }
 
-#: Every field key a build may store a spell under.
-VALID_SPELL_FIELD_KEYS: frozenset[str] = frozenset({
+#: Every field key a build may store a spell under, in the order a player reads
+#: them: weapon abilities first, then armour actives and passives top to bottom.
+#: Stored rows come back sorted by field_key, which is alphabetical and therefore
+#: meaningless to a reader, so any surface showing spells orders them through this.
+SPELL_FIELD_ORDER: tuple[str, ...] = (
     "weapon_spell_q", "weapon_spell_w", "weapon_spell_e", "weapon_passive",
     "head_spell", "head_passive",
     "chest_spell", "chest_passive", "chest_passive_2",
     "shoes_spell", "shoes_passive",
-    "offhand_passive",
-    "cape_passive",
-})
+    "offhand_passive", "cape_passive",
+)
+
+#: Field key -> label shown to a player.
+SPELL_FIELD_LABELS: dict[str, str] = {
+    "weapon_spell_q": "Q", "weapon_spell_w": "W", "weapon_spell_e": "E",
+    "weapon_passive": "Weapon Passive",
+    "head_spell": "Head", "head_passive": "Head Passive",
+    "chest_spell": "Chest", "chest_passive": "Chest Passive",
+    "chest_passive_2": "Chest Passive II",
+    "shoes_spell": "Shoes", "shoes_passive": "Shoes Passive",
+    "offhand_passive": "Off-hand Passive", "cape_passive": "Cape Passive",
+}
+
+#: Every field key a build may store a spell under.
+VALID_SPELL_FIELD_KEYS: frozenset[str] = frozenset(SPELL_FIELD_ORDER)
 
 
 def get_base_type(item_id: str) -> str:

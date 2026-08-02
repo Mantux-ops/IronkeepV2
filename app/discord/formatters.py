@@ -61,16 +61,75 @@ def _color(status: str) -> int:
     return STATUS_COLORS.get(status, _DEFAULT_COLOR)
 
 
-def _build_components(operation_id: str, signup_url: str | None) -> list[dict]:
+#: Discord truncates a select option label or description beyond 100 characters.
+_SELECT_TEXT_LIMIT = 100
+
+#: Discord rejects a string select carrying more than 25 options.  A composition
+#: with more distinct loadouts than this is beyond what one menu can express, so
+#: the surplus is dropped rather than shown wrong.
+SELECT_MAX_OPTIONS = 25
+
+
+def _role_select_row(operation_id: str, role_choices: list[dict]) -> dict | None:
+    """Build the action row holding the roster role picker, or None.
+
+    Returns None for an empty roster so a message never carries a select with no
+    options, which Discord rejects outright.
+
+    The label leads with role and weapon because that is what a player recognises
+    when scanning; the build name goes in the description, where Discord shows it
+    as secondary text. Deliberately absent: how many of each role are still open.
+    This message is only rewritten when an officer re-posts, so a count would be
+    wrong within minutes of the first assignment.
     """
-    Build a Discord action-row component block for scout/support check-in buttons
-    and an optional signup link button.
+    options = [
+        {
+            "label": (
+                f"{choice['role']} · {choice['weapon_name']}"
+                if choice.get("weapon_name")
+                else choice["role"]
+            )[:_SELECT_TEXT_LIMIT],
+            "value": choice["key"],
+            **(
+                {"description": choice["build_name"][:_SELECT_TEXT_LIMIT]}
+                if choice.get("build_name")
+                else {}
+            ),
+        }
+        for choice in role_choices[:SELECT_MAX_OPTIONS]
+    ]
+    if not options:
+        return None
+    return {
+        "type": 1,
+        "components": [{
+            "type":        3,   # 3 = StringSelect
+            "custom_id":   f"signup:{operation_id}",
+            "placeholder": "Sign up for a role",
+            "min_values":  1,
+            "max_values":  1,
+            "options":     options,
+        }],
+    }
+
+
+def _build_components(
+    operation_id: str,
+    signup_url: str | None,
+    role_choices: list[dict] | None = None,
+) -> list[dict]:
+    """
+    Build the action rows for scout/support check-in buttons, an optional signup
+    link button, and — when a roster exists — the role picker.
 
     Discord component types:
-      1 = ActionRow, 2 = Button
+      1 = ActionRow, 2 = Button, 3 = StringSelect
     Discord button styles:
       1 = PRIMARY (blurple) — requires custom_id
       5 = LINK (grey)       — requires url, must NOT have custom_id
+
+    A select must occupy an action row of its own, and it is placed first because
+    picking a role is the action most members came for.
     """
     buttons: list[dict] = [
         {
@@ -93,7 +152,12 @@ def _build_components(operation_id: str, signup_url: str | None) -> list[dict]:
             "label": "Open Signup Page",
             "url":   signup_url,
         })
-    return [{"type": 1, "components": buttons}]
+    rows: list[dict] = []
+    select_row = _role_select_row(operation_id, role_choices or [])
+    if select_row:
+        rows.append(select_row)
+    rows.append({"type": 1, "components": buttons})
+    return rows
 
 
 def _format_scheduled_time(scheduled_start_at: str) -> str:
@@ -142,6 +206,7 @@ def format_operation_announcement(
     readiness: dict | None = None,
     signup_url: str | None = None,
     ping_role_ids: list[str] | None = None,
+    role_choices: list[dict] | None = None,
 ) -> dict:
     """
     Build a Discord message payload announcing a new or updated operation.
@@ -153,6 +218,10 @@ def format_operation_announcement(
     ping_role_ids (optional): Discord role snowflakes to mention.  Mentions must
                            sit in the message content — text inside an embed is
                            rendered but never pings.
+    role_choices (optional): roster role options from
+                           roster_choices.build_role_choices().  When empty the
+                           announcement carries no role picker, which is the
+                           correct state for an operation with no roster yet.
     """
     fields: list[dict] = [
         {"name": "Type",   "value": operation["operation_type"], "inline": True},
@@ -187,7 +256,9 @@ def format_operation_announcement(
 
     payload: dict = {
         "embeds":     [embed],
-        "components": _build_components(operation.get("id", ""), signup_url),
+        "components": _build_components(
+            operation.get("id", ""), signup_url, role_choices
+        ),
     }
 
     # allowed_mentions is always set, even with no roles: it is the only thing
@@ -463,3 +534,123 @@ def format_signup_confirmation(
         "embeds": [embed],
         "flags":  _EPHEMERAL_FLAG,
     }
+
+
+# ---------------------------------------------------------------------------
+# 6. Role choice — thread notice and build DM
+# ---------------------------------------------------------------------------
+
+#: Suppresses every mention type. The thread notice names the member who picked
+#: a role, and it addresses someone who is standing right there having just
+#: pressed the picker — pinging them would be noise, and pinging anyone else
+#: (a role name that happens to match, a stray @everyone) would be worse.
+_NO_MENTIONS = {"parse": [], "users": [], "roles": []}
+
+
+def _role_label(choice: dict) -> str:
+    """Role with its weapon, as a player recognises it."""
+    role   = (choice.get("role") or "").strip() or "role"
+    weapon = (choice.get("weapon_name") or "").strip()
+    return f"{role} · {weapon}" if weapon else role
+
+
+def format_role_choice_notice(
+    display_name: str,
+    choice: dict,
+    discord_user_id: str | None = None,
+) -> dict:
+    """
+    Announce in the operation thread that a member signed up for a role.
+
+    Plain content, no embed: a thread accumulates one of these per member and
+    reads as a running list, which a stack of embeds would bury.
+
+    The member is rendered as a Discord mention when their snowflake is known,
+    because a mention resolves to their current server nickname instead of
+    whatever name Ironkeep happens to store. It never pings — see _NO_MENTIONS.
+    """
+    who = f"<@{discord_user_id}>" if discord_user_id else f"**{display_name}**"
+    return {
+        "content":          f"{who} signed up as **{_role_label(choice)}**.",
+        "allowed_mentions": _NO_MENTIONS,
+    }
+
+
+#: Equipment fields in the order a player kits up, with the labels they know.
+_GEAR_FIELDS: tuple[tuple[str, str], ...] = (
+    ("weapon_name",  "Weapon"),
+    ("offhand_name", "Off-hand"),
+    ("head_name",    "Head"),
+    ("armor_name",   "Armor"),
+    ("shoes_name",   "Shoes"),
+    ("cape_name",    "Cape"),
+    ("food_name",    "Food"),
+    ("potion_name",  "Potion"),
+)
+
+
+def format_build_dm(
+    operation: dict,
+    slot: dict,
+    spells: list[dict] | None = None,
+) -> dict:
+    """
+    Build the direct message handing a player the build for the role they picked.
+
+    operation requires: title, scheduled_start_at
+    slot requires: role, build_name; equipment fields are optional and empty
+                   ones are omitted rather than shown as a dash — a missing cape
+                   in the doctrine is not information worth a line.
+    spells (optional): stored {field_key, spell_name} rows for the slot's pinned
+                   build version. Absent for legacy builds, which never had a
+                   version to record spells against.
+
+    Carries no components: a DM arrives outside any guild, so a check-in button
+    there would have no operation context to act in.
+    """
+    from app.albion.spell_catalog import (  # noqa: PLC0415 — static catalog, no DB
+        SPELL_FIELD_LABELS,
+        SPELL_FIELD_ORDER,
+    )
+
+    fields: list[dict] = [
+        {"name": "Role", "value": (slot.get("role") or "—"), "inline": True},
+    ]
+    if slot.get("doctrine_role"):
+        fields.append(
+            {"name": "Assignment", "value": slot["doctrine_role"], "inline": True}
+        )
+    fields += [
+        {"name": label, "value": slot[key], "inline": True}
+        for key, label in _GEAR_FIELDS
+        if slot.get(key)
+    ]
+
+    by_key = {
+        row["field_key"]: row["spell_name"]
+        for row in (spells or [])
+        if row.get("spell_name")
+    }
+    spell_lines = [
+        f"**{SPELL_FIELD_LABELS.get(key, key)}** — {by_key[key]}"
+        for key in SPELL_FIELD_ORDER
+        if key in by_key
+    ]
+    if spell_lines:
+        fields.append({
+            "name":   "Spells",
+            "value":  "\n".join(spell_lines),
+            "inline": False,
+        })
+
+    embed: dict = {
+        "title":       slot.get("build_name") or "Your build",
+        "description": (
+            f"You signed up as **{_role_label(slot)}** for "
+            f"**{operation['title']}** — {_format_scheduled_time(operation['scheduled_start_at'])}."
+        ),
+        "color":       STATUS_COLORS["planning"],
+        "fields":      fields,
+        "footer":      {"text": _FOOTER},
+    }
+    return {"embeds": [embed], "allowed_mentions": _NO_MENTIONS}

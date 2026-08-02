@@ -150,6 +150,7 @@ class TestGetDistinctSlotBuildSuggestions:
                     "food_name":      None,
                     "potion_name":    None,
                     "albion_build_id": None,
+                    "albion_build_version_id": None,
                     "doctrine_role":  None,
                     "priority":       "core",
                     "created_at":     now,

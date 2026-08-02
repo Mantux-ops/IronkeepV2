@@ -298,6 +298,82 @@ plain repeated field and needs no JavaScript.
 
 ---
 
+## 5c. Roster Role Picker ✅ Shipped (2026-08-02)
+
+**Problem.** After an announcement went out, signing up meant leaving Discord for
+the web signup page. The roles were already known — they sit in the operation's
+roster — but a member had no way to pick one where the announcement was.
+
+**A dropdown under the announcement.** `format_operation_announcement` adds a
+string select (`custom_id = signup:{operation_id}`) whose options come from
+`roster_choices.build_role_choices()`. Labels lead with role and weapon, the
+build name goes in the description. The select occupies its own action row above
+the existing check-in buttons.
+
+**Options are role/build/weapon combinations, not slots.** A 20-man composition
+repeats the same loadout five times; offering every slot would ask a member to
+choose between five identical entries, and Discord caps a select at 25 options
+anyway. Distinct combinations typically number under ten.
+
+**No free-slot counts in the picker.** Deliberate: the announcement is only
+rewritten when an officer re-posts, so a count would be wrong within minutes of
+the first assignment. A picker that says less beats one that quietly lies.
+
+**Options are keyed by content digest, not position.**
+`roster_choices.choice_key()` digests role + build + weapon. An index would
+silently shift onto a different role as soon as the composition changed under a
+message that keeps its old options. A digest either resolves to the same choice
+or to nothing, and "nothing" is reported as a stale picker.
+
+**A pick is a preference, not a claim.** `use_cases.record_role_choice` writes a
+`signup_intents` row exactly as the web signup does. The roster keeps being
+filled by officers through the planner, so two members may pick the same role.
+Re-picking repoints the existing row — one signup per participant per operation
+is all the schema allows, so "change your mind" has to mean update — and also
+clears `withdrawn_at`, since a member who withdrew otherwise has no way back in.
+Picking is refused once the member holds an active assignment: an officer already
+placed them, and rewriting the preference underneath that would leave the planner
+disagreeing with what the member believes.
+
+**Then two outbound messages.** `use_cases.deliver_role_choice_notifications`
+posts the notice into the thread on the announcement and DMs the player their
+build. Both are best-effort and never raise: the pick is already recorded and the
+member already has their confirmation, so a Discord failure must read as "the
+notice did not go out", not as a failed signup.
+
+| Capability | Endpoint | Note |
+|------------|----------|------|
+| Thread on a message | `POST /channels/{ch}/messages/{msg}/threads` | The thread's ID *equals* the message ID, so no thread ID is stored |
+| Post in that thread | `POST /channels/{msg}/messages` | Tried first; 404 means no thread yet, so create then post |
+| DM channel | `POST /users/@me/channels` | Idempotent per recipient, nothing to cache |
+
+A 403 on the thread post is a missing "Create Public Threads" or "Send Messages
+in Threads" permission — the officer's to fix, and it must not colour the
+member's confirmation. A 403 on the DM means the member blocks DMs from server
+members, which Discord only reveals at send time; the build is then delivered as
+an ephemeral follow-up on the interaction instead, because the build is what they
+came for.
+
+**Timing.** The adapter answers the interaction and returns a `follow_up`
+instruction; the bot sends the reply *first*, then runs the REST work in a
+thread. Discord invalidates an interaction left unacknowledged for three seconds,
+and the follow-up is several round-trips. `follow_up` is an Ironkeep-only key and
+is never sent to Discord.
+
+**Builds are pinned to a version, not a build.** Sending spells needs a way back
+from a frozen roster slot to the build's spell rows, and spells live only on
+`albion_build_versions`. Both `composition_slot_templates` and `operation_slots`
+gained `albion_build_version_id`, recorded at the moment the equipment text is
+flattened so gear and spells always describe the same version. A *version*
+reference rather than a build reference is what keeps the Build Snapshot
+Invariant intact: a version can never change, a build can. Rows predating this
+carry NULL and degrade to gear-only, as does any legacy (unversioned) build.
+
+**The thread notice pings nobody.** `{"parse": [], "users": [], "roles": []}`.
+It addresses someone who just pressed the picker and is standing right there.
+
+---
+
 ## 6. Message Update Strategy
 
 **Problem:** Discord messages can only be edited by the bot that posted them. Message IDs must be stored or the message cannot be updated.
@@ -379,6 +455,8 @@ def discord_user_to_app_user(discord_user_id: str, db) -> dict:
 - Notify officers of readiness state change (automatic, event-driven).
 - Ephemeral acknowledgements to command issuers.
 - Remind assigned players before operation (scheduled job reads DB, bot sends DM).
+- Accept a roster role pick from the announcement dropdown (→ `record_role_choice`),
+  log it in the thread on that announcement, and DM the picked build (see 5c).
 
 ### Forbidden
 

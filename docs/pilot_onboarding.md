@@ -36,7 +36,13 @@ The application needs these OAuth2 scopes to authenticate users:
 | Send Messages | Post operation announcements and rosters |
 | Embed Links | Send rich embed cards |
 | Read Message History | Edit existing roster posts via Update Roster Post |
+| Create Public Threads | Open the signup thread on an announcement |
+| Send Messages in Threads | Log role picks in that thread |
 | Use External Emojis | Optional — for richer formatting |
+
+> Without the two thread permissions everything else still works: a member's
+> role pick is recorded and their build is still sent, only the thread notice is
+> skipped.
 
 > **Note:** Give the bot access only to the channels you want it to post in.
 > There is no need for administrator permissions.

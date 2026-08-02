@@ -18,8 +18,15 @@ Handler contract:
       {"type": 4, "data": {"embeds": [...], "flags": 64}}   # success
       {"type": 4, "data": {"content": "❌ ...", "flags": 64}}  # error
 
+A handler may add a top-level "follow_up" key describing outbound work for the
+bot to perform *after* it has replied. Discord invalidates an interaction left
+unacknowledged for three seconds, so anything needing several REST round-trips
+cannot happen before the reply. "follow_up" is an Ironkeep-only instruction and
+must never be forwarded to Discord.
+
 Rules:
 - No business logic here: resolve identity → call use case → format response.
+- No outbound Discord calls: handlers run inside a DB transaction.
 - Domain exceptions (IronkeepError subclasses) become ephemeral error payloads.
 - Unknown exceptions are NOT caught — they propagate to the bot's global handler.
 - Readiness and roster handlers are read-only (no side-effecting use cases).
@@ -241,30 +248,46 @@ def handle_checkin_command(payload: dict, db) -> dict:
 
 def handle_component_interaction(payload: dict, db) -> dict:
     """
-    Route a Discord message-component interaction (button click) to the
-    appropriate application use case.
+    Route a Discord message-component interaction to the appropriate use case.
 
     payload shape:
       {
           "discord_guild_id": str,
           "discord_user_id":  str,
-          "custom_id":        str,   # e.g. "checkin:scout:{operation_id}"
+          "custom_id":        str,
+          "values":           list[str],   # selects only; absent for buttons
       }
 
     Supported custom_id patterns:
-      checkin:scout:{operation_id}
-      checkin:support:{operation_id}
+      checkin:scout:{operation_id}     button
+      checkin:support:{operation_id}   button
+      signup:{operation_id}            role picker (value = a role choice key)
 
-    Returns an ephemeral type=4 interaction response.
+    Returns an ephemeral type=4 interaction response.  A role pick additionally
+    carries a "follow_up" key — see _handle_role_choice.
     Unknown exceptions propagate to the bot's global handler.
     """
+    custom_id = payload.get("custom_id", "")
+    prefix    = custom_id.split(":", 1)[0]
+
+    if prefix == "checkin":
+        return _handle_checkin(payload, db)
+    if prefix == "signup":
+        return _handle_role_choice(payload, db)
+    return _error_response(
+        f"Unknown interaction: '{custom_id}'. "
+        "This component is not supported by this bot version."
+    )
+
+
+def _handle_checkin(payload: dict, db) -> dict:
+    """Scout/support check-in from a button on an announcement or roster post."""
     guild_id  = payload.get("discord_guild_id", "")
     user_id   = payload.get("discord_user_id", "")
     custom_id = payload.get("custom_id", "")
 
-    # Parse and validate custom_id
     parts = custom_id.split(":")
-    if len(parts) != 3 or parts[0] != "checkin":
+    if len(parts) != 3:
         return _error_response(
             f"Unknown interaction: '{custom_id}'. "
             "This button is not supported by this bot version."
@@ -305,6 +328,86 @@ def handle_component_interaction(payload: dict, db) -> dict:
                     f"✅ Checked in as **{role_type}** for **{operation['title']}**."
                 ),
                 "flags": _EPHEMERAL,
+            },
+        }
+
+    except IronkeepError as exc:
+        return _error_response(str(exc))
+
+
+def _handle_role_choice(payload: dict, db) -> dict:
+    """
+    A member picked a roster role from the announcement's dropdown.
+
+    Records the pick as a signup preference and returns the member's ephemeral
+    confirmation immediately.  The thread notice and the build DM are *not* sent
+    from here: both are network calls, and Discord drops an interaction that goes
+    unanswered for three seconds.  They are handed back as a "follow_up"
+    instruction for the bot to carry out after replying — see
+    use_cases.deliver_role_choice_notifications.
+
+    "follow_up" is an Ironkeep-only key and must never be sent to Discord.
+    """
+    guild_id  = payload.get("discord_guild_id", "")
+    user_id   = payload.get("discord_user_id", "")
+    custom_id = payload.get("custom_id", "")
+
+    parts = custom_id.split(":")
+    if len(parts) != 2:
+        return _error_response(
+            f"Unknown interaction: '{custom_id}'. "
+            "This menu is not supported by this bot version."
+        )
+    operation_id = parts[1]
+
+    values = payload.get("values") or []
+    if len(values) != 1:
+        return _error_response(
+            "Pick exactly one role from the menu."
+        )
+    choice_key = values[0]
+
+    try:
+        ctx       = get_discord_identity_context(db, guild_id, user_id)
+        workspace = ctx["workspace"]
+        user      = ctx["user"]
+
+        operation = _get_operation(db, operation_id, workspace["id"])
+        if not operation:
+            return _error_response(
+                "Operation not found in this workspace. "
+                "It may have been archived or the menu is outdated."
+            )
+
+        result = use_cases.record_role_choice(
+            guild_workspace_id=workspace["id"],
+            guild_operation_id=operation_id,
+            display_name=user["display_name"],
+            choice_key=choice_key,
+            discord_user_id=user_id,
+        )
+        choice = result["choice"]
+        label  = (
+            f"{choice['role']} · {choice['weapon_name']}"
+            if choice["weapon_name"] else choice["role"]
+        )
+        verb = "Moved to" if result["action"] == "changed" else "Signed up as"
+
+        return {
+            "type": _INTERACTION_TYPE,
+            "data": {
+                "content": f"✅ {verb} **{label}** for **{operation['title']}**.",
+                "flags":   _EPHEMERAL,
+            },
+            "follow_up": {
+                "kind":               "role_choice",
+                "guild_workspace_id": workspace["id"],
+                "guild_operation_id": operation_id,
+                "operation":          dict(operation),
+                "slot":               dict(result["slot"]),
+                "choice":             choice,
+                "display_name":       user["display_name"],
+                "discord_user_id":    user_id,
             },
         }
 

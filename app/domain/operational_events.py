@@ -30,6 +30,7 @@ deleted or updated.
     operation_plan.attached
     operation_slots.generated
     signup_intent.submitted
+    signup_intent.updated
     signup_intent.withdrawn
     assignment.created
     assignment.removed
@@ -88,6 +89,7 @@ GUILD_OPERATION_ARCHIVED   = "guild_operation.archived"
 OPERATION_PLAN_ATTACHED = "operation_plan.attached"
 OPERATION_SLOTS_GENERATED = "operation_slots.generated"
 SIGNUP_INTENT_SUBMITTED  = "signup_intent.submitted"
+SIGNUP_INTENT_UPDATED    = "signup_intent.updated"
 SIGNUP_INTENT_WITHDRAWN  = "signup_intent.withdrawn"
 ASSIGNMENT_CREATED = "assignment.created"
 ASSIGNMENT_REMOVED = "assignment.removed"
@@ -136,6 +138,7 @@ _OPERATION_LEVEL_EVENTS = frozenset(
         OPERATION_PLAN_ATTACHED,
         OPERATION_SLOTS_GENERATED,
         SIGNUP_INTENT_SUBMITTED,
+        SIGNUP_INTENT_UPDATED,
         SIGNUP_INTENT_WITHDRAWN,
         ASSIGNMENT_CREATED,
         ASSIGNMENT_REMOVED,

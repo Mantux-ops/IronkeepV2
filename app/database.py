@@ -238,6 +238,13 @@ _COLUMN_MIGRATIONS: list[str] = [
     "ALTER TABLE guild_workspaces ADD COLUMN discord_cta_ping_role_id TEXT NULL",
     "ALTER TABLE guild_workspaces ADD COLUMN discord_content_role_ids_json TEXT NOT NULL DEFAULT '[]'",
     "ALTER TABLE guild_operations ADD COLUMN discord_ping_role_ids_json TEXT NOT NULL DEFAULT '[]'",
+    # Pin each slot to the immutable build version its equipment text came from,
+    # so a player can be handed the matching spells.  A version reference cannot
+    # drift the way a build reference would, which is what keeps the frozen
+    # snapshot honest.  Rows that predate this stay NULL and degrade to
+    # gear-only, since their originating version was never recorded.
+    "ALTER TABLE composition_slot_templates ADD COLUMN albion_build_version_id TEXT NULL REFERENCES albion_build_versions(id)",
+    "ALTER TABLE operation_slots ADD COLUMN albion_build_version_id TEXT NULL REFERENCES albion_build_versions(id)",
 ]
 
 

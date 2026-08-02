@@ -371,6 +371,7 @@ class TestUpdateCompositionSlotFieldsRepo:
             "weapon_name":    None,
             "doctrine_role":  None,
             "albion_build_id": None,
+            "albion_build_version_id": None,
             "offhand_name":   None,
             "head_name":      None,
             "armor_name":     None,

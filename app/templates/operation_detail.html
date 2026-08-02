@@ -304,7 +304,25 @@
           Pings:
           {% for role_id in resolved_ping_role_ids %}@{{ discord_name(role_id, discord_meta) }}{% if not loop.last %}, {% endif %}{% endfor %}
           {% endif %}
+          {% if role_choice_count %}
+          &nbsp;·&nbsp;
+          Role picker: {{ role_choice_count }} role{{ 's' if role_choice_count != 1 }}
+          {% endif %}
         </p>
+
+        {% if not role_choice_count %}
+        <p class="form-hint">
+          {% if operation.status == 'draft' %}
+          Signups only open once this operation is published, so this post carries
+          no role picker. Post again after publishing to add one.
+          {% elif plan and plan.signup_status == 'closed' %}
+          Signups are closed, so this post carries no role picker.
+          {% else %}
+          No roster yet, so this post carries no role picker. Attach a composition
+          and generate slots, then post again to add one.
+          {% endif %}
+        </p>
+        {% endif %}
 
         {% if operation_is_cta %}
           {% if not cta_ping_role_id %}

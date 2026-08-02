@@ -41,6 +41,7 @@ from app.domain import attendance as attendance_domain
 from app.domain import build_version as build_version_domain
 from app.domain import guild_operations
 from app.domain import guild_workspace as guild_workspace_domain
+from app.domain import roster_choices
 from app.domain import scout_attendance as scout_attendance_domain
 from app.domain.mass_planner import sort_participants_for_slot
 from app.errors import (
@@ -2568,36 +2569,21 @@ async def post_import_builds_confirm(request: Request, slug: str):
     return _redirect(f"/workspaces/{slug}/builds?success={quote_plus(msg)}")
 
 
-# Field-key ordering + human labels for spell display on build detail pages.
-_SPELL_FIELD_ORDER = [
-    "weapon_spell_q", "weapon_spell_w", "weapon_spell_e", "weapon_passive",
-    "head_spell", "head_passive",
-    "chest_spell", "chest_passive", "chest_passive_2",
-    "shoes_spell", "shoes_passive",
-    "offhand_passive", "cape_passive",
-]
-_SPELL_FIELD_LABELS = {
-    "weapon_spell_q": "Q", "weapon_spell_w": "W", "weapon_spell_e": "E",
-    "weapon_passive": "Weapon Passive",
-    "head_spell": "Head", "head_passive": "Head Passive",
-    "chest_spell": "Chest", "chest_passive": "Chest Passive",
-    "chest_passive_2": "Chest Passive II",
-    "shoes_spell": "Shoes", "shoes_passive": "Shoes Passive",
-    "offhand_passive": "Off-hand Passive", "cape_passive": "Cape Passive",
-}
-
-
 def _spells_for_display(spell_rows: list) -> list[dict]:
     """Convert stored spell rows into ordered display dicts with icon URLs."""
-    from app.albion.spell_catalog import get_spell_icon_url
+    from app.albion.spell_catalog import (  # noqa: PLC0415
+        SPELL_FIELD_LABELS,
+        SPELL_FIELD_ORDER,
+        get_spell_icon_url,
+    )
     by_key = {r["field_key"]: r["spell_name"] for r in spell_rows}
     out = []
-    for key in _SPELL_FIELD_ORDER:
+    for key in SPELL_FIELD_ORDER:
         name = by_key.get(key)
         if not name:
             continue
         out.append({
-            "label":    _SPELL_FIELD_LABELS.get(key, key),
+            "label":    SPELL_FIELD_LABELS.get(key, key),
             "name":     name,
             "icon_url": get_spell_icon_url(name, 40),
         })
@@ -4046,6 +4032,7 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
     discord_preview = None
     discord_config_gap = None
     discord_announcement_msg = None
+    role_choice_count = 0
     # Which channel this operation posts to, given its type. Shown in the
     # preview so an officer sees the destination before pressing post.
     discord_target_channel_id = guild_workspace_domain.resolve_announcement_channel(
@@ -4073,6 +4060,17 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
             with database.transaction() as db:
                 discord_announcement_msg = repositories.get_discord_message(
                     db, ws["id"], op["id"], "announcement"
+                )
+                # How many roles the post's picker would offer.  Zero means the
+                # announcement goes out without one, which an officer posting
+                # before generating slots or before publishing would otherwise
+                # never find out.
+                role_choice_count = (
+                    len(roster_choices.build_role_choices(
+                        repositories.get_operation_slots(db, op["id"], ws["id"])
+                    ))
+                    if roster_choices.picker_is_offered(op.get("status"), plan)
+                    else 0
                 )
 
     with database.transaction() as db:
@@ -4109,6 +4107,7 @@ def get_operation_detail(request: Request, slug: str, op_id: str):
             "discord_config_gap":       discord_config_gap,
             "discord_announcement_msg": discord_announcement_msg,
             "discord_target_channel_id": discord_target_channel_id,
+            "role_choice_count":        role_choice_count,
             "discord_meta":             discord_meta,
             **ping_context,
             "active_tab":               "overview",
@@ -5177,6 +5176,7 @@ _EVENT_LABELS: dict[str, tuple[str, str]] = {
     "operation_slots.generated": ("plan",        "Operation slots generated"),
     # Signups
     "signup_intent.submitted":   ("signups",     "Signup submitted"),
+    "signup_intent.updated":     ("signups",     "Signup role changed"),
     "signup_intent.withdrawn":   ("signups",     "Signup withdrawn"),
     # Assignments / reserves
     "assignment.created":        ("assignments", "Participant assigned"),

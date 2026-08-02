@@ -104,6 +104,7 @@ def _insert_open_slot(
             "food_name":             None,
             "potion_name":           None,
             "albion_build_id":       None,
+            "albion_build_version_id": None,
             "doctrine_role":         None,
             "priority":              priority,
             "created_at":            now,

@@ -1170,12 +1170,14 @@ def insert_composition_slot_templates(
             (id, guild_workspace_id, albion_composition_id, party_number, slot_index,
              role, build_name, weapon_name,
              offhand_name, head_name, armor_name, shoes_name, cape_name, food_name, potion_name,
-             albion_build_id, doctrine_role, priority, created_at, updated_at)
+             albion_build_id, albion_build_version_id,
+             doctrine_role, priority, created_at, updated_at)
         VALUES
             (:id, :guild_workspace_id, :albion_composition_id, :party_number, :slot_index,
              :role, :build_name, :weapon_name,
              :offhand_name, :head_name, :armor_name, :shoes_name, :cape_name, :food_name, :potion_name,
-             :albion_build_id, :doctrine_role, :priority, :created_at, :updated_at)
+             :albion_build_id, :albion_build_version_id,
+             :doctrine_role, :priority, :created_at, :updated_at)
         """,
         templates,
     )
@@ -1239,6 +1241,7 @@ def update_composition_slot_fields(
             weapon_name     = :weapon_name,
             doctrine_role   = :doctrine_role,
             albion_build_id = :albion_build_id,
+            albion_build_version_id = :albion_build_version_id,
             offhand_name    = :offhand_name,
             head_name       = :head_name,
             armor_name      = :armor_name,
@@ -1384,13 +1387,13 @@ def insert_operation_slots(db: sqlite3.Connection, slots: list[dict]) -> None:
              source_composition_slot_template_id,
              party_number, slot_index, role, build_name, weapon_name,
              offhand_name, head_name, armor_name, shoes_name, cape_name, food_name, potion_name,
-             doctrine_role, priority, created_at)
+             doctrine_role, priority, albion_build_version_id, created_at)
         VALUES
             (:id, :guild_workspace_id, :guild_operation_id,
              :source_composition_slot_template_id,
              :party_number, :slot_index, :role, :build_name, :weapon_name,
              :offhand_name, :head_name, :armor_name, :shoes_name, :cape_name, :food_name, :potion_name,
-             :doctrine_role, :priority, :created_at)
+             :doctrine_role, :priority, :albion_build_version_id, :created_at)
         """,
         slots,
     )
@@ -1583,6 +1586,46 @@ def get_signup_intent_by_id(
             (signup_id, guild_workspace_id),
         ).fetchone()
     )
+
+
+def update_signup_intent_preference(
+    db: sqlite3.Connection,
+    signup_id: str,
+    guild_workspace_id: str,
+    preferred_role: str,
+    preferred_build_name: str | None,
+    willingness: str,
+    availability: str,
+    source: str,
+) -> int:
+    """Repoint an existing signup at a different role.
+
+    Also clears withdrawn_at, because the one row per participant per operation
+    that the schema allows means a member who withdrew has no other way back in.
+    Returns the number of rows updated (0 if the signup does not exist here).
+    """
+    cursor = db.execute(
+        """
+        UPDATE signup_intents
+        SET preferred_role       = :preferred_role,
+            preferred_build_name = :preferred_build_name,
+            willingness          = :willingness,
+            availability         = :availability,
+            source               = :source,
+            withdrawn_at         = NULL
+        WHERE id = :id AND guild_workspace_id = :guild_workspace_id
+        """,
+        {
+            "id":                   signup_id,
+            "guild_workspace_id":   guild_workspace_id,
+            "preferred_role":       preferred_role,
+            "preferred_build_name": preferred_build_name,
+            "willingness":          willingness,
+            "availability":         availability,
+            "source":               source,
+        },
+    )
+    return cursor.rowcount
 
 
 def withdraw_signup_intent(

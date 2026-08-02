@@ -30,6 +30,7 @@ from app.domain import (
     operational_events,
     payout_ledger as payout_ledger_domain,
     readiness,
+    roster_choices,
     scout_attendance as scout_attendance_domain,
     users,
     workspace_membership,
@@ -1133,6 +1134,7 @@ def _resolve_build_for_slot(
         return {
             **slot,
             "albion_build_id": None,
+            "albion_build_version_id": None,
             "offhand_name":  slot.get("offhand_name"),
             "head_name":     slot.get("head_name"),
             "armor_name":    slot.get("armor_name"),
@@ -1148,6 +1150,7 @@ def _resolve_build_for_slot(
         return {
             **slot,
             "albion_build_id": None,
+            "albion_build_version_id": None,
             "offhand_name":  slot.get("offhand_name"),
             "head_name":     slot.get("head_name"),
             "armor_name":    slot.get("armor_name"),
@@ -1174,6 +1177,10 @@ def _resolve_build_for_slot(
         # if the slot already has a value (slot.get wins over build default only when non-empty).
         "doctrine_role": slot.get("doctrine_role") or build.get("doctrine_role"),
         "albion_build_id": build["id"],
+        # Which version the equipment above was flattened from.  Legacy builds
+        # have none, so spells stay unavailable for them — matching the fact that
+        # their loadout has no version to read spells from either.
+        "albion_build_version_id": build.get("current_version_id"),
     }
 
 
@@ -2309,6 +2316,9 @@ def promote_composition_slot_to_build(
             "weapon_name":    slot.get("weapon_name"),
             "doctrine_role":  slot.get("doctrine_role"),
             "albion_build_id": new_build["id"],
+            # The build is created from this slot's own text, so it is legacy and
+            # has no version to pin.
+            "albion_build_version_id": None,
             "offhand_name":   slot.get("offhand_name"),
             "head_name":      slot.get("head_name"),
             "armor_name":     slot.get("armor_name"),
@@ -2383,6 +2393,7 @@ def create_albion_composition(
                 "food_name":     s.get("food_name"),
                 "potion_name":   s.get("potion_name"),
                 "albion_build_id": s.get("albion_build_id"),
+                "albion_build_version_id": s.get("albion_build_version_id"),
                 "doctrine_role": s.get("doctrine_role"),
                 "priority":      s.get("priority", "normal"),
                 "created_at":    now,
@@ -2520,6 +2531,7 @@ def quick_update_composition_slot(
             "weapon_name":    resolved.get("weapon_name"),
             "doctrine_role":  resolved.get("doctrine_role"),
             "albion_build_id": resolved.get("albion_build_id"),
+            "albion_build_version_id": resolved.get("albion_build_version_id"),
             "offhand_name":   resolved.get("offhand_name"),
             "head_name":      resolved.get("head_name"),
             "armor_name":     resolved.get("armor_name"),
@@ -2615,6 +2627,7 @@ def update_composition_slots(
                 "food_name":     s.get("food_name"),
                 "potion_name":   s.get("potion_name"),
                 "albion_build_id": s.get("albion_build_id"),
+                "albion_build_version_id": s.get("albion_build_version_id"),
                 "doctrine_role": s.get("doctrine_role"),
                 "priority":      s.get("priority", "normal"),
                 "created_at":    now,
@@ -2765,6 +2778,10 @@ def generate_operation_slots(
                 "potion_name":   t.get("potion_name"),
                 "doctrine_role": t.get("doctrine_role"),
                 "priority":      t["priority"],
+                # Carried, not re-resolved: the equipment text above was
+                # flattened from this exact version, so the two must travel
+                # together or a player gets spells for gear he is not wearing.
+                "albion_build_version_id": t.get("albion_build_version_id"),
                 "created_at":    now,
             }
             for t in templates
@@ -2982,6 +2999,150 @@ def withdraw_signup_intent(
             payload={"participant_id": signup["participant_id"]},
         )
         repositories.insert_operational_event(db, event)
+
+
+# ---------------------------------------------------------------------------
+# 6b. Pick a roster role  (Discord announcement picker)
+# ---------------------------------------------------------------------------
+
+def record_role_choice(
+    guild_workspace_id: str,
+    guild_operation_id: str,
+    display_name: str,
+    choice_key: str,
+    discord_user_id: str | None = None,
+    source: str = "discord",
+) -> dict:
+    """
+    Record a member's pick from the announcement role picker as a signup.
+
+    This is a *preference*, not a claim: the roster keeps being filled by
+    officers through the planner, exactly as it is for web signups.  Picking a
+    role never occupies a slot, so two members can pick the same role and the
+    caller stays free to decide between them.
+
+    Re-picking repoints the existing signup instead of failing the way
+    submit_signup_intent does.  A dropdown invites second thoughts, and the
+    schema allows only one signup row per participant per operation, so
+    "change your mind" has to mean "update that row".
+
+    Refuses once the member holds an active assignment: an officer has already
+    placed them, and rewriting the preference underneath that decision would
+    leave the planner disagreeing with what the member believes.
+
+    Returns a dict with:
+      action      - "submitted" | "changed"
+      signup      - the stored signup_intents row
+      choice      - the resolved role choice (key, role, build_name, weapon_name)
+      slot        - a roster slot matching the choice, carrying the equipment
+                    snapshot and pinned build version for build delivery
+      operation   - the operation row
+      participant - the participant row
+
+    Raises ConflictError when the picked role is no longer in the roster, which
+    is what a picker posted before a composition change will produce.
+    """
+    with database.transaction() as db:
+        op = repositories.get_guild_operation(db, guild_operation_id, guild_workspace_id)
+        if not op:
+            raise NotFoundError(
+                f"GuildOperation '{guild_operation_id}' not found in this workspace."
+            )
+
+        guild_operations.validate_signup_submission_allowed(op["status"])
+
+        plan = repositories.get_operation_plan(db, guild_operation_id, guild_workspace_id)
+        if plan and plan["signup_status"] == "closed":
+            raise ConflictError("Signups are closed for this operation.")
+
+        slots  = repositories.get_operation_slots(
+            db, guild_operation_id, guild_workspace_id
+        )
+        choice = roster_choices.find_role_choice(slots, choice_key)
+        if not choice:
+            raise ConflictError(
+                "That role is no longer part of this roster. Ask an officer to "
+                "re-post the announcement for an up-to-date list."
+            )
+        slot = roster_choices.find_matching_slots(slots, choice)[0]
+
+        participant = repositories.find_or_create_participant(
+            db, guild_workspace_id, display_name, discord_user_id=discord_user_id
+        )
+
+        assignment = repositories.get_active_assignment_for_participant(
+            db, guild_operation_id, participant["id"], guild_workspace_id
+        )
+        if assignment:
+            raise ConflictError(
+                f"You are already assigned as {assignment['assigned_role']} "
+                f"({assignment['assigned_build_name']}) for this operation. "
+                "Ask an officer to move you."
+            )
+
+        # A pick names one role, so it is 'specific' by definition, even if an
+        # earlier web signup said this member was flexible.
+        willingness  = "specific"
+        availability = "confirmed"
+
+        existing = repositories.get_signup_intent(
+            db, guild_operation_id, participant["id"], guild_workspace_id
+        )
+        if existing:
+            repositories.update_signup_intent_preference(
+                db,
+                existing["id"],
+                guild_workspace_id,
+                preferred_role=choice["role"],
+                preferred_build_name=choice["build_name"] or None,
+                willingness=willingness,
+                availability=availability,
+                source=source,
+            )
+            signup_id  = existing["id"]
+            action     = "changed"
+            event_type = operational_events.SIGNUP_INTENT_UPDATED
+        else:
+            signup_id = str(uuid.uuid4())
+            repositories.insert_signup_intent(db, {
+                "id":                   signup_id,
+                "guild_workspace_id":   guild_workspace_id,
+                "guild_operation_id":   guild_operation_id,
+                "participant_id":       participant["id"],
+                "preferred_role":       choice["role"],
+                "preferred_build_name": choice["build_name"] or None,
+                "willingness":          willingness,
+                "availability":         availability,
+                "source":               source,
+                "created_at":           _now(),
+            })
+            action     = "submitted"
+            event_type = operational_events.SIGNUP_INTENT_SUBMITTED
+
+        event = operational_events.make_event(
+            guild_workspace_id=guild_workspace_id,
+            guild_operation_id=guild_operation_id,
+            event_type=event_type,
+            entity_type="signup_intent",
+            entity_id=signup_id,
+            payload={
+                "participant_id": participant["id"],
+                "preferred_role": choice["role"],
+                "source":         source,
+            },
+        )
+        repositories.insert_operational_event(db, event)
+
+        signup = repositories.get_signup_intent_by_id(db, signup_id, guild_workspace_id)
+
+    return {
+        "action":      action,
+        "signup":      signup,
+        "choice":      choice,
+        "slot":        slot,
+        "operation":   op,
+        "participant": participant,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -4374,6 +4535,22 @@ def post_discord_announcement(
             db, guild_workspace_id, guild_operation_id, "announcement"
         )
 
+        # Roster roles offered in the announcement's picker.  Read on every post
+        # and every edit, so re-posting after a composition change refreshes the
+        # options — a picker is only ever as current as the last post.
+        plan = repositories.get_operation_plan(
+            db, guild_operation_id, guild_workspace_id
+        )
+        role_choices = (
+            roster_choices.build_role_choices(
+                repositories.get_operation_slots(
+                    db, guild_operation_id, guild_workspace_id
+                )
+            )
+            if roster_choices.picker_is_offered(op.get("status"), plan)
+            else []
+        )
+
     # An existing message lives in the channel it was posted to.  Re-routing
     # in settings must not make an edit target a channel that has no such
     # message, so the stored channel wins for edits.
@@ -4399,6 +4576,7 @@ def post_discord_announcement(
         readiness,
         signup_url=signup_url,
         ping_role_ids=guild_workspace.resolve_ping_role_ids(ws, op),
+        role_choices=role_choices,
     )
     # ------------------------------------------------------------------
     # REST call â€” outside any DB transaction
@@ -4587,6 +4765,86 @@ def post_discord_roster(
         repositories.insert_operational_event(db, event)
 
     return {"action": action, "discord_message_id": discord_message_id}
+
+
+def deliver_role_choice_notifications(
+    guild_workspace_id: str,
+    guild_operation_id: str,
+    operation: dict,
+    slot: dict,
+    choice: dict,
+    display_name: str,
+    discord_user_id: str | None = None,
+) -> dict:
+    """
+    Announce a role pick in the operation thread and DM the player their build.
+
+    Best-effort by design, and never raises: the pick is already recorded and the
+    member already holds their confirmation by the time this runs, so a Discord
+    failure here must read as "the notice did not go out", not as a failed
+    signup.  Every outcome is reported instead.
+
+    Returns a dict with:
+      thread        - "posted" | "no_announcement" | "failed"
+      dm            - "sent" | "no_discord_user" | "blocked" | "failed"
+      dm_error      - the Discord error text unless dm is "sent", else None
+      build_payload - the message payload that was (or would have been) DM'd, so
+                      a caller holding an interaction can deliver it another way
+                      when the DM was refused.  Plenty of players keep DMs from
+                      server members switched off, which Discord only reveals as
+                      a 403 at send time.
+    """
+    from app.discord import rest_client  # noqa: PLC0415 — deferred for test mocking
+    from app.discord.formatters import (  # noqa: PLC0415
+        format_build_dm,
+        format_role_choice_notice,
+    )
+
+    with database.transaction() as db:
+        announcement = repositories.get_discord_message(
+            db, guild_workspace_id, guild_operation_id, "announcement"
+        )
+        version_id = slot.get("albion_build_version_id")
+        spells = (
+            repositories.get_build_spells(db, version_id, guild_workspace_id)
+            if version_id else []
+        )
+
+    notice_payload = format_role_choice_notice(display_name, choice, discord_user_id)
+    build_payload  = format_build_dm(operation, slot, spells)
+
+    result: dict = {
+        "thread":        "no_announcement",
+        "dm":            "no_discord_user",
+        "dm_error":      None,
+        "build_payload": build_payload,
+    }
+
+    if announcement and not announcement.get("is_deleted"):
+        try:
+            rest_client.post_thread_message(
+                announcement["discord_channel_id"],
+                announcement["discord_message_id"],
+                f"Signups: {operation['title']}",
+                notice_payload,
+            )
+            result["thread"] = "posted"
+        except rest_client.DiscordApiError:
+            # Usually a missing "Create Public Threads" or "Send Messages in
+            # Threads" permission, which is the officer's to fix, not the
+            # player's — so it must not colour their confirmation.
+            result["thread"] = "failed"
+
+    if discord_user_id:
+        try:
+            dm_channel_id = rest_client.open_dm_channel(discord_user_id)
+            rest_client.post_message(dm_channel_id, build_payload)
+            result["dm"] = "sent"
+        except rest_client.DiscordApiError as exc:
+            result["dm"]       = "blocked" if exc.status_code == 403 else "failed"
+            result["dm_error"] = str(exc)
+
+    return result
 
 
 # ---------------------------------------------------------------------------

@@ -275,6 +275,11 @@ CREATE TABLE IF NOT EXISTS composition_slot_templates (
     -- at that moment — the FK does NOT update them automatically on build edits.
     -- operation_slots never carry this FK; they are frozen text-only snapshots.
     albion_build_id         TEXT REFERENCES albion_builds(id),
+    -- nullable FK to the immutable build version the text fields were flattened
+    -- from.  Recorded at the same moment as the equipment snapshot so spells and
+    -- gear always describe the same version.  NULL for legacy (unversioned)
+    -- builds and for manually typed slots.
+    albion_build_version_id TEXT REFERENCES albion_build_versions(id),
     -- Operational battlefield role snapshot — propagated from build at attach time.
     -- e.g. "Main Caller", "Engage", "Peel / Stopper", "Beam Spike".
     -- Distinct from role_family (structural) — this is orchestration identity.
@@ -389,6 +394,12 @@ CREATE TABLE IF NOT EXISTS operation_slots (
     -- Frozen snapshot of doctrine_role at slot-generation time.
     doctrine_role                       TEXT,
     priority                            TEXT NOT NULL DEFAULT 'normal',
+    -- nullable FK to the immutable build version this slot's equipment text was
+    -- flattened from, copied from the source template.  Deliberately a VERSION
+    -- and not a build: a version can never change, so reading spells through it
+    -- upholds the frozen-snapshot invariant that a build FK would break.
+    -- NULL for legacy (unversioned) builds and manually typed slots.
+    albion_build_version_id             TEXT REFERENCES albion_build_versions(id),
     created_at                          TEXT NOT NULL,
     UNIQUE (guild_workspace_id, guild_operation_id, party_number, slot_index)
 );

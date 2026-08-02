@@ -336,6 +336,98 @@ def fetch_guild_members(guild_id: str, *, page_limit: int = 1000, max_pages: int
     return members
 
 
+#: Threads Discord archives after a week of inactivity.  An operation thread is
+#: only interesting until the fight happens, so the shortest useful window keeps
+#: channel thread lists from filling up with finished operations.
+THREAD_AUTO_ARCHIVE_MINUTES = 1440  # 24 hours
+
+
+def start_message_thread(channel_id: str, message_id: str, name: str) -> str:
+    """
+    Start a thread hanging off an existing message and return its channel ID.
+
+    Discord gives a message-started thread the *same* snowflake as its source
+    message, so the returned ID always equals ``message_id``.  It is returned
+    anyway so callers read like ordinary channel plumbing rather than relying on
+    that identity.
+
+    Raises DiscordApiError, including 400 when a thread already exists on the
+    message — callers that only want "a thread to post in" should use
+    post_thread_message(), which handles that case.
+    """
+    try:
+        resp = httpx.post(
+            f"{_API_BASE}/channels/{channel_id}/messages/{message_id}/threads",
+            headers=_headers(),
+            json={
+                "name": name[:100],  # Discord rejects thread names over 100 chars
+                "auto_archive_duration": THREAD_AUTO_ARCHIVE_MINUTES,
+            },
+            timeout=_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        raise DiscordApiError(
+            0,
+            f"Thread creation timed out after {_TIMEOUT}s. "
+            "Discord may be temporarily unavailable.",
+        )
+    _raise_for_status(resp)
+    return str(resp.json()["id"])
+
+
+def post_thread_message(
+    channel_id: str,
+    message_id: str,
+    thread_name: str,
+    payload: dict,
+) -> str:
+    """
+    Post into the thread on a message, starting that thread if it has none.
+
+    Tries the thread first because after the first post it always exists, which
+    makes the common path a single request.  Discord answers 404 for a thread
+    that was never started (the snowflake addresses no channel), and that is the
+    only failure worth retrying as "create, then post" — a 403 means missing
+    permissions and must surface unchanged.
+
+    Returns the Discord message ID of the posted message.
+    """
+    try:
+        return post_message(message_id, payload)
+    except DiscordApiError as exc:
+        if exc.status_code != 404:
+            raise
+    start_message_thread(channel_id, message_id, thread_name)
+    return post_message(message_id, payload)
+
+
+def open_dm_channel(user_id: str) -> str:
+    """
+    Open (or reuse) the bot's DM channel with a user and return its channel ID.
+
+    Discord treats this as idempotent: repeated calls for the same recipient
+    return the same channel, so there is nothing to cache.  Note that success
+    here says nothing about being *allowed* to send — a user who blocks DMs from
+    server members still yields a channel, and the later post_message fails with
+    403.  Callers must handle that separately.
+    """
+    try:
+        resp = httpx.post(
+            f"{_API_BASE}/users/@me/channels",
+            headers=_headers(),
+            json={"recipient_id": str(user_id)},
+            timeout=_TIMEOUT,
+        )
+    except httpx.TimeoutException:
+        raise DiscordApiError(
+            0,
+            f"Opening a DM channel timed out after {_TIMEOUT}s. "
+            "Discord may be temporarily unavailable.",
+        )
+    _raise_for_status(resp)
+    return str(resp.json()["id"])
+
+
 def edit_message(channel_id: str, message_id: str, payload: dict) -> None:
     """
     PATCH (edit) an existing Discord message.
