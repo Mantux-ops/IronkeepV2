@@ -43,4 +43,4 @@
 <script id="page-data" type="application/json">{{ {"records": records} | tojson }}</script>
 {% endblock %}
 
-{% block scripts %}<script src="/static/js/admin.js"></script>{% endblock %}
+{% block scripts %}<script src="{{ asset('js/admin.js') }}"></script>{% endblock %}

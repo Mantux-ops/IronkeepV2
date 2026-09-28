@@ -15,6 +15,14 @@ app.mount("/static", StaticFiles(directory=BASE_DIR / "static"), name="static")
 templates = Jinja2Templates(directory=BASE_DIR / "templates")
 
 
+def asset(path: str) -> str:
+    version = int((BASE_DIR / "static" / path).stat().st_mtime)
+    return f"/static/{path}?v={version}"
+
+
+templates.env.globals["asset"] = asset
+
+
 def viewer(request: Request):
     if request.cookies.get(VIEW_COOKIE) == "recruiter":
         return {**data.RECRUITER, "superadmin": False, "role": "recruiter"}

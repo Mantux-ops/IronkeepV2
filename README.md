@@ -4,7 +4,15 @@ Trial tracking for Discord guilds: a bot that follows joins and the trial role, 
 
 This branch contains the **clickable prototype**. Every page uses sample data from `ironkeep/mock_data.py`. Nothing talks to Discord and nothing is saved: a reload resets everything.
 
-## Run it locally
+## Run it with Docker
+
+```bash
+docker compose up --build
+```
+
+Open http://localhost:8000. The `ironkeep` folder is mounted into the container, so after `git pull` the changes show up without restarting. Only a change to `requirements.txt` needs `docker compose up --build` again. Stop it with Ctrl+C, or `docker compose down` if it runs in the background.
+
+## Run it without Docker
 
 ```bash
 python3 -m venv .venv
