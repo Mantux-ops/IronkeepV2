@@ -34,7 +34,7 @@
     { key: "closed", label: "Closed", match: (s) => STATUS[s].group === "closed" },
   ];
 
-  const state = { filter: "open", search: "", sort: { key: "status", dir: 1 }, selected: null, editing: null };
+  const state = { filter: "open", search: "", sort: { key: "status", dir: 1 }, selected: null, editing: null, tab: "notes", formOpen: false };
 
   const roleById = (id) => roles.find((r) => r.id === id);
   const channelById = (id) => channels.find((c) => c.id === id);
@@ -254,8 +254,32 @@
     return Ik.icon("info", 14);
   }
 
-  function renderTimeline(t) {
-    const entries = t.timeline.map((e, index) => ({ ...e, index })).reverse();
+  function observationChips(t) {
+    const summary = {};
+    t.timeline
+      .filter((e) => e.type === "observation")
+      .forEach((e) => {
+        summary[e.category] = summary[e.category] || { positive: 0, neutral: 0, negative: 0 };
+        summary[e.category][e.rating] += 1;
+      });
+    const cats = CATEGORIES.filter((c) => summary[c]);
+    if (!cats.length) return "";
+    return `<div class="obs-chips">${cats
+      .map((c) => {
+        const n = summary[c];
+        const counts = [
+          n.positive ? `<span class="obs-chip__n obs-chip__n--green">+${n.positive}</span>` : "",
+          n.neutral ? `<span class="obs-chip__n obs-chip__n--grey">○${n.neutral}</span>` : "",
+          n.negative ? `<span class="obs-chip__n obs-chip__n--red">−${n.negative}</span>` : "",
+        ].join("");
+        return `<span class="obs-chip">${c}${counts}</span>`;
+      })
+      .join("")}</div>`;
+  }
+
+  function renderTimeline(t, filter = () => true) {
+    const entries = t.timeline.map((e, index) => ({ ...e, index })).filter(filter).reverse();
+    if (!entries.length) return "";
     return `<ol class="timeline">${entries
       .map((e) => {
         if (e.type === "observation") {
@@ -307,21 +331,32 @@
     }
     const s = statusOf(t);
     const closed = STATUS[s].group === "closed";
-    const reminder = t.ping_sent_at
-      ? `Sent ${Ik.formatDate(t.ping_sent_at)}`
-      : t.content_roles.length
-      ? "Not needed"
-      : t.start
-      ? `Day ${settings.reminder_day}`
-      : "Waits for start date";
+    const observations = t.timeline.filter((e) => e.type === "observation");
+    const history = t.timeline.filter((e) => e.type !== "observation");
+    const isObs = (e) => e.type === "observation";
 
+    let when;
+    if (!t.start) {
+      when = `<div class="panel__nostart"><span class="muted">No start date yet. Day count and reminder are paused.</span>
+        ${closed ? "" : `<button class="button button--outline button--sm" type="button" data-action="set-start" data-id="${t.id}">${Ik.icon("calendar", 14)} Set start date</button>`}</div>`;
+    } else {
+      const day = dayOf(t);
+      const over = day > length(t);
+      const pct = Math.max(4, Math.round((Math.min(day, length(t)) / length(t)) * 100));
+      const tone = STATUS[s].tone === "red" ? "red" : STATUS[s].tone === "orange" ? "orange" : "accent";
+      when = `<div class="progress progress--${tone}">
+          <div class="panel__when"><strong>${over ? "Trial ended" : `Day ${day} of ${length(t)}`}</strong><span class="muted">${over ? Ik.formatDate(endDate(t)) : `ends ${Ik.formatDate(endDate(t))}`}</span></div>
+          <span class="progress__bar"><span style="width:${pct}%"></span></span>
+        </div>`;
+    }
+
+    const tab = state.tab;
     panel.innerHTML = `
       <header class="panel__header">
         ${Ik.avatar(t.name, t.color, "lg")}
         <div class="panel__title">
           <h2>${esc(t.name)}</h2>
-          <span class="muted small">@${esc(t.username)} · ${esc(t.user_id)}</span>
-          <div>${Ik.pill(STATUS[s].label, STATUS[s].tone)}</div>
+          <div class="panel__subline">${Ik.pill(STATUS[s].label, STATUS[s].tone)}<span class="muted small">@${esc(t.username)}</span></div>
         </div>
         <button class="icon-button" type="button" data-action="close" title="Close">${Ik.icon("x", 18)}</button>
       </header>
@@ -329,47 +364,58 @@
       <div class="panel__scroll">
         ${t.action_error ? `<div class="callout callout--red">${Ik.icon("alert")}<div><strong>Role change failed.</strong><p>${esc(t.action_error)}</p></div><button class="button button--outline button--sm" type="button" data-action="retry" data-id="${t.id}">Retry</button></div>` : ""}
 
-        <section class="panel__section">
-          ${t.start ? progressBar(t) : '<p class="muted small">This trial has no start date yet, so the day count and the reminder are paused.</p>'}
-          <dl class="facts">
-            <div><dt>Start</dt><dd>${t.start ? `${Ik.formatDate(t.start)} ${closed ? "" : `<button class="link-button" type="button" data-action="set-start" data-id="${t.id}">Change</button>`}` : `<button class="button button--outline button--sm" type="button" data-action="set-start" data-id="${t.id}">${Ik.icon("calendar", 14)} Set start date</button>`}</dd></div>
-            <div><dt>Ends</dt><dd>${Ik.formatDate(endDate(t))}${t.extra_days ? ` <span class="muted small">(extended ${t.extra_days} days)</span>` : ""}</dd></div>
-            <div><dt>Day-${settings.reminder_day} reminder</dt><dd>${reminder}</dd></div>
-            <div><dt>Content roles</dt><dd><span class="chips">${t.content_roles.length ? contentChips(t) : '<span class="tag tag--red tag--xs">No content role</span>'}</span></dd></div>
-          </dl>
+        <section class="panel__section panel__summary">
+          ${when}
+          <div class="chips">${t.content_roles.length ? contentChips(t) : '<span class="tag tag--red tag--xs">No content role</span>'}</div>
           ${closed
             ? `<p class="verdict-note">${Ik.icon("gavel", 14)} ${STATUS[s].label}${t.verdict_by ? ` by ${esc(t.verdict_by)}` : ""}${t.verdict_at ? ` on ${Ik.formatDate(t.verdict_at)}` : ""}.</p>`
             : `<div class="panel__actions">
-                <button class="button button--outline" type="button" data-action="extend" data-id="${t.id}">${Ik.icon("calendar", 15)} Extend</button>
-                <span class="panel__actions-spacer"></span>
-                <button class="button button--red-outline" type="button" data-action="reject" data-id="${t.id}">${Ik.icon("x", 15)} Reject</button>
                 <button class="button button--green" type="button" data-action="accept" data-id="${t.id}">${Ik.icon("check", 15)} Accept</button>
+                <button class="button button--red-outline" type="button" data-action="reject" data-id="${t.id}">${Ik.icon("x", 15)} Reject</button>
+                <span class="panel__actions-spacer"></span>
+                <div class="more" data-dropdown>
+                  <button class="button button--ghost" type="button" data-dropdown-toggle title="More actions">More ${Ik.icon("chevron-down", 14)}</button>
+                  <div class="dropdown dropdown--right" hidden>
+                    <button class="dropdown__item" type="button" data-action="extend" data-id="${t.id}">${Ik.icon("calendar", 15)} Extend trial</button>
+                    <button class="dropdown__item" type="button" data-action="set-start" data-id="${t.id}">${Ik.icon("clock", 15)} ${t.start ? "Change" : "Set"} start date</button>
+                  </div>
+                </div>
               </div>`}
         </section>
 
-        <section class="panel__section">
-          <h3 class="panel__heading">Assessment</h3>
-          ${observationSummary(t)}
-          ${closed ? "" : `<form class="obs-form" data-obs-form>
-            <div class="obs-form__row">
-              <select class="input select" name="category" aria-label="Category">${CATEGORIES.map((c) => `<option>${c}</option>`).join("")}</select>
-              <div class="segmented" role="radiogroup" aria-label="Rating">
-                ${Object.entries(RATINGS).map(([key, r], i) => `<label class="segmented__opt segmented__opt--${r.tone}"><input type="radio" name="rating" value="${key}" ${i === 0 ? "checked" : ""}><span>${r.label}</span></label>`).join("")}
-              </div>
-            </div>
-            <textarea class="input textarea" name="text" rows="2" placeholder="What did you notice? e.g. showed up for Tuesday's ZvZ, stayed until the end."></textarea>
-            <div class="obs-form__footer">
-              <span class="muted small">Only recruiters can see observations.</span>
-              <button class="button button--accent button--sm" type="submit">${Ik.icon("plus", 14)} Add observation</button>
-            </div>
-          </form>`}
-        </section>
+        <div class="tabs" role="tablist">
+          <button class="tabs__tab ${tab === "notes" ? "is-active" : ""}" type="button" role="tab" data-tab="notes">Observations <span class="tabs__count">${observations.length}</span></button>
+          <button class="tabs__tab ${tab === "history" ? "is-active" : ""}" type="button" role="tab" data-tab="history">History <span class="tabs__count">${history.length}</span></button>
+        </div>
 
-        <section class="panel__section">
-          <h3 class="panel__heading">Timeline</h3>
-          ${renderTimeline(t)}
-        </section>
+        ${tab === "notes"
+          ? `<section class="panel__section">
+              ${observationChips(t)}
+              ${closed ? "" : state.formOpen
+                ? `<form class="obs-form" data-obs-form>
+                    <div class="obs-form__row">
+                      <select class="input select" name="category" aria-label="Category">${CATEGORIES.map((c) => `<option>${c}</option>`).join("")}</select>
+                      <div class="segmented" role="radiogroup" aria-label="Rating">
+                        ${Object.entries(RATINGS).map(([key, r], i) => `<label class="segmented__opt segmented__opt--${r.tone}"><input type="radio" name="rating" value="${key}" ${i === 0 ? "checked" : ""}><span>${r.label}</span></label>`).join("")}
+                      </div>
+                    </div>
+                    <textarea class="input textarea" name="text" rows="2" placeholder="What did you notice?" autofocus></textarea>
+                    <div class="obs-form__footer">
+                      <span class="muted small">Only recruiters see this.</span>
+                      <span>
+                        <button class="button button--ghost button--sm" type="button" data-action="close-form">Cancel</button>
+                        <button class="button button--accent button--sm" type="submit">Add</button>
+                      </span>
+                    </div>
+                  </form>`
+                : `<button class="button button--outline button--sm obs-add" type="button" data-action="open-form">${Ik.icon("plus", 14)} Add observation</button>`}
+              ${observations.length ? renderTimeline(t, isObs) : `<p class="muted small panel__empty">No observations yet.</p>`}
+            </section>`
+          : `<section class="panel__section">${renderTimeline(t, (e) => !isObs(e))}</section>`}
       </div>`;
+
+    const textarea = panel.querySelector("[data-obs-form] textarea");
+    if (textarea) textarea.focus();
 
     panel.hidden = false;
     overlay.hidden = false;
@@ -385,6 +431,10 @@
   }
 
   function openTrial(id) {
+    if (state.selected !== id) {
+      state.tab = "notes";
+      state.formOpen = false;
+    }
     state.selected = id;
     state.editing = null;
     renderAll();
@@ -562,6 +612,14 @@
       return;
     }
 
+    const tabBtn = event.target.closest("[data-tab]");
+    if (tabBtn) {
+      state.tab = tabBtn.dataset.tab;
+      state.editing = null;
+      renderPanel();
+      return;
+    }
+
     const sortTh = event.target.closest("th[data-sort]");
     if (sortTh) {
       const key = sortTh.dataset.sort;
@@ -584,6 +642,10 @@
       else if (action === "accept") openVerdictModal(t, "accepted");
       else if (action === "reject") openVerdictModal(t, "rejected");
       else if (action === "retry") retry(t);
+      else if (action === "open-form" || action === "close-form") {
+        state.formOpen = action === "open-form";
+        renderPanel();
+      }
       else if (action === "edit-obs") {
         state.editing = Number(actionEl.dataset.index);
         renderPanel();
@@ -649,6 +711,7 @@
     }
     const t = trialById(state.selected);
     t.timeline.push({ type: "observation", at: Ik.nowIso(today), author: viewer, category: form.get("category"), rating: form.get("rating"), text });
+    state.formOpen = false;
     Ik.toast("Observation added");
     renderAll();
   });
