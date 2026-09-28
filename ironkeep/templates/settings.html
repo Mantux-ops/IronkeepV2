@@ -1,0 +1,191 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}{{ "Setup" if setup_mode else "Settings" }} · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% macro setting(label, hint) -%}
+<div class="setting">
+  <div>
+    <div class="setting__label">{{ label }}</div>
+    {% if hint %}<div class="setting__hint">{{ hint }}</div>{% endif %}
+  </div>
+  <div class="setting__control">{{ caller() }}</div>
+</div>
+{%- endmacro %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">{{ "Set up Ironkeep" if setup_mode else "Settings" }}</h1>
+    <p class="page-subtitle">{{ guild.name }} · {{ "a few choices before the bot starts working" if setup_mode else "how the trial flow works in this server" }}</p>
+  </div>
+</header>
+
+{% if setup_mode %}
+<nav class="stepper" id="stepper" aria-label="Setup steps">
+  {% for step in ["Basics", "Roles", "Messages", "Verdict", "Review"] %}
+  <button class="stepper__step" type="button" data-step="{{ loop.index0 }}"><span class="stepper__num">{{ loop.index }}</span>{{ step }}</button>
+  {% endfor %}
+</nav>
+{% endif %}
+
+<div class="{{ 'settings-wizard' if setup_mode else 'settings-layout' }}">
+  {% if not setup_mode %}
+  <nav class="settings-nav" id="settings-nav">
+    <a href="#basics" data-section-link="basics">{{ icon("settings", 16) }} Basics<span class="settings-nav__status" data-status="basics"></span></a>
+    <a href="#roles" data-section-link="roles">{{ icon("users", 16) }} Roles<span class="settings-nav__status" data-status="roles"></span></a>
+    <a href="#messages" data-section-link="messages">{{ icon("message", 16) }} Messages<span class="settings-nav__status" data-status="messages"></span></a>
+    <a href="#verdict" data-section-link="verdict">{{ icon("gavel", 16) }} Verdict<span class="settings-nav__status" data-status="verdict"></span></a>
+    <a href="#review" data-section-link="review">{{ icon("check", 16) }} Checks<span class="settings-nav__status" data-status="review"></span></a>
+  </nav>
+  {% endif %}
+
+  <form class="settings-form" id="settings-form" autocomplete="off" onsubmit="return false">
+    <section class="card" id="basics" data-step-panel="0">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Basics</h2>
+          <p class="card__desc">Where recruiters find this guild, and how long a trial lasts.</p>
+        </div>
+      </div>
+
+      {% call setting("Web address", "Made from the server name when the bot was added. Old addresses keep redirecting after a change.") %}
+      <div class="input-affix">
+        <span class="input-affix__prefix">ironkeep.gg/</span>
+        <input class="input" type="text" name="slug" value="{{ guild.slug }}" spellcheck="false">
+      </div>
+      <span class="field__hint" data-slug-hint></span>
+      {% endcall %}
+
+      {% call setting("Time zone", "Used for day counts, end dates and reminders.") %}
+      <select class="input select" name="timezone">
+        {% for tz in ["Europe/Amsterdam", "Europe/Brussels", "Europe/Berlin", "Europe/London", "Europe/Oslo", "Europe/Warsaw", "America/New_York", "America/Chicago", "America/Los_Angeles", "Asia/Singapore", "UTC"] %}
+        <option {% if tz == guild.settings.timezone %}selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+      {% endcall %}
+
+      {% call setting("Trial length", "Counted from the moment the trial role is given. Changing it only affects new trials.") %}
+      <span class="number-input"><input class="input" type="number" name="trial_days" min="1" max="120" value="{{ guild.settings.trial_days }}"> days</span>
+      {% endcall %}
+
+      {% call setting("Content role reminder", "If a trial member still has no content role on this day, Ironkeep pings them once.") %}
+      <span class="number-input">on day <input class="input" type="number" name="reminder_day" min="1" max="120" value="{{ guild.settings.reminder_day }}"></span>
+      <span class="setting__warning" data-reminder-warning hidden>{{ icon("alert", 14) }} The reminder day is after the end of the trial, so it will never be sent.</span>
+      {% endcall %}
+    </section>
+
+    <section class="card" id="roles" data-step-panel="1">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Roles</h2>
+          <p class="card__desc">Pick roles by name. Ironkeep stores the role ID, so renaming a role in Discord doesn't break anything.</p>
+        </div>
+      </div>
+
+      {% call setting("Recruitment roles", "Members with any of these roles can open this dashboard, add observations and give verdicts.") %}
+      <div class="picker" data-picker="recruitment_roles" data-kind="role" data-multi></div>
+      {% endcall %}
+
+      {% call setting("Trial role", "Ironkeep starts a trial the moment this role is given.") %}
+      <div class="picker" data-picker="trial_role" data-kind="role"></div>
+      {% endcall %}
+
+      {% call setting("Content roles", "Having at least one of these counts as having a content role, e.g. ZvZ, Gathering or Roads.") %}
+      <div class="picker" data-picker="content_roles" data-kind="role" data-multi></div>
+      {% endcall %}
+    </section>
+
+    <section class="card" id="messages" data-step-panel="2">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Messages</h2>
+          <p class="card__desc">What Ironkeep posts in Discord, and where. Click a placeholder to add it to the text.</p>
+        </div>
+      </div>
+      <div id="message-cards"></div>
+
+      <div class="message-card" id="overview-card">
+        <div class="message-card__head">
+          <div>
+            <div class="message-card__title">Recruiter overview</div>
+            <div class="setting__hint">One message that Ironkeep keeps up to date with who needs attention. The full list stays on this website.</div>
+          </div>
+          <label class="toggle"><input type="checkbox" name="overview_enabled" checked><span class="toggle__track"></span></label>
+        </div>
+        <div class="message-card__body">
+          <div class="field"><span class="field__label">Channel</span>
+            <div class="picker" data-picker="channels.recruiter_overview" data-kind="channel"></div>
+            <div data-warnings="channels.recruiter_overview"></div>
+          </div>
+          <div class="field"><span class="field__label">Preview</span>
+            <div class="discord-preview" id="overview-preview"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card" id="verdict" data-step-panel="3">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Verdict</h2>
+          <p class="card__desc">What happens to someone's roles when a recruiter accepts or rejects them. The messages for both are under Messages.</p>
+        </div>
+      </div>
+
+      {% call setting("When accepted: give", "For example Member.") %}
+      <div class="picker" data-picker="accept.add" data-kind="role" data-multi data-manageable></div>
+      {% endcall %}
+
+      {% call setting("When accepted: remove", "For example Trial.") %}
+      <div class="picker" data-picker="accept.remove" data-kind="role" data-multi data-manageable></div>
+      {% endcall %}
+
+      {% call setting("When rejected: remove", "For example Trial and any content roles.") %}
+      <div class="picker" data-picker="reject.remove" data-kind="role" data-multi data-manageable></div>
+      {% endcall %}
+
+      <div class="callout callout--accent">
+        {{ icon("info", 16) }}
+        <div><p>Ironkeep can only change roles that sit <strong>below its own role</strong> in Server Settings → Roles. Roles it can't manage are marked in the lists above.</p></div>
+      </div>
+    </section>
+
+    <section class="card" id="review" data-step-panel="4">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Checks</h2>
+          <p class="card__desc">Ironkeep checks its permissions in Discord so problems show up here instead of silently failing later.</p>
+        </div>
+        <button class="button button--ghost button--sm" type="button" data-recheck>Check again</button>
+      </div>
+      <ul class="checks" id="checks"></ul>
+    </section>
+
+    <div class="save-bar">
+      {% if setup_mode %}
+      <button class="button button--ghost" type="button" data-step-back>{{ icon("arrow-left", 15) }} Back</button>
+      <span class="save-bar__text" data-step-text></span>
+      <button class="button button--accent" type="button" data-step-next>Next {{ icon("arrow-right", 15) }}</button>
+      {% else %}
+      <span class="save-bar__text" data-save-text>All changes saved.</span>
+      <button class="button button--ghost" type="button" data-discard disabled>Discard</button>
+      <button class="button button--accent" type="button" data-save>Save changes</button>
+      {% endif %}
+    </div>
+  </form>
+</div>
+
+<div class="modal-root" id="modal-root" hidden></div>
+
+<script id="page-data" type="application/json">{{ {
+  "guild": {"name": guild.name, "slug": guild.slug, "approval": guild.approval},
+  "settings": guild.settings,
+  "roles": guild.roles,
+  "channels": guild.channels,
+  "setupMode": setup_mode,
+  "taken": ["admin", "trial", "login", "privacy", "static", "prototype"] + (guilds | map(attribute="slug") | reject("equalto", guild.slug) | list),
+} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/settings.js"></script>{% endblock %}

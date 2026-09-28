@@ -1,0 +1,46 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Data requests · Ironkeep admin{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Data requests</h1>
+    <p class="page-subtitle">When someone asks what Ironkeep stores about them, or asks for it to be deleted.</p>
+  </div>
+</header>
+
+<section class="card">
+  <div class="card__head">
+    <div>
+      <h2 class="card__title">Find a person</h2>
+      <p class="card__desc">Search by Discord user ID. This covers every guild, including observations recruiters wrote.</p>
+    </div>
+  </div>
+  <form class="lookup" id="lookup">
+    <input class="input mono" type="text" name="user_id" placeholder="Discord user ID, e.g. 700000000000000001" value="700000000000000001" inputmode="numeric">
+    <button class="button button--accent" type="submit">{{ icon("search", 15) }} Search</button>
+  </form>
+  <div id="lookup-result" style="margin-top:18px"></div>
+</section>
+
+<section class="card">
+  <div class="card__head">
+    <div>
+      <h2 class="card__title">Automatic clean-up</h2>
+      <p class="card__desc">These rules run every night.</p>
+    </div>
+  </div>
+  <ul class="detail-list">
+    <li>Closed trials, including observations, are deleted <strong>12 months</strong> after the verdict.</li>
+    <li>When the bot leaves a server or a request is rejected, that environment is deleted after <strong>30 days</strong>.</li>
+    <li>Error logs are kept for <strong>90 days</strong>.</li>
+  </ul>
+</section>
+
+<div class="modal-root" id="modal-root" hidden></div>
+<script id="page-data" type="application/json">{{ {"records": records} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/admin.js"></script>{% endblock %}

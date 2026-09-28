@@ -1,0 +1,60 @@
+{% extends "public_layout.html" %}
+
+{% block title %}Privacy · Ironkeep{% endblock %}
+
+{% block content %}
+<article class="prose">
+  <div class="callout callout--orange" style="margin-bottom:24px">
+    <div><p><strong>Draft.</strong> The parts marked in orange still need to be filled in before launch. This text is a general starting point, not legal advice.</p></div>
+  </div>
+
+  <h1>Privacy policy</h1>
+  <p class="muted">Last updated: 28 September 2026</p>
+
+  <p>Ironkeep is a Discord bot and website that helps guilds follow new members through a trial period. This page explains what Ironkeep stores about you, why, and what you can ask us to do with it.</p>
+
+  <h2>Who is responsible</h2>
+  <p>Ironkeep is run by <span class="placeholder-text">[name of the person or company]</span>, <span class="placeholder-text">[country]</span>. For any question or request about your data, email <span class="placeholder-text">[privacy@ironkeep.gg]</span>. We answer within 30 days.</p>
+
+  <h2>What we store</h2>
+  <div class="table-wrap">
+    <table class="table">
+      <thead><tr><th>Who</th><th>What</th><th>Where it comes from</th></tr></thead>
+      <tbody>
+        <tr><td>Members of a server that uses Ironkeep</td><td>Discord user ID, username, display name, avatar, the date you joined, and which of the guild's chosen roles you have</td><td>Discord, through the bot</td></tr>
+        <tr><td>People on a trial</td><td>Trial start and end date, whether a reminder was sent, the verdict, and a timeline of what happened during the trial</td><td>The bot, and recruiters of that guild</td></tr>
+        <tr><td>People on a trial</td><td>Observations written by the guild's recruiters, for example about attendance or how you fit in the group</td><td>Recruiters of that guild</td></tr>
+        <tr><td>Recruiters and server admins who log in</td><td>Discord user ID, username, avatar, and which servers you're in</td><td>Discord login</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>We don't read messages, voice activity or direct messages. We don't store email addresses or passwords.</p>
+
+  <h2>Why, and on what basis</h2>
+  <p>Ironkeep uses this data only to run a guild's recruitment process: posting the messages the guild has set up, tracking trial dates, and helping recruiters decide whether to accept someone. The legal basis is <strong>legitimate interest</strong> (Article 6(1)(f) GDPR): the guild's interest in running its trials in an organised way, weighed against your interests. Observations are only visible to that guild's recruiters and to the Ironkeep administrator. They are never shown to other guilds.</p>
+
+  <h2>How long we keep it</h2>
+  <ul>
+    <li>Closed trials, including observations and the timeline, are deleted <strong>12 months</strong> after the verdict.</li>
+    <li>If a guild removes the bot, or its request is rejected, all data for that guild is deleted after <strong>30 days</strong>.</li>
+    <li>Error logs are kept for <strong>90 days</strong>.</li>
+    <li>Login sessions end after 30 days, or when you log out.</li>
+  </ul>
+
+  <h2>Who processes it for us</h2>
+  <ul>
+    <li><strong>Hetzner Online GmbH</strong> (Germany) hosts the website, the bot and the database. Data stays in the EU.</li>
+    <li><strong>Discord</strong> provides login and the data the bot receives. Discord's own <a href="https://discord.com/privacy" rel="noopener">privacy policy</a> applies to your Discord account.</li>
+  </ul>
+  <p>We don't sell data and don't share it with anyone else.</p>
+
+  <h2>Cookies</h2>
+  <p>The website uses one cookie to keep you logged in. There are no analytics, advertising or tracking cookies.</p>
+
+  <h2>Your rights</h2>
+  <p>You can ask for a copy of everything Ironkeep stores about you, including observations, and ask us to correct or delete it. You can also object to the processing. Email <span class="placeholder-text">[privacy@ironkeep.gg]</span> with your Discord user ID. If you're not happy with our answer, you can complain to your local data protection authority; in the Netherlands that's the Autoriteit Persoonsgegevens.</p>
+
+  <h2>Changes</h2>
+  <p>If this policy changes in a way that matters, we'll update the date at the top and tell guild admins in Discord.</p>
+</article>
+{% endblock %}

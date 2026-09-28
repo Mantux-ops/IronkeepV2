@@ -1,0 +1,42 @@
+{% extends "public_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Ironkeep · Trial tracking for Discord guilds{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <div>
+    <span class="hero__eyebrow">{{ icon("scale", 14) }} Recruitment for Albion guilds</span>
+    <h1>Know where every trial stands, without a spreadsheet.</h1>
+    <p>Ironkeep follows your Discord server: it notices new members and trial roles, pings people who haven't picked content yet, and gives recruiters one overview to make the call.</p>
+    <div class="hero__actions">
+      <a class="button button--discord button--lg" href="/login?add=1">{{ icon("discord", 18) }} Add to Discord</a>
+      <a class="button button--ghost button--lg" href="/login">Log in</a>
+    </div>
+    <p class="hero__note">New servers are reviewed before the bot becomes active.</p>
+  </div>
+
+  <div class="hero-visual" aria-hidden="true">
+    <div class="action-row"><span class="avatar avatar--md" style="--avatar-color:#b45309">V</span><span class="action-row__name">Velorn</span><span class="tag tag--red">Day 9 · no content role</span><span class="action-row__spacer"></span><span class="button button--outline button--sm">View {{ icon("arrow-right", 14) }}</span></div>
+    <div class="action-row"><span class="avatar avatar--md" style="--avatar-color:#7c3aed">C</span><span class="action-row__name">Crylen</span><span class="tag tag--orange">No start date</span><span class="action-row__spacer"></span><span class="button button--outline button--sm">Set start date {{ icon("arrow-right", 14) }}</span></div>
+    <div class="action-row"><span class="avatar avatar--md" style="--avatar-color:#d97706">O</span><span class="action-row__name">Orain</span><span class="tag tag--orange">Trial ended 27 Sep</span><span class="action-row__spacer"></span><span class="button button--outline button--sm">Give verdict {{ icon("arrow-right", 14) }}</span></div>
+    <div class="action-row"><span class="avatar avatar--md" style="--avatar-color:#5865f2">T</span><span class="action-row__name">Tharion</span><span class="role-chip" style="--role-color:#27ae60"><span class="role-chip__dot"></span>Gathering</span><span class="action-row__spacer"></span><span class="pill pill--green"><span class="pill__dot"></span>Active</span></div>
+  </div>
+</section>
+
+<section class="feature-grid">
+  <div class="feature"><span class="feature__icon">{{ icon("user-plus", 20) }}</span><h3>New member ping</h3><p>Someone joins, and Ironkeep posts in your perms channel so nobody slips through.</p></div>
+  <div class="feature"><span class="feature__icon">{{ icon("calendar", 20) }}</span><h3>Trial clock</h3><p>The moment the trial role is given becomes the start date. The end date follows from your trial length.</p></div>
+  <div class="feature"><span class="feature__icon">{{ icon("bell", 20) }}</span><h3>One reminder</h3><p>No content role after a week? The trial member gets pinged once, not every day.</p></div>
+  <div class="feature"><span class="feature__icon">{{ icon("gavel", 20) }}</span><h3>Verdict with context</h3><p>Recruiters log observations. Accepting or rejecting shows them all, then updates roles for you.</p></div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">How it starts</h2>
+  <div class="steps">
+    <div class="step"><span class="step__num">01</span><h3>Add the bot</h3><p>A server admin adds Ironkeep. Your guild gets its own address, like ironkeep.gg/yourguild.</p></div>
+    <div class="step"><span class="step__num">02</span><h3>Pick roles and channels</h3><p>Choose the trial role, content roles, recruiter roles and channels by name. No IDs to copy.</p></div>
+    <div class="step"><span class="step__num">03</span><h3>Get approved</h3><p>Once your server is approved, Ironkeep starts following joins and trials.</p></div>
+  </div>
+</section>
+{% endblock %}

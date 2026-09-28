@@ -1,0 +1,91 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import guild_icon, pill, stat_card %}
+
+{% block title %}All guilds · Ironkeep admin{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">All guilds</h1>
+    <p class="page-subtitle">Every Ironkeep environment, its status and recent problems.</p>
+  </div>
+  <label class="search">
+    {{ icon("search", 16) }}
+    <input type="search" id="guild-search" placeholder="Search guild or server ID" autocomplete="off">
+  </label>
+</header>
+
+<section class="stat-grid stat-grid--5">
+  {{ stat_card("Guilds", totals.guilds, "shield") }}
+  {{ stat_card("Waiting for approval", totals.pending, "hourglass", "orange", "#pending") }}
+  {{ stat_card("Open trials", totals.open, "scale") }}
+  {{ stat_card("Trials needing action", totals.attention, "alert", "orange") }}
+  {{ stat_card("Errors", totals.errors, "ban", "red", "/admin/errors") }}
+</section>
+
+{% set pending = rows | selectattr("approval", "equalto", "pending") | list %}
+<section class="section" id="pending">
+  <h2 class="section-title">Waiting for approval</h2>
+  <div class="pending-list" id="pending-list">
+    {% for g in pending %}
+    <div class="pending-row" data-pending="{{ g.slug }}">
+      {{ guild_icon(g, "lg") }}
+      <div class="pending-row__main">
+        <span class="pending-row__name">{{ g.name }}</span>
+        <span class="pending-row__meta">Added by {{ g.added_by }} · <span data-datetime="{{ g.added_at }}"></span> · Server ID <span class="mono">{{ g.id }}</span></span>
+        <span class="pending-row__meta">Setup {{ "complete" if g.setup_complete else "not finished yet" }} · {{ g.roles | length - 2 }} roles · {{ g.channels | length }} channels</span>
+      </div>
+      <div class="pending-row__actions">
+        <a class="button button--ghost button--sm" href="/{{ g.slug }}/setup">View setup</a>
+        <button class="button button--red-outline button--sm" type="button" data-reject="{{ g.slug }}" data-name="{{ g.name }}">{{ icon("x", 14) }} Reject</button>
+        <button class="button button--green button--sm" type="button" data-approve="{{ g.slug }}" data-name="{{ g.name }}">{{ icon("check", 14) }} Approve</button>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="action-list__empty action-list" {% if pending %}hidden{% endif %} id="pending-empty">{{ icon("check") }} No requests waiting.</div>
+  </div>
+</section>
+
+<section class="section">
+  <h2 class="section-title">Environments</h2>
+  <div class="table-wrap">
+    <table class="table table--bordered table--cards" id="guild-table">
+      <thead>
+        <tr>
+          <th>Guild</th>
+          <th>Address</th>
+          <th>Status</th>
+          <th>Bot</th>
+          <th class="num">Open trials</th>
+          <th class="num">Needs action</th>
+          <th>Last error</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for g in rows %}
+        <tr data-row="{{ g.slug }}" data-search="{{ (g.name ~ ' ' ~ g.id ~ ' ' ~ g.slug) | lower }}">
+          <td data-label="Guild"><span class="cell-user">{{ guild_icon(g) }}<span><span class="cell-user__name">{{ g.name }}</span><span class="cell-user__sub mono">{{ g.id }}</span></span></span></td>
+          <td data-label="Address"><span class="slug">/{{ g.slug }}</span></td>
+          <td data-label="Status" data-approval-cell data-setup-complete="{{ g.setup_complete | lower }}">
+            {% if g.approval == "pending" %}{{ pill("Waiting for approval", "orange") }}
+            {% elif not g.setup_complete %}{{ pill("Setup not finished", "orange") }}
+            {% else %}{{ pill("Active", "green") }}{% endif %}
+          </td>
+          <td data-label="Bot">{% if g.bot_present %}{{ pill("In server", "green") }}{% else %}{{ pill("Removed", "grey") }}{% endif %}</td>
+          <td data-label="Open trials" class="num">{{ g.open }}</td>
+          <td data-label="Needs action" class="num">{{ g.attention }}</td>
+          <td data-label="Last error">{% if g.last_error %}<span class="error-text">{{ g.last_error.text }}</span><span class="muted small" style="display:block;white-space:nowrap" data-datetime="{{ g.last_error.at }}"></span>{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td><a class="button button--outline button--sm" href="/{{ g.slug }}/trial">Open {{ icon("arrow-right", 14) }}</a></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<div class="modal-root" id="modal-root" hidden></div>
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/admin.js"></script>{% endblock %}

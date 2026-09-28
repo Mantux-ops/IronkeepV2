@@ -1,0 +1,13 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}No access · Ironkeep{% endblock %}
+
+{% block main %}
+<section class="empty-state" style="margin-top:40px">
+  {{ icon("lock", 28) }}
+  <h2>You can't open this page</h2>
+  <p>{{ message }}</p>
+  <a class="button button--outline" href="/trial">Go to your trials {{ icon("arrow-right", 15) }}</a>
+</section>
+{% endblock %}

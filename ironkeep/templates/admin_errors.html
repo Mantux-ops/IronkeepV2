@@ -1,0 +1,36 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import guild_icon, pill %}
+
+{% block title %}Errors · Ironkeep admin{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Errors</h1>
+    <p class="page-subtitle">Things Ironkeep tried to do in Discord and couldn't. Guild recruiters see the same problem on their Checks page.</p>
+  </div>
+</header>
+
+<div class="table-wrap">
+  <table class="table table--cards">
+    <thead>
+      <tr><th>Guild</th><th>When</th><th>Problem</th><th>Status</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for e in errors %}
+      {% set g = names[e.guild] %}
+      <tr>
+        <td data-label="Guild"><span class="cell-user">{{ guild_icon(g, "sm") }}<span class="cell-user__name">{{ g.name }}</span></span></td>
+        <td data-label="When"><span data-datetime="{{ e.at }}"></span></td>
+        <td data-label="Problem"><strong>{{ e.text }}</strong><div class="muted small">{{ e.detail }}</div></td>
+        <td data-label="Status">{% if e.resolved %}{{ pill("Resolved", "grey") }}{% else %}{{ pill("Open", "red") }}{% endif %}</td>
+        <td><a class="button button--outline button--sm" href="/{{ g.slug }}/settings#review">Checks {{ icon("arrow-right", 14) }}</a></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+
+{% block scripts %}<script src="/static/js/admin.js"></script>{% endblock %}
