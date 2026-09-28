@@ -1,1 +1,0 @@
-"""Albion Online integration package."""
