@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Ironkeep{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ asset('css/app.css') }}">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  <div class="proto-bar" role="region" aria-label="Prototype controls">
+    <span class="proto-bar__label">Prototype · sample data, nothing is saved</span>
+    <span class="proto-bar__sep"></span>
+    <span class="proto-bar__label">View as</span>
+    <a class="proto-bar__opt {% if viewer.superadmin %}is-active{% endif %}" href="/prototype/view/superadmin?next={{ request.url.path }}">Superadmin</a>
+    <a class="proto-bar__opt {% if not viewer.superadmin %}is-active{% endif %}" href="/prototype/view/recruiter?next={{ request.url.path }}">Recruiter</a>
+  </div>
+
+  {% block body %}{% endblock %}
+
+  <div class="toast-stack" id="toasts" aria-live="polite"></div>
+  <script src="{{ asset('js/common.js') }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

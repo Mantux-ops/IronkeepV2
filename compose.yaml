@@ -1,0 +1,11 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./ironkeep:/app/ironkeep
+    environment:
+      # File change events don't reach the container on Windows and macOS bind mounts.
+      WATCHFILES_FORCE_POLLING: "true"
+    command: ["uvicorn", "ironkeep.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]

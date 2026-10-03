@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+
+{% block body_class %}public{% endblock %}
+
+{% block body %}
+<header class="public-header">
+  <a class="brand" href="/">
+    <span class="brand__mark">{{ icon("logo", 26) }}</span>
+    <span class="brand__name">Ironkeep</span>
+  </a>
+  <div class="public-header__actions">
+    <a class="button button--ghost" href="/login">Log in</a>
+    <a class="button button--discord" href="/login?add=1">{{ icon("discord", 16) }} Add to Discord</a>
+  </div>
+</header>
+
+<main class="public-main">
+  {% block content %}{% endblock %}
+</main>
+
+<footer class="public-footer">
+  <span>© 2026 Ironkeep · Not affiliated with Discord or Sandbox Interactive.</span>
+  <a href="/privacy">Privacy</a>
+</footer>
+{% endblock %}

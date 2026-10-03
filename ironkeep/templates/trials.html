@@ -1,0 +1,74 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Trials · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Trials</h1>
+    <p class="page-subtitle">{{ guild.name }} · recruitment</p>
+  </div>
+</header>
+
+{% if guild.approval == "pending" %}
+<section class="empty-state">
+  {{ icon("hourglass", 28) }}
+  <h2>No trials yet</h2>
+  <p>Trials start showing up here once this guild is approved and the setup is complete.</p>
+  <a class="button button--accent" href="/{{ guild.slug }}/setup">Continue setup {{ icon("arrow-right", 16) }}</a>
+</section>
+{% else %}
+<section class="stat-grid" id="stats"></section>
+
+<section class="section">
+  <h2 class="section-title">Needs action</h2>
+  <div class="action-list" id="action-list"></div>
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <h2 class="section-title">All trials</h2>
+    <div class="toolbar">
+      <div class="chip-group" id="filters" role="tablist" aria-label="Filter trials"></div>
+      <label class="search">
+        {{ icon("search", 16) }}
+        <input type="search" id="search" placeholder="Search player" autocomplete="off">
+      </label>
+    </div>
+  </div>
+  <div class="table-wrap">
+    <table class="table table--trials">
+      <thead>
+        <tr>
+          <th data-sort="name">Name</th>
+          <th data-sort="start">Start</th>
+          <th data-sort="end">Ends</th>
+          <th data-sort="progress">Progress</th>
+          <th>Content role</th>
+          <th data-sort="status">Status</th>
+        </tr>
+      </thead>
+      <tbody id="trial-rows"></tbody>
+    </table>
+    <p class="table-empty" id="table-empty" hidden>No trials match this filter.</p>
+  </div>
+</section>
+{% endif %}
+
+<div class="panel-overlay" id="panel-overlay" hidden></div>
+<aside class="panel" id="panel" aria-label="Trial details" hidden></aside>
+<div class="modal-root" id="modal-root" hidden></div>
+
+<script id="page-data" type="application/json">{{ {
+  "guild": {"name": guild.name, "slug": guild.slug},
+  "settings": guild.settings,
+  "roles": guild.roles,
+  "channels": guild.channels,
+  "trials": guild.trials,
+  "viewer": viewer.name,
+  "today": today,
+} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script src="{{ asset('js/trials.js') }}"></script>{% endblock %}
