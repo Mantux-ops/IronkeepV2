@@ -181,10 +181,16 @@ def _reminders():
                 "end_date": db.human_date(end),
             }
             try:
-                from .discord_api import send_message
+                from .discord_api import send_dm, send_message
 
-                send_message(reminder["channel"], fill(reminder.get("text"), values)[:2000])
-                db.mark_ping_sent(trial["id"], settings)
+                text = fill(reminder.get("text"), values)[:2000]
+                if reminder.get("delivery") == "dm":
+                    send_dm(trial["user_id"], text)
+                    note = "Day reminder sent as a direct message"
+                else:
+                    send_message(reminder["channel"], text)
+                    note = "Day reminder sent"
+                db.mark_ping_sent(trial["id"], settings, note)
             except Exception as error:
                 log.warning("Reminder failed for %s: %s", trial["name"], error)
                 db.set_last_error(guild_row["id"], f"Could not send the reminder for {trial['name']}")

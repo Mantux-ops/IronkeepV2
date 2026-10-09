@@ -70,7 +70,7 @@
       <span class="number-input"><input class="input" type="number" name="trial_days" min="1" max="120" value="{{ guild.settings.trial_days }}"> days</span>
       {% endcall %}
 
-      {% call setting("Content role reminder", "If a trial member still has no content role on this day, Ironkeep pings them once.") %}
+      {% call setting("Content role reminder", "If a trial member still has no content role on this day, Ironkeep messages them once. Under Messages you choose a channel or a direct message.") %}
       <span class="number-input">on day <input class="input" type="number" name="reminder_day" min="1" max="120" value="{{ guild.settings.reminder_day }}"></span>
       <span class="setting__warning" data-reminder-warning hidden>{{ icon("alert", 14) }} The reminder day is after the end of the trial, so it will never be sent.</span>
       {% endcall %}
