@@ -104,6 +104,13 @@ def member_role_ids(settings):
     return [str(role_id) for role_id in (accept.get("add") or []) if role_id]
 
 
+def active_trial_role_ids(settings):
+    """Trial roles, without roles that already mean the person was accepted."""
+    trial_ids = set(trial_role_ids(settings))
+    pure = trial_ids - set(member_role_ids(settings))
+    return pure or trial_ids
+
+
 def setup_complete(settings):
     channels = settings.get("channels") or {}
     return bool(

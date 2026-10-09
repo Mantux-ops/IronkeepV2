@@ -369,8 +369,14 @@ def trials(slug: str, request: Request):
     if error:
         return error
     if config.live():
-        hidden = db.full_member_user_ids(guild["id"], guild["settings"])
-        guild["trials"] = [trial for trial in guild["trials"] if trial["user_id"] not in hidden]
+        pure = db.active_trial_role_ids(guild["settings"])
+        on_trial = {
+            person["user_id"]
+            for person in db.list_members(guild["id"])
+            if pure & set(person["role_ids"])
+        }
+        if on_trial:
+            guild["trials"] = [trial for trial in guild["trials"] if trial["user_id"] in on_trial]
     today = db.guild_today(guild["settings"]).isoformat() if config.live() else None
     return render(request, "trials.html", guild=guild, nav="trials", **({"today": today} if today else {}))
 
@@ -381,15 +387,15 @@ def members(slug: str, request: Request):
     if error:
         return error
     people = db.list_members(guild["id"]) if config.live() else []
-    trial_ids = set(db.trial_role_ids(guild["settings"]))
+    trial_ids = db.active_trial_role_ids(guild["settings"])
     member_ids = set(db.member_role_ids(guild["settings"]))
     roles = {role["id"]: role for role in guild["roles"]}
     for person in people:
         held = set(person["role_ids"])
-        if held & member_ids:
-            person["status"], person["tone"] = "Member", "green"
-        elif held & trial_ids:
+        if held & trial_ids:
             person["status"], person["tone"] = "Trial", "orange"
+        elif held & member_ids:
+            person["status"], person["tone"] = "Member", "green"
         else:
             person["status"], person["tone"] = "No trial role", "grey"
         person["labels"] = [roles[role_id]["name"] for role_id in person["role_ids"] if role_id in trial_ids or role_id in member_ids]

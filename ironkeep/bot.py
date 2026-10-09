@@ -41,13 +41,13 @@ def consider_member(guild_row, member, *, known_new, before_ids=None):
     if member.bot:
         return
     settings = guild_row["settings"]
-    trial_ids = set(db.trial_role_ids(settings))
+    trial_ids = db.active_trial_role_ids(settings)
     full_ids = set(db.member_role_ids(settings))
     if not trial_ids:
         return
     member_ids = {str(role.id) for role in member.roles}
-    is_full_member = bool(member_ids & full_ids)
-    has_trial = bool(member_ids & trial_ids) and not is_full_member
+    has_trial = bool(member_ids & trial_ids)
+    is_full_member = bool(member_ids & full_ids) and not has_trial
     before_ids = {str(role_id) for role_id in (before_ids or set())}
     just_added = known_new and has_trial and not any(role_id in before_ids for role_id in trial_ids)
     content = _content_ids(member, settings)
