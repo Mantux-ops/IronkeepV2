@@ -381,26 +381,73 @@ def trials(slug: str, request: Request):
     return render(request, "trials.html", guild=guild, nav="trials", **({"today": today} if today else {}))
 
 
+def _shown_role(role, content_ids):
+    """Roles worth listing on Members: skip @everyone, bots, and content roles."""
+    if not role or role.get("everyone") or role.get("managed") or role.get("bot"):
+        return False
+    return str(role.get("id")) not in content_ids
+
+
+def prepare_members(guild, people):
+    """Status, role labels, and filter chips for the members page."""
+    settings = guild["settings"]
+    trial_ids = {str(role_id) for role_id in db.active_trial_role_ids(settings)}
+    member_ids = {str(role_id) for role_id in db.member_role_ids(settings)}
+    content_ids = {str(role_id) for role_id in (settings.get("content_roles") or []) if role_id}
+    roles = {str(role["id"]): role for role in guild["roles"]}
+    counts = {}
+    member_count = 0
+    prepared = []
+    for person in people:
+        person = dict(person)
+        held = {str(role_id) for role_id in person.get("role_ids") or []}
+        is_member = bool(held & member_ids)
+        person["is_member"] = is_member
+        if is_member:
+            member_count += 1
+        if held & trial_ids:
+            person["status"], person["tone"] = "Trial", "orange"
+        elif is_member:
+            person["status"], person["tone"] = "Member", "green"
+        else:
+            person["status"], person["tone"] = "Other", "grey"
+        shown = [roles[role_id] for role_id in held if _shown_role(roles.get(role_id), content_ids)]
+        shown.sort(key=lambda role: role.get("position") or 0, reverse=True)
+        person["labels"] = [role["name"] for role in shown]
+        person["filter_roles"] = [str(role["id"]) for role in shown]
+        for role in shown:
+            role_id = str(role["id"])
+            if role_id not in member_ids:
+                counts[role_id] = counts.get(role_id, 0) + 1
+        person["color"] = db.PALETTE[int(person["user_id"]) % len(db.PALETTE)]
+        prepared.append(person)
+    role_filters = []
+    for role in sorted(guild["roles"], key=lambda item: item.get("position") or 0, reverse=True):
+        role_id = str(role["id"])
+        if not _shown_role(role, content_ids) or role_id in member_ids:
+            continue
+        count = counts.get(role_id, 0)
+        if count:
+            role_filters.append({"id": role_id, "name": role["name"], "count": count})
+    member_names = [roles[role_id]["name"] for role_id in db.member_role_ids(settings) if role_id in roles]
+    return {
+        "people": prepared,
+        "role_filters": role_filters,
+        "member_count": member_count,
+        "other_count": len(prepared) - member_count,
+        "member_label": ", ".join(member_names) if member_names else "Members",
+        "has_member_role": bool(member_ids),
+    }
+
+
 @app.get("/{slug}/members", response_class=HTMLResponse)
 def members(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
-    people = db.list_members(guild["id"]) if config.live() else []
-    trial_ids = db.active_trial_role_ids(guild["settings"])
-    member_ids = set(db.member_role_ids(guild["settings"]))
-    roles = {role["id"]: role for role in guild["roles"]}
-    for person in people:
-        held = set(person["role_ids"])
-        if held & trial_ids:
-            person["status"], person["tone"] = "Trial", "orange"
-        elif held & member_ids:
-            person["status"], person["tone"] = "Member", "green"
-        else:
-            person["status"], person["tone"] = "No trial role", "grey"
-        person["labels"] = [roles[role_id]["name"] for role_id in person["role_ids"] if role_id in trial_ids or role_id in member_ids]
-        person["color"] = db.PALETTE[int(person["user_id"]) % len(db.PALETTE)]
-    return render(request, "members.html", guild=guild, nav="members", people=people)
+    source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
+    prepared = prepare_members(guild, source)
+    return render(request, "members.html", guild=guild, nav="members", **prepared)
 
 
 @app.put("/api/{slug}/trials/{trial_id}")

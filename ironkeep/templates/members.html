@@ -22,11 +22,21 @@
 {% else %}
 <section class="section">
   <div class="section-head">
-    <h2 class="section-title">{{ people | length }} members</h2>
+    <h2 class="section-title" id="member-count">{{ people | length }} members</h2>
     <label class="search">
       {{ icon("search", 16) }}
       <input type="search" id="member-search" placeholder="Search name" autocomplete="off">
     </label>
+  </div>
+  <div class="chip-group member-filters" role="tablist" aria-label="Filter members">
+    <button class="chip is-active" type="button" role="tab" data-filter="all" aria-selected="true">All<span class="chip__count">{{ people | length }}</span></button>
+    {% if has_member_role %}
+    <button class="chip" type="button" role="tab" data-filter="member" aria-selected="false" title="People with the {{ member_label }} role">{{ member_label }}<span class="chip__count">{{ member_count }}</span></button>
+    <button class="chip" type="button" role="tab" data-filter="other" aria-selected="false" title="People without the {{ member_label }} role">Other roles<span class="chip__count">{{ other_count }}</span></button>
+    {% endif %}
+    {% for role in role_filters %}
+    <button class="chip" type="button" role="tab" data-filter="role:{{ role.id }}" aria-selected="false">{{ role.name }}<span class="chip__count">{{ role.count }}</span></button>
+    {% endfor %}
   </div>
   <div class="table-wrap">
     <table class="table table--cards" id="member-table">
@@ -40,7 +50,7 @@
       </thead>
       <tbody>
         {% for person in people %}
-        <tr data-search="{{ (person.name ~ ' ' ~ person.username ~ ' ' ~ (person.nick or '')) | lower }}">
+        <tr data-search="{{ (person.name ~ ' ' ~ person.username ~ ' ' ~ (person.nick or '')) | lower }}" data-member="{{ '1' if person.is_member else '0' }}" data-roles="{{ person.filter_roles | join(',') }}">
           <td data-label="Name">
             <span class="cell-user">{{ avatar(person.name, person.color) }}
               <span>
@@ -68,14 +78,39 @@
     node.textContent = Ik.formatDate(node.dataset.datetime.slice(0, 10));
   });
   const search = document.getElementById("member-search");
-  if (search) {
-    search.addEventListener("input", () => {
-      const query = search.value.trim().toLowerCase();
-      document.querySelectorAll("#member-table tbody tr").forEach((row) => {
-        row.hidden = query && !row.dataset.search.includes(query);
-      });
+  const count = document.getElementById("member-count");
+  const rows = Array.from(document.querySelectorAll("#member-table tbody tr"));
+  const chips = Array.from(document.querySelectorAll(".member-filters [data-filter]"));
+  let filter = "all";
+
+  function applyFilter() {
+    const query = search ? search.value.trim().toLowerCase() : "";
+    let visible = 0;
+    rows.forEach((row) => {
+      const roles = row.dataset.roles ? row.dataset.roles.split(",") : [];
+      let match = true;
+      if (filter === "member") match = row.dataset.member === "1";
+      else if (filter === "other") match = row.dataset.member !== "1";
+      else if (filter.indexOf("role:") === 0) match = roles.indexOf(filter.slice(5)) !== -1;
+      if (match && query && row.dataset.search.indexOf(query) === -1) match = false;
+      row.hidden = !match;
+      if (match) visible += 1;
     });
+    if (count) count.textContent = visible === rows.length ? rows.length + " members" : visible + " of " + rows.length;
   }
+
+  chips.forEach((chip) => {
+    chip.addEventListener("click", () => {
+      filter = chip.dataset.filter;
+      chips.forEach((item) => {
+        const active = item === chip;
+        item.classList.toggle("is-active", active);
+        item.setAttribute("aria-selected", active ? "true" : "false");
+      });
+      applyFilter();
+    });
+  });
+  if (search) search.addEventListener("input", applyFilter);
   const sync = document.getElementById("sync-members");
   if (!sync) return;
   const slug = {{ guild.slug | tojson }};
