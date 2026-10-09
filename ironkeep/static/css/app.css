@@ -639,6 +639,12 @@ a.stat-card:hover {
   gap: 6px;
 }
 
+.member-filters {
+  display: flex;
+  width: 100%;
+  margin-bottom: 14px;
+}
+
 .chip {
   display: inline-flex;
   align-items: center;

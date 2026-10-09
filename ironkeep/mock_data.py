@@ -229,6 +229,30 @@ def _simple_guild_roles():
     return [dict(r) for r in DUTCH_CHAOS_ROLES]
 
 
+def _demo_member(user_id, name, username, roles, nick=None):
+    return {
+        "user_id": user_id,
+        "name": name,
+        "username": username,
+        "nick": nick,
+        "role_ids": roles,
+        "joined_at": "2026-08-12T18:00:00",
+    }
+
+
+# Local stand-in for the Discord member list. 1105 is the full member role.
+DEMO_MEMBERS = {
+    "dutchchaos": [
+        _demo_member("9001", "Sylas", "sylas", ["1103", "1105", "1107"]),
+        _demo_member("9002", "Bram", "bram", ["1105", "1108"]),
+        _demo_member("9003", "Kaelen", "kaelen", ["1106", "1109"]),
+        _demo_member("9004", "Mira", "mira", ["1113"], nick="Mira"),
+        _demo_member("9005", "Pim", "pim", ["1113", "1111"]),
+        _demo_member("9006", "Noor", "noor", ["1105", "1113"]),
+    ],
+}
+
+
 GUILDS = [
     {
         "id": "806607423233327195",
