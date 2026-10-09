@@ -33,6 +33,7 @@ def render(request: Request, template: str, status_code: int = 200, **context):
     context.setdefault("viewer", viewer(request))
     context.setdefault("guilds", data.GUILDS)
     context.setdefault("today", data.TODAY.isoformat())
+    context.setdefault("albion_updated_at", data.ALBION_UPDATED_AT)
     return templates.TemplateResponse(request, template, context, status_code=status_code)
 
 

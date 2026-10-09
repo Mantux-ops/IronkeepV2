@@ -33,7 +33,7 @@
       <div class="chip-group" id="filters" role="tablist" aria-label="Filter trials"></div>
       <label class="search">
         {{ icon("search", 16) }}
-        <input type="search" id="search" placeholder="Search player" autocomplete="off">
+        <input type="search" id="search" placeholder="Search player or Albion name" autocomplete="off">
       </label>
     </div>
   </div>
@@ -46,6 +46,7 @@
           <th data-sort="end">Ends</th>
           <th data-sort="progress">Progress</th>
           <th>Content role</th>
+          {% if guild.settings.albion.track_fame %}<th data-sort="fame" title="Fame gained since the trial started">Trial fame</th>{% endif %}
           <th data-sort="status">Status</th>
         </tr>
       </thead>
@@ -68,6 +69,7 @@
   "trials": guild.trials,
   "viewer": viewer.name,
   "today": today,
+  "albionUpdatedAt": albion_updated_at,
 } | tojson }}</script>
 {% endblock %}
 
