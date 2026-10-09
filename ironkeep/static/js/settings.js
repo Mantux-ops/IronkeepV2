@@ -11,6 +11,7 @@
     state.trial_roles = Array.isArray(legacy) ? legacy.filter(Boolean).map(String) : legacy ? [String(legacy)] : [];
   }
   delete state.trial_role;
+  if (state.messages.reminder && state.messages.reminder.delivery !== "dm") state.messages.reminder.delivery = "channel";
   let saved = JSON.stringify(state);
 
   const botRole = roles.find((r) => r.bot) || roles.find((r) => r.managed && r.name === "Ironkeep");
@@ -22,7 +23,7 @@
   const MESSAGES = [
     { key: "welcome", title: "Welcome in the perms channel", when: "When someone joins the server.", placeholders: ["member", "guild"] },
     { key: "trial_started", title: "Trial started", when: "When a trial role is given. The start date is recorded at that moment.", placeholders: ["member", "guild", "days", "start_date", "end_date"] },
-    { key: "reminder", title: "Content role reminder", when: "Sent once, pinging the trial member, if they have no content role on the reminder day. Pick a channel the trial roles can see.", placeholders: ["member", "guild", "day", "days", "end_date"] },
+    { key: "reminder", title: "Content role reminder", when: "Sent once, on the reminder day, if they still have no content role.", placeholders: ["member", "guild", "day", "days", "end_date"] },
     { key: "accepted", title: "Accepted", when: "When a recruiter accepts a trial on this website.", placeholders: ["member", "guild"] },
     { key: "rejected", title: "Rejected", when: "When a recruiter rejects a trial on this website.", placeholders: ["member", "guild"] },
   ];
@@ -159,6 +160,13 @@
     document.getElementById("message-cards").innerHTML = MESSAGES.map((m) => {
       const msg = state.messages[m.key];
       const when = m.key === "reminder" ? m.when.replace("the reminder day", `day ${esc(state.reminder_day)}`) : m.when;
+      const dm = m.key === "reminder" && msg.delivery === "dm";
+      const sendTo = m.key !== "reminder" ? "" : `<div class="field"><span class="field__label">Send to</span>
+              <label class="radio"><input type="radio" name="reminder-delivery" value="channel" ${dm ? "" : "checked"}>
+                <span><strong>A channel</strong><span class="muted small">Posts the reminder where the trial roles can read it.</span></span></label>
+              <label class="radio"><input type="radio" name="reminder-delivery" value="dm" ${dm ? "checked" : ""}>
+                <span><strong>A direct message</strong><span class="muted small">Only that person receives it. Closed DMs mean it is not delivered.</span></span></label>
+            </div>`;
       return `<div class="message-card ${msg.enabled ? "" : "is-disabled"}" data-message="${m.key}">
         <div class="message-card__head">
           <div>
@@ -169,7 +177,8 @@
         </div>
         <div class="message-card__body">
           <div>
-            <div class="field"><span class="field__label">Channel</span>
+            ${sendTo}
+            <div class="field" ${m.key === "reminder" ? "data-reminder-channel" : ""} ${dm ? "hidden" : ""}><span class="field__label">Channel</span>
               <div class="picker" data-picker="messages.${m.key}.channel" data-kind="channel"></div>
               <div data-warnings="messages.${m.key}.channel"></div>
             </div>
@@ -192,7 +201,7 @@
       const node = document.querySelector(`[data-preview="${m.key}"]`);
       if (node) node.innerHTML = discordPreview(Ik.renderMessage(state.messages[m.key].text, values));
       const when = document.querySelector(`[data-when="reminder"]`);
-      if (when) when.textContent = MESSAGES[2].when.replace("the reminder day", `day ${state.reminder_day}`);
+      if (when) when.textContent = `Sent once, on day ${state.reminder_day}, if they still have no content role. ${state.messages.reminder.delivery === "dm" ? "Delivered as a direct message." : "Delivered in the chosen channel."}`;
     });
     const overview = document.getElementById("overview-preview");
     if (overview) {
@@ -217,7 +226,7 @@
     const isMessage = path.startsWith("messages.");
     const key = isMessage ? path.split(".")[1] : null;
     const enabled = isMessage ? state.messages[key].enabled : state.overview_enabled;
-    if (!enabled) return out;
+    if (!enabled || (key === "reminder" && state.messages.reminder.delivery === "dm")) return out;
     if (!id) {
       out.push({ level: "error", text: "Choose a channel." });
       return out;
@@ -425,6 +434,12 @@
   form.addEventListener("change", (event) => {
     if (event.target.name === "timezone") {
       state.timezone = event.target.value;
+      refresh();
+    }
+    if (event.target.name === "reminder-delivery") {
+      state.messages.reminder.delivery = event.target.value;
+      const channelField = document.querySelector("[data-reminder-channel]");
+      if (channelField) channelField.hidden = event.target.value === "dm";
       refresh();
     }
   });
