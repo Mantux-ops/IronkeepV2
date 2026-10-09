@@ -955,5 +955,24 @@
     renderTable();
   });
 
+  const syncMembers = document.getElementById("sync-members");
+  if (syncMembers) {
+    syncMembers.addEventListener("click", () => {
+      if (!data.live) {
+        Ik.toast("Members who already have a trial role would be added");
+        return;
+      }
+      syncMembers.disabled = true;
+      fetch(`/api/${guild.slug}/sync`, { method: "POST" }).then((response) => {
+        syncMembers.disabled = false;
+        if (!response.ok) {
+          Ik.toast("Could not start the sync", "red");
+          return;
+        }
+        Ik.toast("Checking who already has a trial role. Refresh in a minute. Their start date stays empty.");
+      });
+    });
+  }
+
   renderAll();
 })();

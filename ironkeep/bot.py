@@ -200,9 +200,14 @@ async def _scan(guild):
     row = db.guild_by_id(guild.id)
     if row is None or not row["needs_scan"] or row["approval"] != "approved":
         return
+    _sync_guild(guild)
+    row = db.guild_by_id(guild.id)
+    if row is None:
+        return
     async for member in guild.fetch_members(limit=None):
         consider_member(row, member, known_new=False)
     db.clear_scan(guild.id)
+    log.info("Synced members in %s", guild.name)
 
 
 def main():
@@ -270,7 +275,7 @@ def main():
                 await asyncio.to_thread(_reminders)
             except Exception:
                 log.exception("Background pass failed")
-            await asyncio.sleep(60)
+            await asyncio.sleep(10)
 
     try:
         client.run(config.BOT_TOKEN, log_handler=None)
