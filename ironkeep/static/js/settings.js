@@ -6,6 +6,11 @@
   const { roles, channels, guild, setupMode } = data;
   const state = JSON.parse(JSON.stringify(data.settings));
   state.overview_enabled = true;
+  if (!Array.isArray(state.trial_roles)) {
+    const legacy = state.trial_role;
+    state.trial_roles = Array.isArray(legacy) ? legacy.filter(Boolean).map(String) : legacy ? [String(legacy)] : [];
+  }
+  delete state.trial_role;
   let saved = JSON.stringify(state);
 
   const botRole = roles.find((r) => r.bot) || roles.find((r) => r.managed && r.name === "Ironkeep");
@@ -16,8 +21,8 @@
 
   const MESSAGES = [
     { key: "welcome", title: "Welcome in the perms channel", when: "When someone joins the server.", placeholders: ["member", "guild"] },
-    { key: "trial_started", title: "Trial started", when: "When the trial role is given. The start date is recorded at that moment.", placeholders: ["member", "guild", "days", "start_date", "end_date"] },
-    { key: "reminder", title: "Content role reminder", when: "Sent once, pinging the trial member, if they have no content role on the reminder day. Pick a channel the trial role can see.", placeholders: ["member", "guild", "day", "days", "end_date"] },
+    { key: "trial_started", title: "Trial started", when: "When a trial role is given. The start date is recorded at that moment.", placeholders: ["member", "guild", "days", "start_date", "end_date"] },
+    { key: "reminder", title: "Content role reminder", when: "Sent once, pinging the trial member, if they have no content role on the reminder day. Pick a channel the trial roles can see.", placeholders: ["member", "guild", "day", "days", "end_date"] },
     { key: "accepted", title: "Accepted", when: "When a recruiter accepts a trial on this website.", placeholders: ["member", "guild"] },
     { key: "rejected", title: "Rejected", when: "When a recruiter rejects a trial on this website.", placeholders: ["member", "guild"] },
   ];
@@ -219,7 +224,7 @@
     }
     const channel = channelById(id);
     if (!channel.bot_can_send) out.push({ level: "error", text: `Ironkeep can't send messages in #${channel.name}.` });
-    if (key === "reminder" && !channel.trial_visible) out.push({ level: "warn", text: `The trial role can't see #${channel.name}, so the ping won't reach them.` });
+    if (key === "reminder" && !channel.trial_visible) out.push({ level: "warn", text: `A trial role can't see #${channel.name}, so the ping may not reach them.` });
     return out;
   }
 
@@ -240,8 +245,8 @@
 
     if (!state.recruitment_roles.length) add("roles", "error", "No recruitment role chosen", "Nobody except the server owner could open this dashboard.");
     else add("roles", "ok", "Recruitment roles chosen", state.recruitment_roles.map((id) => roleById(id)?.name).join(", "));
-    if (!state.trial_role) add("roles", "error", "No trial role chosen", "Ironkeep won't know when a trial starts.");
-    else add("roles", "ok", "Trial role chosen", roleById(state.trial_role)?.name);
+    if (!state.trial_roles.length) add("roles", "error", "No trial role chosen", "Ironkeep won't know when a trial starts.");
+    else add("roles", "ok", state.trial_roles.length > 1 ? "Trial roles chosen" : "Trial role chosen", state.trial_roles.map((id) => roleById(id)?.name).filter(Boolean).join(", "));
     if (!state.content_roles.length) add("roles", "warn", "No content roles chosen", "Every trial will count as having no content role.");
 
     MESSAGES.forEach((m) => {
@@ -522,7 +527,7 @@
        <div class="modal__body">
          ${pending
            ? `<p>Your settings are saved. Ironkeep stays silent in <strong>${esc(guild.name)}</strong> until the request is approved. You'll get a message in Discord once it's approved.</p>`
-           : `<p>From now on, Ironkeep follows joins and the trial role in <strong>${esc(guild.name)}</strong>.</p>`}
+           : `<p>From now on, Ironkeep follows joins and the trial roles in <strong>${esc(guild.name)}</strong>.</p>`}
          <p class="muted" style="margin-top:10px">Trials that were already running have no reliable start date. They'll show up as "No start date" so you can fill them in once.</p>
        </div>
        <footer class="modal__footer">
