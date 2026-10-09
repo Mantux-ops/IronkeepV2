@@ -294,6 +294,22 @@ def mark_bot_left(discord_id):
         conn.close()
 
 
+def delete_guild(slug):
+    with _LOCK:
+        conn = connect()
+        row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
+        if row is None:
+            conn.close()
+            return
+        guild_id = row["id"]
+        conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
+        conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
+        conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
+        conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
+        conn.commit()
+        conn.close()
+
+
 def mark_missing_guilds(present_ids):
     present = {str(item) for item in present_ids}
     with _LOCK:

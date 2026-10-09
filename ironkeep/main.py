@@ -112,6 +112,7 @@ def visible_guilds(request: Request):
         return data.GUILDS
     person = viewer(request)
     rows = db.list_guilds(with_trials=True)
+    rows = [guild for guild in rows if guild["approval"] != "rejected"]
     if person["superadmin"]:
         return rows
     session = _session(request)
@@ -275,6 +276,7 @@ def admin(request: Request):
     else:
         rows = [{**g, **data.guild_summary(g)} for g in data.GUILDS]
         error_rows = data.ERRORS
+    rows = [row for row in rows if row["approval"] != "rejected"]
     totals = {
         "guilds": len(rows),
         "open": sum(r["open"] for r in rows),
@@ -305,12 +307,12 @@ async def guild_decision(slug: str, request: Request):
             except discord_api.DiscordError:
                 db.set_last_error(guild["id"], "Could not message the person who added the bot")
     elif decision == "reject":
-        db.set_approval(slug, "rejected")
         try:
             discord_api.leave_guild(guild["id"])
-        except discord_api.DiscordError:
-            db.set_last_error(guild["id"], "Could not leave the Discord server")
-        db.mark_bot_left(guild["id"])
+        except discord_api.DiscordError as error:
+            if error.status != 404:
+                db.set_last_error(guild["id"], "Could not leave the Discord server")
+                return JSONResponse({"error": "could not leave"}, status_code=502)
         reason = (body.get("reason") or "").strip()
         if guild.get("added_by_id"):
             text = f"Ironkeep was not approved for {guild['name']} and has left the server."
@@ -320,6 +322,7 @@ async def guild_decision(slug: str, request: Request):
                 discord_api.send_dm(guild["added_by_id"], text[:2000])
             except discord_api.DiscordError:
                 pass
+        db.delete_guild(slug)
     else:
         return JSONResponse({"error": "bad decision"}, status_code=400)
     return {"ok": True}
