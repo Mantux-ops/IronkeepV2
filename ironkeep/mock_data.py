@@ -1,8 +1,10 @@
-"""Sample data for the clickable prototype. Nothing here talks to Discord."""
+"""Sample data for the clickable prototype. Nothing here talks to Discord or Albion Online."""
 
+import random
 from datetime import date, timedelta
 
 TODAY = date(2026, 9, 28)
+ALBION_UPDATED_AT = f"{TODAY.isoformat()}T02:10:00"
 
 SUPERADMIN = {"id": "268813802391207937", "name": "Mantux", "color": "#2dd4bf"}
 RECRUITER = {"id": "402118830021345281", "name": "Sylas", "color": "#a78bfa"}
@@ -72,14 +74,57 @@ DEFAULT_MESSAGES = {
 }
 
 
+FAME_PROFILES = {
+    "zvz": {"pvp": 140_000, "pve": 160_000, "gathering": 4_000, "crafting": 0, "active": 0.8},
+    "pve": {"pvp": 25_000, "pve": 620_000, "gathering": 12_000, "crafting": 15_000, "active": 0.85},
+    "gather": {"pvp": 2_000, "pve": 45_000, "gathering": 95_000, "crafting": 30_000, "active": 0.8},
+    "mixed": {"pvp": 50_000, "pve": 260_000, "gathering": 20_000, "crafting": 8_000, "active": 0.75},
+    "low": {"pvp": 8_000, "pve": 60_000, "gathering": 6_000, "crafting": 0, "active": 0.3},
+}
+
+
+def _fame(seed, since, until, profile):
+    """Daily fame gained, as Ironkeep would compute it from consecutive lifetime snapshots."""
+    rng = random.Random(seed)
+    p = FAME_PROFILES[profile]
+    days = []
+    day = date.fromisoformat(since) + timedelta(days=1)
+    while day <= until:
+        active = rng.random() < p["active"]
+        days.append({
+            "date": day.isoformat(),
+            **{k: int(p[k] * rng.uniform(0.3, 1.9)) if active else 0 for k in ("pvp", "pve", "gathering", "crafting")},
+        })
+        day += timedelta(days=1)
+    return days
+
+
+def _albion(tid, name, start, verdict_at, kw):
+    albion_name = kw.pop("albion_name", name)
+    if albion_name is None:
+        return {"name": None, "link": None, "in_guild": None, "last_in_guild": None, "fame_since": None, "fame": []}
+    since = start or kw.pop("tracking_since", _d(20))
+    until = date.fromisoformat(verdict_at[:10]) if verdict_at else TODAY
+    return {
+        "name": albion_name,
+        "link": kw.pop("albion_link", "nickname"),
+        "in_guild": kw.pop("in_guild", True),
+        "last_in_guild": kw.pop("last_in_guild", None),
+        "fame_since": since,
+        "fame": _fame(tid, since, until, kw.pop("fame_profile", "mixed")),
+    }
+
+
 def _trial(tid, name, username, color, start_days_ago, **kw):
+    start = _d(start_days_ago) if start_days_ago is not None else None
+    albion = _albion(tid, name, start, kw.get("verdict_at"), kw)
     return {
         "id": tid,
         "user_id": kw.pop("user_id", f"7{tid:017d}"),
         "name": name,
         "username": username,
         "color": color,
-        "start": _d(start_days_ago) if start_days_ago is not None else None,
+        "start": start,
         "extra_days": kw.pop("extra_days", 0),
         "content_roles": kw.pop("content_roles", []),
         "ping_sent_at": kw.pop("ping_sent_at", None),
@@ -90,6 +135,7 @@ def _trial(tid, name, username, color, start_days_ago, **kw):
         "action_error": kw.pop("action_error", None),
         "left_server": kw.pop("left_server", False),
         "timeline": kw.pop("timeline", []),
+        "albion": albion,
     }
 
 
@@ -102,7 +148,7 @@ def _obs(at, author, category, rating, text):
 
 
 DUTCH_CHAOS_TRIALS = [
-    _trial(1, "Velorn", "velorn", "#b45309", 8, ping_sent_at=_t(1, "10:00"), timeline=[
+    _trial(1, "Velorn", "velorn", "#b45309", 8, fame_profile="zvz", ping_sent_at=_t(1, "10:00"), timeline=[
         _sys(_t(9, "18:02"), "Joined the server"),
         _sys(_t(8, "20:14"), "Trial role given by Sylas"),
         _obs(_t(6, "22:40"), "Sylas", "Attendance", "positive", "Joined the Tuesday ZvZ and stayed until the end."),
@@ -112,7 +158,7 @@ DUTCH_CHAOS_TRIALS = [
     _trial(2, "Crylen", "crylen.albion", "#7c3aed", None, timeline=[
         _sys(_t(20, "15:30"), "Already had the Trial role when Ironkeep was installed. Start date unknown."),
     ]),
-    _trial(3, "Orain", "orain", "#d97706", 15, content_roles=["1107"], timeline=[
+    _trial(3, "Orain", "orain", "#d97706", 15, fame_profile="zvz", content_roles=["1107"], timeline=[
         _sys(_t(16, "17:44"), "Joined the server"),
         _sys(_t(15, "19:01"), "Trial role given by Mantux"),
         _sys(_t(13, "21:12"), "Content role ZvZ added"),
@@ -122,36 +168,37 @@ DUTCH_CHAOS_TRIALS = [
         _obs(_t(2, "19:47"), "Sylas", "Behaviour", "negative", "Argued with the caller after a lost fight."),
         _sys(_t(1, "19:01"), "Trial period ended. Waiting for a verdict."),
     ]),
-    _trial(4, "Kaelen", "kaelen", "#0891b2", 12, content_roles=["1107", "1109"], timeline=[
+    _trial(4, "Kaelen", "kaelen", "#0891b2", 12, fame_profile="pve", content_roles=["1107", "1109"], timeline=[
         _sys(_t(13, "16:20"), "Joined the server"),
         _sys(_t(12, "18:45"), "Trial role given by Sylas"),
         _sys(_t(10, "20:30"), "Content role ZvZ added"),
         _sys(_t(7, "13:15"), "Content role Roads added"),
         _obs(_t(5, "22:00"), "Sylas", "Attendance", "positive", "Very active in roads groups."),
     ]),
-    _trial(5, "Tharion", "tharion", "#5865f2", 4, content_roles=["1108"], timeline=[
+    _trial(5, "Tharion", "tharion", "#5865f2", 4, fame_profile="gather", content_roles=["1108"], timeline=[
         _sys(_t(5, "11:00"), "Joined the server"),
         _sys(_t(4, "12:10"), "Trial role given by Sylas"),
         _sys(_t(4, "12:40"), "Content role Gathering added"),
     ]),
-    _trial(6, "Nymeria", "nymeria", "#be123c", 6, content_roles=["1108"], timeline=[
+    _trial(6, "Nymeria", "nymeria", "#be123c", 6, fame_profile="low", content_roles=["1108"], timeline=[
         _sys(_t(7, "09:30"), "Joined the server"),
         _sys(_t(6, "10:05"), "Trial role given by Mantux"),
         _sys(_t(6, "10:50"), "Content role Gathering added"),
         _obs(_t(2, "18:30"), "Mantux", "Attendance", "negative", "Missed both gathering sessions she signed up for."),
     ]),
-    _trial(7, "Brammm", "brammm", "#15803d", 2, timeline=[
+    _trial(7, "Brammm | NL", "brammm", "#15803d", 2, albion_name=None, timeline=[
         _sys(_t(3, "20:00"), "Joined the server"),
         _sys(_t(2, "21:15"), "Trial role given by Sylas"),
     ]),
-    _trial(8, "ZilverStorm", "zilverstorm", "#64748b", 10, ping_sent_at=_t(3, "10:00"), lost_content_role=True, timeline=[
+    _trial(8, "ZilverStorm", "zilverstorm", "#64748b", 10, in_guild=False, last_in_guild=_d(2), ping_sent_at=_t(3, "10:00"), lost_content_role=True, timeline=[
         _sys(_t(11, "14:00"), "Joined the server"),
         _sys(_t(10, "15:20"), "Trial role given by Sylas"),
         _sys(_t(3, "10:00"), "Day-7 reminder sent in #trial-info"),
         _sys(_t(2, "18:00"), "Content role Roads added"),
+        _sys(_t(1, "02:10"), "No longer in Dutch Chaos in-game"),
         _sys(_t(0, "08:12"), "Content role Roads removed"),
     ]),
-    _trial(9, "Luna", "lunaquiet", "#db2777", 16, content_roles=["1108"], verdict_by="Sylas",
+    _trial(9, "Luna", "lunaquiet", "#db2777", 16, fame_profile="gather", albion_name="LunaQuiet", albion_link="manual", content_roles=["1108"], verdict_by="Sylas",
            action_error="Missing permission: Ironkeep could not remove the Trial role.", timeline=[
         _sys(_t(17, "12:00"), "Joined the server"),
         _sys(_t(16, "13:00"), "Trial role given by Sylas"),
@@ -160,14 +207,14 @@ DUTCH_CHAOS_TRIALS = [
         _sys(_t(0, "09:14"), "Accepted by Sylas"),
         _sys(_t(0, "09:14"), "Role change failed: Missing permission to remove Trial", "error"),
     ]),
-    _trial(10, "Ravenhold", "ravenhold", "#0f766e", 30, content_roles=["1107"], verdict="accepted",
+    _trial(10, "Ravenhold", "ravenhold", "#0f766e", 30, fame_profile="zvz", content_roles=["1107"], verdict="accepted",
            verdict_at=_t(14, "20:00"), verdict_by="Mantux", timeline=[
         _sys(_t(31, "10:00"), "Joined the server"),
         _sys(_t(30, "11:00"), "Trial role given by Mantux"),
         _sys(_t(14, "20:00"), "Accepted by Mantux"),
         _sys(_t(14, "20:00"), "Roles changed: + Member, − Trial"),
     ]),
-    _trial(11, "Mordred", "mordrednl", "#991b1b", 25, verdict="rejected",
+    _trial(11, "Mordred", "mordrednl", "#991b1b", 25, fame_profile="low", verdict="rejected",
            verdict_at=_t(9, "21:00"), verdict_by="Sylas", timeline=[
         _sys(_t(26, "10:00"), "Joined the server"),
         _sys(_t(25, "11:00"), "Trial role given by Sylas"),
@@ -208,6 +255,7 @@ GUILDS = [
             "messages": DEFAULT_MESSAGES,
             "accept": {"add": ["1105"], "remove": ["1106"]},
             "reject": {"remove": ["1106"]},
+            "albion": {"region": "europe", "guild_name": "Dutch Chaos", "guild_members": 79, "name_source": "nickname", "guild_check": "dashboard", "track_fame": True},
         },
         "trials": DUTCH_CHAOS_TRIALS,
     },
@@ -236,10 +284,11 @@ GUILDS = [
             "messages": DEFAULT_MESSAGES,
             "accept": {"add": ["1105"], "remove": ["1106"]},
             "reject": {"remove": ["1106"]},
+            "albion": {"region": "europe", "guild_name": "Iron Legion", "guild_members": 112, "name_source": "nickname", "guild_check": "dashboard", "track_fame": True},
         },
         "trials": [
             _trial(101, "Garrow", "garrow", "#475569", 9, content_roles=["1107"]),
-            _trial(102, "Isolde", "isolde", "#9333ea", 3),
+            _trial(102, "Isolde", "isolde", "#9333ea", 3, in_guild=False),
             _trial(103, "Brenn", "brenn", "#0369a1", 12, ping_sent_at=_t(5, "10:00")),
         ],
     },
@@ -268,6 +317,7 @@ GUILDS = [
             "messages": DEFAULT_MESSAGES,
             "accept": {"add": [], "remove": []},
             "reject": {"remove": []},
+            "albion": {"region": "europe", "guild_name": "", "guild_members": 0, "name_source": "nickname", "guild_check": "dashboard", "track_fame": True},
         },
         "trials": [],
     },
@@ -299,6 +349,7 @@ GUILDS = [
             "messages": DEFAULT_MESSAGES,
             "accept": {"add": ["1105"], "remove": ["1106"]},
             "reject": {"remove": ["1106"]},
+            "albion": {"region": "europe", "guild_name": "Northwind", "guild_members": 54, "name_source": "nickname", "guild_check": "dashboard", "track_fame": True},
         },
         "trials": [
             _trial(201, "Sigrun", "sigrun", "#0e7490", 5, content_roles=["1108"]),
@@ -357,12 +408,22 @@ def trial_status(trial, settings):
     return "active"
 
 
+def albion_flagged(trial, settings):
+    """Mirrors albionFlags() in trials.js: no linked name, or not in the guild in-game after a day's grace."""
+    albion, conf = trial["albion"], settings["albion"]
+    if not albion["name"]:
+        return True
+    if conf["guild_check"] == "off" or not conf["guild_name"] or albion["in_guild"] is not False:
+        return False
+    return not trial["start"] or (TODAY - date.fromisoformat(trial["start"])).days >= 1
+
+
 def guild_summary(guild):
     counts = {"open": 0, "attention": 0}
     for t in guild["trials"]:
         group = STATUS_META[trial_status(t, guild["settings"])][2]
         if group != "closed":
             counts["open"] += 1
-        if group in ("attention", "verdict", "ending"):
+        if group in ("attention", "verdict", "ending") or (group != "closed" and albion_flagged(t, guild["settings"])):
             counts["attention"] += 1
     return counts

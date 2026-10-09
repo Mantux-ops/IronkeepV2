@@ -33,6 +33,7 @@
   {% if not setup_mode %}
   <nav class="settings-nav" id="settings-nav">
     <a href="#basics" data-section-link="basics">{{ icon("settings", 16) }} Basics<span class="settings-nav__status" data-status="basics"></span></a>
+    <a href="#albion" data-section-link="albion">{{ icon("shield", 16) }} Albion<span class="settings-nav__status" data-status="albion"></span></a>
     <a href="#roles" data-section-link="roles">{{ icon("users", 16) }} Roles<span class="settings-nav__status" data-status="roles"></span></a>
     <a href="#messages" data-section-link="messages">{{ icon("message", 16) }} Messages<span class="settings-nav__status" data-status="messages"></span></a>
     <a href="#verdict" data-section-link="verdict">{{ icon("gavel", 16) }} Verdict<span class="settings-nav__status" data-status="verdict"></span></a>
@@ -72,6 +73,48 @@
       {% call setting("Content role reminder", "If a trial member still has no content role on this day, Ironkeep pings them once.") %}
       <span class="number-input">on day <input class="input" type="number" name="reminder_day" min="1" max="120" value="{{ guild.settings.reminder_day }}"></span>
       <span class="setting__warning" data-reminder-warning hidden>{{ icon("alert", 14) }} The reminder day is after the end of the trial, so it will never be sent.</span>
+      {% endcall %}
+    </section>
+
+    {% set albion = guild.settings.albion %}
+    <section class="card" id="albion" data-step-panel="0">
+      <div class="card__head">
+        <div>
+          <h2 class="card__title">Albion Online</h2>
+          <p class="card__desc">Ironkeep reads public player data from Albion Online once a day: which guild someone is in, and how much fame they gained.</p>
+        </div>
+      </div>
+
+      {% call setting("Server", "The Albion server your guild plays on.") %}
+      <select class="input select" name="albion.region">
+        {% for value, label in [("europe", "Europe"), ("americas", "Americas"), ("asia", "Asia")] %}
+        <option value="{{ value }}" {% if value == albion.region %}selected{% endif %}>{{ label }}</option>
+        {% endfor %}
+      </select>
+      {% endcall %}
+
+      {% call setting("Guild in Albion", "The in-game guild that trial members should join. Used for the guild check.") %}
+      <input class="input" type="text" name="albion.guild_name" value="{{ albion.guild_name }}" placeholder="e.g. Dutch Chaos" spellcheck="false">
+      <span class="field__hint" data-albion-guild-hint></span>
+      {% endcall %}
+
+      {% call setting("Albion name", "How Ironkeep knows which character belongs to which Discord member.") %}
+      <label class="radio"><input type="radio" name="albion.name_source" value="nickname" {% if albion.name_source == "nickname" %}checked{% endif %}>
+        <span><strong>Discord nickname</strong><span class="muted small">Works when nicknames match in-game names. If no player matches, recruiters link the name by hand.</span></span></label>
+      <label class="radio"><input type="radio" name="albion.name_source" value="manual" {% if albion.name_source == "manual" %}checked{% endif %}>
+        <span><strong>Recruiters fill it in</strong><span class="muted small">Every trial starts without a name until a recruiter links one.</span></span></label>
+      {% endcall %}
+
+      {% call setting("Guild check", "What happens when someone has the trial role but isn't in the guild in-game. Ironkeep waits one day after the trial starts, because Albion updates guild lists about once a day. It never removes roles by itself.") %}
+      <select class="input select" name="albion.guild_check">
+        <option value="dashboard" {% if albion.guild_check == "dashboard" %}selected{% endif %}>Label on the dashboard</option>
+        <option value="dashboard_and_channel" {% if albion.guild_check == "dashboard_and_channel" %}selected{% endif %}>Label on the dashboard and a note in the recruiter channel</option>
+        <option value="off" {% if albion.guild_check == "off" %}selected{% endif %}>Off</option>
+      </select>
+      {% endcall %}
+
+      {% call setting("Track fame", "Shows how much PvE, PvP, gathering and crafting fame someone gained during their trial.") %}
+      <label class="toggle"><input type="checkbox" name="albion.track_fame" {% if albion.track_fame %}checked{% endif %}><span class="toggle__track"></span></label>
       {% endcall %}
     </section>
 

@@ -26,13 +26,24 @@
     rejected: { label: "Rejected", tone: "grey", group: "closed", rank: 9 },
   };
 
+  const groupOf = (t) => STATUS[statusOf(t)].group;
+  const needsAttention = (t) => groupOf(t) === "attention" || albionFlags(t).length > 0;
+
   const FILTERS = [
-    { key: "open", label: "All open", match: (s) => STATUS[s].group !== "closed" },
-    { key: "attention", label: "Needs attention", match: (s) => STATUS[s].group === "attention" },
-    { key: "ending", label: "Ending soon", match: (s) => STATUS[s].group === "ending" },
-    { key: "verdict", label: "Verdict due", match: (s) => STATUS[s].group === "verdict" },
-    { key: "closed", label: "Closed", match: (s) => STATUS[s].group === "closed" },
+    { key: "open", label: "All open", match: (t) => groupOf(t) !== "closed" },
+    { key: "attention", label: "Needs attention", match: needsAttention },
+    { key: "ending", label: "Ending soon", match: (t) => groupOf(t) === "ending" },
+    { key: "verdict", label: "Verdict due", match: (t) => groupOf(t) === "verdict" },
+    { key: "closed", label: "Closed", match: (t) => groupOf(t) === "closed" },
   ];
+
+  const FAME_KINDS = [
+    { key: "pve", label: "PvE", color: "var(--accent)" },
+    { key: "pvp", label: "PvP (kill fame)", color: "var(--red)" },
+    { key: "gathering", label: "Gathering", color: "var(--green)" },
+    { key: "crafting", label: "Crafting", color: "var(--orange)" },
+  ];
+  const albionGuild = settings.albion.guild_name || "the guild";
 
   const state = { filter: "open", search: "", sort: { key: "status", dir: 1 }, selected: null, editing: null, tab: "notes", formOpen: false };
 
@@ -83,6 +94,34 @@
     }
   }
 
+  function albionFlags(t) {
+    if (groupOf(t) === "closed") return [];
+    const a = t.albion;
+    if (!a.name) return [{ key: "unlinked", label: "No Albion name", tone: "orange" }];
+    const graceOver = !t.start || dayOf(t) >= 2;
+    if (settings.albion.guild_check !== "off" && settings.albion.guild_name && a.in_guild === false && graceOver) {
+      return [{ key: "not_in_guild", label: "Not in guild in-game", tone: "red" }];
+    }
+    return [];
+  }
+
+  function flagTags(t, size = "xs") {
+    return albionFlags(t).map((f) => `<span class="tag tag--${size} tag--${f.tone}">${esc(f.label)}</span>`).join("");
+  }
+
+  const fameTotals = (t) => {
+    const totals = { pve: 0, pvp: 0, gathering: 0, crafting: 0 };
+    t.albion.fame.forEach((d) => FAME_KINDS.forEach((k) => (totals[k.key] += d[k.key])));
+    return totals;
+  };
+  const fameSum = (totals) => FAME_KINDS.reduce((sum, k) => sum + totals[k.key], 0);
+
+  function formatFame(n) {
+    if (n >= 1e6) return `${(n / 1e6).toFixed(1)}M`;
+    if (n >= 1e3) return `${Math.round(n / 1e3)}K`;
+    return String(n);
+  }
+
   function log(t, text, type = "system") {
     t.timeline.push({ type, at: Ik.nowIso(today), text });
   }
@@ -106,12 +145,142 @@
     return t.content_roles.map((id) => Ik.roleChip(roleById(id), roles)).join("");
   }
 
+  function fameCell(t) {
+    if (!t.albion.name) return '<span class="muted">—</span>';
+    const totals = fameTotals(t);
+    const top = FAME_KINDS.slice().sort((a, b) => totals[b.key] - totals[a.key])[0];
+    const sum = fameSum(totals);
+    return `<span class="fame-cell"><strong>${formatFame(sum)}</strong>${sum ? `<span class="muted small">mostly ${top.label.split(" ")[0]}</span>` : ""}</span>`;
+  }
+
+  function fameSummaryLine(t) {
+    if (!settings.albion.track_fame) return "";
+    if (!t.albion.name) return `<p class="muted small fame-line">No Albion name linked, so no fame numbers.</p>`;
+    const totals = fameTotals(t);
+    const parts = FAME_KINDS.filter((k) => totals[k.key]).map((k) => `${k.label.split(" ")[0]} ${formatFame(totals[k.key])}`);
+    return `<p class="small fame-line"><strong>${formatFame(fameSum(totals))} fame</strong> during the trial${parts.length ? ` <span class="muted">· ${parts.join(" · ")}</span>` : ""}</p>`;
+  }
+
+  function renderAlbionTab(t) {
+    const a = t.albion;
+    const closed = groupOf(t) === "closed";
+    if (!a.name) {
+      return `<section class="panel__section">
+        <div class="albion-empty">
+          <p><strong>No Albion name linked.</strong></p>
+          <p class="muted small">Ironkeep couldn't find a player called "${esc(t.name)}" on the ${esc(regionLabel())} server. Link the right name to start tracking fame${settings.albion.guild_check !== "off" ? ` and check if they're in ${esc(albionGuild)}` : ""}.</p>
+          ${closed ? "" : `<button class="button button--accent button--sm" type="button" data-action="link-albion" data-id="${t.id}">${Ik.icon("user-plus", 14)} Link Albion name</button>`}
+        </div>
+      </section>`;
+    }
+
+    const linkText = a.link === "manual" ? "Set by a recruiter" : "From Discord nickname";
+    let guildRow = "";
+    if (settings.albion.guild_check !== "off" && settings.albion.guild_name) {
+      if (a.in_guild) {
+        guildRow = `<div class="albion-row"><span class="muted">In-game guild</span><span class="tag tag--xs tag--green">${Ik.icon("check", 12)} In ${esc(albionGuild)}</span></div>`;
+      } else {
+        const seen = a.last_in_guild ? `Was in ${esc(albionGuild)} until ${Ik.formatDate(a.last_in_guild)}.` : `Hasn't been seen in ${esc(albionGuild)} since the trial started.`;
+        guildRow = `<div class="callout callout--red albion-callout">${Ik.icon("alert")}<div><strong>Not in ${esc(albionGuild)} in-game</strong>
+          <p>${seen} They may have left, never joined, or the linked name is wrong.</p></div></div>`;
+      }
+    }
+
+    let fame = "";
+    if (settings.albion.track_fame) {
+      const totals = fameTotals(t);
+      const sum = fameSum(totals);
+      const max = Math.max(1, ...FAME_KINDS.map((k) => totals[k.key]));
+      const dayMax = Math.max(1, ...a.fame.map((d) => fameSum(d)));
+      const sinceNote = t.start ? "" : ` Ironkeep started tracking on ${Ik.formatDate(a.fame_since)}; fame from before that isn't known.`;
+      fame = `<section class="panel__section">
+        <h3 class="panel__heading">Fame during trial</h3>
+        <div class="fame-total"><strong>${formatFame(sum)}</strong><span class="muted small">since ${Ik.formatDate(a.fame_since)}</span></div>
+        <div class="fame-kinds">${FAME_KINDS.map((k) => `<div class="fame-kind">
+            <span class="fame-kind__label">${k.label}</span>
+            <span class="fame-kind__bar"><span style="width:${Math.round((totals[k.key] / max) * 100)}%;background:${k.color}"></span></span>
+            <span class="fame-kind__value">${formatFame(totals[k.key])}</span>
+          </div>`).join("")}</div>
+        ${a.fame.length ? `<div class="fame-chart" role="img" aria-label="Fame per day">${a.fame.map((d) => {
+            const total = fameSum(d);
+            return `<span class="fame-chart__day" title="${Ik.formatDate(d.date)}: ${formatFame(total)}"><span style="height:${total ? Math.max(4, Math.round((total / dayMax) * 100)) : 0}%"></span></span>`;
+          }).join("")}</div>
+          <div class="fame-chart__axis muted small"><span>${Ik.formatDate(a.fame[0].date)}</span><span>${Ik.formatDate(a.fame[a.fame.length - 1].date)}</span></div>`
+          : `<p class="muted small">No daily numbers yet. The first update comes tomorrow.</p>`}
+        <p class="muted small fame-note">Albion updates these numbers about once a day. Last update: ${Ik.formatDateTime(data.albionUpdatedAt)}.${sinceNote}</p>
+      </section>`;
+    }
+
+    return `<section class="panel__section">
+        <div class="albion-head">
+          <div>
+            ${settings.albion.region === "europe"
+              ? `<a class="albion-name" href="https://europe.albiondb.net/player/${encodeURIComponent(a.name)}" target="_blank" rel="noopener">${esc(a.name)}</a>`
+              : `<span class="albion-name">${esc(a.name)}</span>`}
+            <span class="muted small">${linkText} · ${esc(regionLabel())}</span>
+          </div>
+          ${closed ? "" : `<button class="button button--ghost button--sm" type="button" data-action="link-albion" data-id="${t.id}">${Ik.icon("pencil", 13)} Change</button>`}
+        </div>
+        ${guildRow}
+      </section>
+      ${fame}`;
+  }
+
+  function regionLabel() {
+    return { europe: "Europe", americas: "Americas", asia: "Asia" }[settings.albion.region] || settings.albion.region;
+  }
+
+  function openLinkModal(t) {
+    Ik.openModal(
+      `<header class="modal__header"><h2>${t.albion.name ? "Change" : "Link"} Albion name for ${esc(t.name)}</h2></header>
+       <div class="modal__body">
+         <p class="muted">Use the character name exactly as it is in the game, on the ${esc(regionLabel())} server. Ironkeep uses it to check guild membership and to track fame from today on.</p>
+         <label class="field"><span class="field__label">Character name</span>
+           <input class="input" type="text" name="albion" value="${esc(t.albion.name || "")}" spellcheck="false" autofocus></label>
+         <span class="field__hint" data-lookup></span>
+       </div>
+       <footer class="modal__footer">
+         <button class="button button--ghost" type="button" data-modal-close>Cancel</button>
+         <button class="button button--accent" type="button" data-save>Save</button>
+       </footer>`,
+      {
+        onMount(modal) {
+          const input = modal.querySelector("[name=albion]");
+          const hint = modal.querySelector("[data-lookup]");
+          const update = () => {
+            const value = input.value.trim();
+            hint.innerHTML = value.length >= 3
+              ? `${Ik.icon("check", 13)} Found <strong>${esc(value)}</strong> · ${esc(albionGuild)} <span class="muted">(prototype: every name is found)</span>`
+              : "At least 3 characters.";
+          };
+          input.addEventListener("input", update);
+          update();
+          modal.querySelector("[data-save]").addEventListener("click", () => {
+            const value = input.value.trim();
+            if (value.length < 3) return input.focus();
+            const previous = t.albion.name;
+            if (value !== previous) {
+              t.albion = { name: value, link: "manual", in_guild: true, last_in_guild: null, fame_since: today, fame: [] };
+              log(t, previous ? `Albion name changed from ${previous} to ${value} by ${viewer}` : `Albion name ${value} linked by ${viewer}`);
+            }
+            Ik.closeModal();
+            Ik.toast(`Albion name saved for ${t.name}`);
+            state.tab = "albion";
+            state.selected = t.id;
+            renderAll();
+          });
+        },
+      }
+    );
+  }
+
   function renderStats() {
     const counts = { attention: 0, ending: 0, verdict: 0, open: 0 };
     trials.forEach((t) => {
-      const group = STATUS[statusOf(t)].group;
+      const group = groupOf(t);
       if (group !== "closed") counts.open += 1;
-      if (group in counts) counts[group] += 1;
+      if (group === "ending" || group === "verdict") counts[group] += 1;
+      if (needsAttention(t)) counts.attention += 1;
     });
     const cards = [
       { key: "attention", label: "Needs attention", icon: "alert", tone: "red" },
@@ -136,14 +305,19 @@
       verdict_due: ["open", "Give verdict"],
       action_failed: ["retry", "Retry"],
     };
-    const [action, label] = map[s] || ["open", "View"];
+    const flags = albionFlags(t).map((f) => f.key);
+    let [action, label] = map[s] || ["open", "View"];
+    if (!map[s] && flags.includes("unlinked")) [action, label] = ["link-albion", "Link Albion name"];
+    else if (!map[s] && flags.includes("not_in_guild")) [action, label] = ["open-albion", "Check"];
     return `<button class="button button--outline button--sm" type="button" data-action="${action}" data-id="${t.id}">${label} ${Ik.icon("arrow-right", 14)}</button>`;
   }
 
+  const actionRank = (t) => (groupOf(t) === "active" ? 3.5 : STATUS[statusOf(t)].rank);
+
   function renderActionList() {
     const items = trials
-      .filter((t) => ["attention", "verdict", "ending"].includes(STATUS[statusOf(t)].group))
-      .sort((a, b) => STATUS[statusOf(a)].rank - STATUS[statusOf(b)].rank);
+      .filter((t) => ["attention", "verdict", "ending"].includes(groupOf(t)) || needsAttention(t))
+      .sort((a, b) => actionRank(a) - actionRank(b));
     const root = document.getElementById("action-list");
     if (!items.length) {
       root.innerHTML = `<div class="action-list__empty">${Ik.icon("check")} Nothing needs action right now.</div>`;
@@ -155,7 +329,8 @@
         return `<div class="action-row" data-open="${t.id}">
           ${Ik.avatar(t.name, t.color)}
           <span class="action-row__name">${esc(t.name)}</span>
-          <span class="tag tag--${STATUS[s].tone}">${esc(reasonOf(t))}</span>
+          ${groupOf(t) === "active" ? "" : `<span class="tag tag--${STATUS[s].tone}">${esc(reasonOf(t))}</span>`}
+          ${flagTags(t, "sm")}
           <span class="action-row__spacer"></span>
           ${actionButton(t)}
         </div>`;
@@ -165,7 +340,7 @@
 
   function renderFilters() {
     document.getElementById("filters").innerHTML = FILTERS.map((f) => {
-      const count = trials.filter((t) => f.match(statusOf(t))).length;
+      const count = trials.filter(f.match).length;
       return `<button class="chip ${state.filter === f.key ? "is-active" : ""}" type="button" role="tab" data-filter="${f.key}">${f.label}<span class="chip__count">${count}</span></button>`;
     }).join("");
   }
@@ -180,6 +355,8 @@
         return endDate(t) || "0000";
       case "progress":
         return t.start ? dayOf(t) / length(t) : -1;
+      case "fame":
+        return t.albion.name ? fameSum(fameTotals(t)) : -1;
       default:
         return STATUS[statusOf(t)].rank;
     }
@@ -189,8 +366,8 @@
     const filter = FILTERS.find((f) => f.key === state.filter);
     const query = state.search.trim().toLowerCase();
     const rows = trials
-      .filter((t) => filter.match(statusOf(t)))
-      .filter((t) => !query || t.name.toLowerCase().includes(query) || t.username.toLowerCase().includes(query))
+      .filter(filter.match)
+      .filter((t) => !query || [t.name, t.username, t.albion.name || ""].some((v) => v.toLowerCase().includes(query)))
       .sort((a, b) => {
         const va = sortValue(a, state.sort.key);
         const vb = sortValue(b, state.sort.key);
@@ -207,7 +384,8 @@
           <td data-label="Ends">${Ik.formatDate(endDate(t))} ${extended}</td>
           <td data-label="Progress">${progressBar(t)}</td>
           <td data-label="Content role"><span class="chips">${contentChips(t)}</span></td>
-          <td data-label="Status">${Ik.pill(STATUS[s].label, STATUS[s].tone)}</td>
+          ${settings.albion.track_fame ? `<td data-label="Trial fame">${fameCell(t)}</td>` : ""}
+          <td data-label="Status"><span class="status-cell">${Ik.pill(STATUS[s].label, STATUS[s].tone)}${flagTags(t)}</span></td>
         </tr>`;
       })
       .join("");
@@ -356,7 +534,7 @@
         ${Ik.avatar(t.name, t.color, "lg")}
         <div class="panel__title">
           <h2>${esc(t.name)}</h2>
-          <div class="panel__subline">${Ik.pill(STATUS[s].label, STATUS[s].tone)}<span class="muted small">@${esc(t.username)}</span></div>
+          <div class="panel__subline">${Ik.pill(STATUS[s].label, STATUS[s].tone)}${flagTags(t)}<span class="muted small">@${esc(t.username)}</span></div>
         </div>
         <button class="icon-button" type="button" data-action="close" title="Close">${Ik.icon("x", 18)}</button>
       </header>
@@ -385,6 +563,7 @@
 
         <div class="tabs" role="tablist">
           <button class="tabs__tab ${tab === "notes" ? "is-active" : ""}" type="button" role="tab" data-tab="notes">Observations <span class="tabs__count">${observations.length}</span></button>
+          <button class="tabs__tab ${tab === "albion" ? "is-active" : ""}" type="button" role="tab" data-tab="albion">Albion${albionFlags(t).length ? '<span class="tabs__dot"></span>' : ""}</button>
           <button class="tabs__tab ${tab === "history" ? "is-active" : ""}" type="button" role="tab" data-tab="history">History <span class="tabs__count">${history.length}</span></button>
         </div>
 
@@ -411,7 +590,9 @@
                 : `<button class="button button--outline button--sm obs-add" type="button" data-action="open-form">${Ik.icon("plus", 14)} Add observation</button>`}
               ${observations.length ? renderTimeline(t, isObs) : `<p class="muted small panel__empty">No observations yet.</p>`}
             </section>`
-          : `<section class="panel__section">${renderTimeline(t, (e) => !isObs(e))}</section>`}
+          : tab === "albion"
+            ? renderAlbionTab(t)
+            : `<section class="panel__section">${renderTimeline(t, (e) => !isObs(e))}</section>`}
       </div>`;
 
     const textarea = panel.querySelector("[data-obs-form] textarea");
@@ -535,6 +716,8 @@
            <section>
              <h3 class="panel__heading">Assessment</h3>
              ${observationSummary(t)}
+             ${fameSummaryLine(t)}
+             ${albionFlags(t).some((f) => f.key === "not_in_guild") ? `<p class="small fame-line" style="color:var(--red)">${Ik.icon("alert", 13)} Not in ${esc(albionGuild)} in-game</p>` : ""}
              ${observations.length ? `<ul class="obs-mini">${observations.map((o) => `<li><span class="tag tag--xs tag--${RATINGS[o.rating].tone}">${esc(o.category)}</span> ${esc(o.text)} <span class="muted small">— ${esc(o.author)}</span></li>`).join("")}</ul>` : ""}
            </section>
            <section>
@@ -642,6 +825,12 @@
       else if (action === "accept") openVerdictModal(t, "accepted");
       else if (action === "reject") openVerdictModal(t, "rejected");
       else if (action === "retry") retry(t);
+      else if (action === "link-albion") openLinkModal(t);
+      else if (action === "open-albion") {
+        openTrial(t.id);
+        state.tab = "albion";
+        renderPanel();
+      }
       else if (action === "open-form" || action === "close-form") {
         state.formOpen = action === "open-form";
         renderPanel();

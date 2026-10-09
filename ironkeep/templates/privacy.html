@@ -24,6 +24,7 @@
         <tr><td>Members of a server that uses Ironkeep</td><td>Discord user ID, username, display name, avatar, the date you joined, and which of the guild's chosen roles you have</td><td>Discord, through the bot</td></tr>
         <tr><td>People on a trial</td><td>Trial start and end date, whether a reminder was sent, the verdict, and a timeline of what happened during the trial</td><td>The bot, and recruiters of that guild</td></tr>
         <tr><td>People on a trial</td><td>Observations written by the guild's recruiters, for example about attendance or how you fit in the group</td><td>Recruiters of that guild</td></tr>
+        <tr><td>People on a trial</td><td>Albion Online character name, whether you're in the guild's in-game guild, and how much fame you gained per day during the trial (PvE, PvP, gathering, crafting)</td><td>Albion Online's public game data, matched by your Discord nickname or entered by a recruiter</td></tr>
         <tr><td>Recruiters and server admins who log in</td><td>Discord user ID, username, avatar, and which servers you're in</td><td>Discord login</td></tr>
       </tbody>
     </table>
@@ -35,7 +36,7 @@
 
   <h2>How long we keep it</h2>
   <ul>
-    <li>Closed trials, including observations and the timeline, are deleted <strong>12 months</strong> after the verdict.</li>
+    <li>Closed trials, including observations, the timeline and fame numbers, are deleted <strong>12 months</strong> after the verdict.</li>
     <li>If a guild removes the bot, or its request is rejected, all data for that guild is deleted after <strong>30 days</strong>.</li>
     <li>Error logs are kept for <strong>90 days</strong>.</li>
     <li>Login sessions end after 30 days, or when you log out.</li>
@@ -44,6 +45,7 @@
   <h2>Who processes it for us</h2>
   <ul>
     <li><strong>Hetzner Online GmbH</strong> (Germany) hosts the website, the bot and the database. Data stays in the EU.</li>
+    <li><strong>Albion Online</strong> (Sandbox Interactive) publishes the player and guild data Ironkeep reads. Ironkeep only looks up character names; it sends nothing else about you.</li>
     <li><strong>Discord</strong> provides login and the data the bot receives. Discord's own <a href="https://discord.com/privacy" rel="noopener">privacy policy</a> applies to your Discord account.</li>
   </ul>
   <p>We don't sell data and don't share it with anyone else.</p>

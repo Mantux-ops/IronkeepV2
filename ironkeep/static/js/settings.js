@@ -250,6 +250,9 @@
     channelWarnings("channels.recruiter_overview").forEach((w) => add("messages", w.level, `Recruiter overview: ${w.text}`));
     if (!checks.some((c) => c.section === "messages" && c.level !== "ok")) add("messages", "ok", "Ironkeep can post all enabled messages");
 
+    if (!state.albion.guild_name && state.albion.guild_check !== "off") add("albion", "warn", "No Albion guild set", "The guild check can't run until you enter the in-game guild name.");
+    else if (state.albion.guild_name) add("albion", "ok", "Albion guild set", `${state.albion.guild_name} on the ${state.albion.region} server`);
+
     ["accept.add", "accept.remove", "reject.remove"].forEach((path) => roleWarnings(path).forEach((w) => add("verdict", w.level, w.text)));
     if (!state.accept.add.length && !state.accept.remove.length) add("verdict", "warn", "Accepting changes no roles", "Recruiters will have to change roles by hand.");
     if (!state.reject.remove.length) add("verdict", "warn", "Rejecting removes no roles");
@@ -294,6 +297,13 @@
         .map((w) => `<span class="setting__warning" style="color:var(--red)">${Ik.icon("alert", 14)} ${esc(w.text)}</span>`)
         .join("");
     });
+
+    const guildHint = document.querySelector("[data-albion-guild-hint]");
+    const original = data.settings.albion;
+    if (!state.albion.guild_name) guildHint.textContent = "Leave empty to skip the guild check.";
+    else if (state.albion.guild_name.toLowerCase() === original.guild_name.toLowerCase() && state.albion.region === original.region) {
+      guildHint.innerHTML = `<span style="color:var(--green)">Found: ${esc(original.guild_name)} · ${original.guild_members} members</span>`;
+    } else guildHint.textContent = "Ironkeep looks this guild up when you save.";
 
     const hint = document.querySelector("[data-slug-hint]");
     const err = slugError();
@@ -400,6 +410,9 @@
       state[target.name] = Number(target.value);
     } else if (target.name === "timezone") {
       state.timezone = target.value;
+    } else if (target.name?.startsWith("albion.")) {
+      const key = target.name.slice(7);
+      state.albion[key] = target.type === "checkbox" ? target.checked : key === "guild_name" ? target.value.trim() : target.value;
     }
     refresh();
   });
