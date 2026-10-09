@@ -469,6 +469,8 @@ async def save_settings(slug: str, request: Request):
         new_slug = None
     saved = dict(body)
     saved.pop("slug", None)
+    saved["trial_roles"] = db.trial_role_ids(saved)
+    saved.pop("trial_role", None)
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
