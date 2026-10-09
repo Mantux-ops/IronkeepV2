@@ -111,14 +111,34 @@ def active_trial_role_ids(settings):
     return pure or trial_ids
 
 
+def _message_channel_ok(settings, key):
+    """An enabled channel message is configured once it has a channel. A DM reminder does not need one."""
+    message = ((settings or {}).get("messages") or {}).get(key) or {}
+    if not message.get("enabled"):
+        return True
+    if key == "reminder" and message.get("delivery") == "dm":
+        return True
+    return bool(message.get("channel"))
+
+
 def setup_complete(settings):
+    """Roles and channels the dashboard actually asks for are filled in.
+
+    Welcome and trial messages used to store their channel under settings.channels.
+    Settings now stores those on the message itself, so either place counts.
+    """
+    settings = settings or {}
     channels = settings.get("channels") or {}
+    welcome_ok = bool(channels.get("perms")) or _message_channel_ok(settings, "welcome")
+    trial_ok = bool(channels.get("trial_info")) or _message_channel_ok(settings, "trial_started")
+    overview_ok = not settings.get("overview_enabled", True) or bool(channels.get("recruiter_overview"))
     return bool(
         trial_role_ids(settings)
         and settings.get("recruitment_roles")
-        and channels.get("perms")
-        and channels.get("trial_info")
-        and channels.get("recruiter_overview")
+        and welcome_ok
+        and trial_ok
+        and overview_ok
+        and all(_message_channel_ok(settings, key) for key in ("reminder", "accepted", "rejected"))
     )
 
 
