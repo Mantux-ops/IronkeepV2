@@ -9,6 +9,9 @@
     <h1 class="page-title">Trials</h1>
     <p class="page-subtitle">{{ guild.name }} · recruitment</p>
   </div>
+  {% if guild.approval != "pending" %}
+  <button class="button button--outline" type="button" id="sync-members">{{ icon("users", 16) }} Sync members</button>
+  {% endif %}
 </header>
 
 {% if guild.approval == "pending" %}

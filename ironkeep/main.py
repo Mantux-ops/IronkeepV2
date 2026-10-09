@@ -453,6 +453,19 @@ async def give_verdict(slug: str, trial_id: int, request: Request):
     return JSONResponse(updated, status_code=502 if action_error else 200)
 
 
+@app.post("/api/{slug}/sync")
+def request_member_sync(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error or not config.live():
+        return JSONResponse({"error": "forbidden"}, status_code=403)
+    if guild["approval"] != "approved":
+        return JSONResponse({"error": "This guild is not approved yet."}, status_code=400)
+    if not db.trial_role_ids(guild["settings"]):
+        return JSONResponse({"error": "Choose a trial role first."}, status_code=400)
+    db.request_scan(slug)
+    return {"ok": True}
+
+
 @app.post("/api/{slug}/settings")
 async def save_settings(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
