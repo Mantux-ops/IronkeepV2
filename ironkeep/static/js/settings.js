@@ -48,6 +48,7 @@
     const ids = multi ? value || [] : value ? [value] : [];
     const open = el.classList.contains("is-open");
     const query = el.querySelector(".picker__search")?.value || "";
+    const listScroll = el.querySelector(".picker__list")?.scrollTop || 0;
 
     const chips = ids
       .map((id) => {
@@ -73,8 +74,10 @@
 
     if (open) {
       const search = el.querySelector(".picker__search");
-      search.focus();
+      const list = el.querySelector(".picker__list");
+      search.focus({ preventScroll: true });
       search.setSelectionRange(search.value.length, search.value.length);
+      if (list) list.scrollTop = listScroll;
     }
   }
 
