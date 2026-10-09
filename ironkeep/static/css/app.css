@@ -1395,6 +1395,187 @@ button.dropdown__item {
   gap: 6px;
 }
 
+.status-cell {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.fame-cell {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.25;
+  font-variant-numeric: tabular-nums;
+}
+
+.fame-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.tabs__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--red);
+}
+
+.albion-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.albion-head > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.albion-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+a.albion-name:hover {
+  color: var(--accent);
+}
+
+.albion-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: 14px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--panel-2);
+  font-size: 13px;
+}
+
+.albion-callout {
+  margin-top: 14px;
+}
+
+.albion-empty {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  padding: 14px;
+  border-radius: var(--radius-sm);
+  border: 1px dashed var(--orange-border);
+}
+
+.fame-total {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.fame-total strong {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.fame-kinds {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.fame-kind {
+  display: grid;
+  grid-template-columns: 110px 1fr 52px;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+
+.fame-kind__label {
+  color: var(--text-2);
+}
+
+.fame-kind__bar {
+  height: 6px;
+  border-radius: 999px;
+  background: var(--panel-3);
+  overflow: hidden;
+}
+
+.fame-kind__bar > span {
+  display: block;
+  height: 100%;
+  border-radius: 999px;
+}
+
+.fame-kind__value {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.fame-chart {
+  display: flex;
+  align-items: flex-end;
+  gap: 3px;
+  height: 72px;
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  background: var(--panel-2);
+}
+
+.fame-chart__day {
+  flex: 1;
+  height: 100%;
+  display: flex;
+  align-items: flex-end;
+}
+
+.fame-chart__day > span {
+  display: block;
+  width: 100%;
+  border-radius: 2px 2px 0 0;
+  background: var(--accent);
+  opacity: 0.8;
+}
+
+.fame-chart__day:hover > span {
+  opacity: 1;
+}
+
+.fame-chart__axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 4px;
+}
+
+.fame-note {
+  margin-top: 12px;
+}
+
+.radio {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  cursor: pointer;
+}
+
+.radio input {
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.radio > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .obs-form {
   display: grid;
   gap: 10px;
