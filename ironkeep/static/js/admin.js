@@ -17,12 +17,20 @@
 
   function resolvePending(slug, approved) {
     document.querySelector(`[data-pending="${slug}"]`)?.remove();
-    const cell = document.querySelector(`[data-row="${slug}"] [data-approval-cell]`);
-    if (cell) {
-      const setupDone = cell.dataset.setupComplete === "true";
-      cell.innerHTML = !approved ? Ik.pill("Rejected", "grey") : setupDone ? Ik.pill("Active", "green") : Ik.pill("Setup not finished", "orange");
+    const row = document.querySelector(`[data-row="${slug}"]`);
+    if (!approved) {
+      row?.remove();
+    } else if (row) {
+      const cell = row.querySelector("[data-approval-cell]");
+      const setupDone = cell?.dataset.setupComplete === "true";
+      if (cell) cell.innerHTML = setupDone ? Ik.pill("Active", "green") : Ik.pill("Setup not finished", "orange");
     }
     if (!document.querySelector("[data-pending]")) document.getElementById("pending-empty").hidden = false;
+    const table = document.getElementById("guild-table");
+    if (table && !table.querySelector("tbody tr")) {
+      document.getElementById("environments-empty").hidden = false;
+      table.closest(".table-wrap").hidden = true;
+    }
   }
 
   document.addEventListener("click", (event) => {
@@ -62,7 +70,7 @@
       const { reject: slug, name } = reject.dataset;
       Ik.confirm({
         title: `Reject ${name}?`,
-        body: `<p>The bot leaves <strong>${esc(name)}</strong> and this environment is deleted after 30 days.</p>
+        body: `<p>The bot leaves <strong>${esc(name)}</strong> and this environment is removed from the list.</p>
                <label class="field"><span class="field__label">Message to the person who added the bot <span class="muted">(optional)</span></span>
                <textarea class="input textarea" rows="2" name="reason"></textarea></label>`,
         confirmLabel: "Reject and leave server",
