@@ -368,8 +368,33 @@ def trials(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    if config.live():
+        hidden = db.full_member_user_ids(guild["id"], guild["settings"])
+        guild["trials"] = [trial for trial in guild["trials"] if trial["user_id"] not in hidden]
     today = db.guild_today(guild["settings"]).isoformat() if config.live() else None
     return render(request, "trials.html", guild=guild, nav="trials", **({"today": today} if today else {}))
+
+
+@app.get("/{slug}/members", response_class=HTMLResponse)
+def members(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    people = db.list_members(guild["id"]) if config.live() else []
+    trial_ids = set(db.trial_role_ids(guild["settings"]))
+    member_ids = set(db.member_role_ids(guild["settings"]))
+    roles = {role["id"]: role for role in guild["roles"]}
+    for person in people:
+        held = set(person["role_ids"])
+        if held & member_ids:
+            person["status"], person["tone"] = "Member", "green"
+        elif held & trial_ids:
+            person["status"], person["tone"] = "Trial", "orange"
+        else:
+            person["status"], person["tone"] = "No trial role", "grey"
+        person["labels"] = [roles[role_id]["name"] for role_id in person["role_ids"] if role_id in trial_ids or role_id in member_ids]
+        person["color"] = db.PALETTE[int(person["user_id"]) % len(db.PALETTE)]
+    return render(request, "members.html", guild=guild, nav="members", people=people)
 
 
 @app.put("/api/{slug}/trials/{trial_id}")

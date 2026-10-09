@@ -21,20 +21,43 @@ def _content_ids(member, settings):
     return [role_id for role_id in wanted if role_id in {str(role.id) for role in member.roles}]
 
 
+def _member_record(member):
+    joined = member.joined_at.isoformat() if member.joined_at else None
+    return {
+        "user_id": str(member.id),
+        "name": member.display_name,
+        "username": member.name,
+        "nick": member.nick,
+        "role_ids": [str(role.id) for role in member.roles if not role.is_default()],
+        "joined_at": joined,
+    }
+
+
+def _observed(trial):
+    return any(item.get("type") == "observation" for item in trial.get("timeline") or [])
+
+
 def consider_member(guild_row, member, *, known_new, before_ids=None):
     if member.bot:
         return
     settings = guild_row["settings"]
-    trial_ids = db.trial_role_ids(settings)
+    trial_ids = set(db.trial_role_ids(settings))
+    full_ids = set(db.member_role_ids(settings))
     if not trial_ids:
         return
     member_ids = {str(role.id) for role in member.roles}
-    has_trial = any(role_id in member_ids for role_id in trial_ids)
+    is_full_member = bool(member_ids & full_ids)
+    has_trial = bool(member_ids & trial_ids) and not is_full_member
     before_ids = {str(role_id) for role_id in (before_ids or set())}
     just_added = known_new and has_trial and not any(role_id in before_ids for role_id in trial_ids)
     content = _content_ids(member, settings)
     existing = db.open_trial(guild_row["id"], member.id)
     nickname = member.nick if settings.get("albion", {}).get("name_source") != "manual" else None
+
+    if is_full_member:
+        if existing and not _observed(existing):
+            db.delete_trial(existing["id"])
+        return
 
     if has_trial and existing is None:
         start = db.guild_today(settings).isoformat() if just_added else None
@@ -204,8 +227,12 @@ async def _scan(guild):
     row = db.guild_by_id(guild.id)
     if row is None:
         return
+    people = []
     async for member in guild.fetch_members(limit=None):
+        if not member.bot:
+            people.append(_member_record(member))
         consider_member(row, member, known_new=False)
+    db.replace_members(guild.id, people)
     db.clear_scan(guild.id)
     log.info("Synced members in %s", guild.name)
 
@@ -247,6 +274,7 @@ def main():
         row = db.guild_by_id(member.guild.id)
         if row is None or row["approval"] != "approved" or not row["setup_complete"]:
             return
+        db.upsert_member(row["id"], _member_record(member))
         _send_template(row, "welcome", member)
 
     @client.event
@@ -254,6 +282,7 @@ def main():
         row = db.guild_by_id(member.guild.id)
         if row is None:
             return
+        db.remove_member(row["id"], member.id)
         db.mark_left(row["id"], member.id, row["settings"])
 
     @client.event
@@ -263,6 +292,8 @@ def main():
         row = db.guild_by_id(after.guild.id)
         if row is None or row["approval"] != "approved":
             return
+        if not after.bot:
+            db.upsert_member(row["id"], _member_record(after))
         consider_member(row, after, known_new=True, before_ids={str(role.id) for role in before.roles})
 
     async def _hourly():
