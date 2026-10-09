@@ -227,7 +227,8 @@
   "roles": guild.roles,
   "channels": guild.channels,
   "setupMode": setup_mode,
-  "taken": ["admin", "trial", "login", "privacy", "static", "prototype"] + (guilds | map(attribute="slug") | reject("equalto", guild.slug) | list),
+  "live": live,
+  "taken": ["admin", "api", "auth", "login", "logout", "privacy", "static", "prototype", "trial"] + (guilds | map(attribute="slug") | reject("equalto", guild.slug) | list),
 } | tojson }}</script>
 {% endblock %}
 

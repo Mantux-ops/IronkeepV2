@@ -2,7 +2,9 @@
 
 Trial tracking for Discord guilds: a bot that follows joins and the trial role, and a dashboard at `ironkeep.gg/<guild>/trial` where recruiters see who needs attention, log observations and give a verdict.
 
-This branch contains the **clickable prototype**. Every page uses sample data from `ironkeep/mock_data.py`. Nothing talks to Discord and nothing is saved: a reload resets everything.
+Without Discord credentials this is the **clickable prototype**. Every page uses sample data from `ironkeep/mock_data.py` and a reload resets it.
+
+With `DISCORD_BOT_TOKEN`, `DISCORD_CLIENT_ID` and `DISCORD_CLIENT_SECRET` set (see `/etc/ironkeep.env` on the server), the same pages use the live bot: Discord login, an invite link, and one environment per server the bot joins. The bot process is `python -m ironkeep.bot`. It needs the Server Members intent enabled in the Discord developer portal, and the OAuth redirect URL must be `https://ironkeep.gg/auth/callback`.
 
 ## Run it with Docker
 

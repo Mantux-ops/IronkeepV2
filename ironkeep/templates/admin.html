@@ -34,7 +34,7 @@
       <div class="pending-row__main">
         <span class="pending-row__name">{{ g.name }}</span>
         <span class="pending-row__meta">Added by {{ g.added_by }} · <span data-datetime="{{ g.added_at }}"></span> · Server ID <span class="mono">{{ g.id }}</span></span>
-        <span class="pending-row__meta">Setup {{ "complete" if g.setup_complete else "not finished yet" }} · {{ g.roles | length - 2 }} roles · {{ g.channels | length }} channels</span>
+        <span class="pending-row__meta">Setup {{ "complete" if g.setup_complete else "not finished yet" }} · {{ g.roles | rejectattr("everyone") | list | length }} roles · {{ g.channels | length }} channels</span>
       </div>
       <div class="pending-row__actions">
         <a class="button button--ghost button--sm" href="/{{ g.slug }}/setup">View setup</a>

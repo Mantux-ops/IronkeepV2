@@ -9,7 +9,8 @@
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="{{ asset('css/app.css') }}">
 </head>
-<body class="{% block body_class %}{% endblock %}">
+<body class="{% block body_class %}{% endblock %}" data-live="{{ '1' if live else '0' }}">
+  {% if not live %}
   <div class="proto-bar" role="region" aria-label="Prototype controls">
     <span class="proto-bar__label">Prototype · sample data, nothing is saved</span>
     <span class="proto-bar__sep"></span>
@@ -17,6 +18,7 @@
     <a class="proto-bar__opt {% if viewer.superadmin %}is-active{% endif %}" href="/prototype/view/superadmin?next={{ request.url.path }}">Superadmin</a>
     <a class="proto-bar__opt {% if not viewer.superadmin %}is-active{% endif %}" href="/prototype/view/recruiter?next={{ request.url.path }}">Recruiter</a>
   </div>
+  {% endif %}
 
   {% block body %}{% endblock %}
 

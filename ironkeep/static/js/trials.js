@@ -122,8 +122,25 @@
     return String(n);
   }
 
+  function persist(t) {
+    if (!data.live) return;
+    fetch(`/api/${guild.slug}/trials/${t.id}`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        start: t.start,
+        extra_days: t.extra_days,
+        timeline: t.timeline,
+        albion: t.albion,
+        lost_content_role: t.lost_content_role,
+        ping_sent_at: t.ping_sent_at,
+      }),
+    });
+  }
+
   function log(t, text, type = "system") {
     t.timeline.push({ type, at: Ik.nowIso(today), text });
+    persist(t);
   }
 
   function roleNames(ids) {
@@ -263,6 +280,7 @@
               t.albion = { name: value, link: "manual", in_guild: true, last_in_guild: null, fame_since: today, fame: [] };
               log(t, previous ? `Albion name changed from ${previous} to ${value} by ${viewer}` : `Albion name ${value} linked by ${viewer}`);
             }
+            persist(t);
             Ik.closeModal();
             Ik.toast(`Albion name saved for ${t.name}`);
             state.tab = "albion";
@@ -745,14 +763,35 @@
         onMount(modal) {
           modal.querySelector("[data-confirm]").addEventListener("click", () => {
             const reason = modal.querySelector("[name=reason]").value.trim();
-            applyVerdict(t, kind, reason);
-            Ik.closeModal();
-            Ik.toast(`${t.name} ${accept ? "accepted" : "rejected"}`);
-            renderAll();
+            submitVerdict(t, kind, reason, accept);
           });
         },
       }
     );
+  }
+
+  function submitVerdict(t, kind, reason, accept) {
+    if (!data.live) {
+      applyVerdict(t, kind, reason);
+      Ik.closeModal();
+      Ik.toast(`${t.name} ${accept ? "accepted" : "rejected"}`);
+      renderAll();
+      return;
+    }
+    fetch(`/api/${guild.slug}/trials/${t.id}/verdict`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ kind, reason }),
+    })
+      .then(async (response) => {
+        const updated = await response.json();
+        Object.assign(t, updated);
+        Ik.closeModal();
+        if (!response.ok) Ik.toast(updated.action_error || "Role change failed", "red");
+        else Ik.toast(`${t.name} ${accept ? "accepted" : "rejected"}`);
+        renderAll();
+      })
+      .catch(() => Ik.toast("Could not reach Ironkeep", "red"));
   }
 
   function applyVerdict(t, kind, reason) {
@@ -775,6 +814,10 @@
       body: `<p class="muted">${esc(t.action_error)}</p><p>Ironkeep will try again to ${[...roleNames(plan.add).map((n) => `give ${n}`), ...roleNames(plan.remove).map((n) => `remove ${n}`)].join(" and ")}. Make sure the Ironkeep role sits above these roles in Discord.</p>`,
       confirmLabel: "Retry",
       onConfirm() {
+        if (data.live) {
+          submitVerdict(t, "accepted", "", true);
+          return;
+        }
         t.action_error = null;
         t.verdict = "accepted";
         t.verdict_at = Ik.nowIso(today);
@@ -848,6 +891,7 @@
           entry.text = text;
           entry.edited = true;
           Ik.toast("Observation updated");
+          persist(t);
         }
         state.editing = null;
         renderPanel();
@@ -900,6 +944,7 @@
     }
     const t = trialById(state.selected);
     t.timeline.push({ type: "observation", at: Ik.nowIso(today), author: viewer, category: form.get("category"), rating: form.get("rating"), text });
+    persist(t);
     state.formOpen = false;
     Ik.toast("Observation added");
     renderAll();
