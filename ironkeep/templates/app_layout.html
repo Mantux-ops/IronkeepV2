@@ -10,7 +10,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar__brand">
       <a class="brand" href="{{ '/admin' if viewer.superadmin else '/trial' }}">
-        <span class="brand__mark">{{ icon("logo", 26) }}</span>
+        <img class="brand__logo" src="{{ asset('logo.png') }}" alt="" width="32" height="32">
         <span class="brand__name">Ironkeep</span>
       </a>
       {% if viewer.superadmin %}<span class="badge-superadmin">Superadmin</span>{% endif %}
