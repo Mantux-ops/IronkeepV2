@@ -98,6 +98,19 @@ def trial_role_ids(settings):
     return [str(role_id) for role_id in chosen if role_id]
 
 
+def member_role_ids(settings):
+    """Roles given when a trial is accepted. Holding one means the person is a full member."""
+    accept = (settings or {}).get("accept") or {}
+    return [str(role_id) for role_id in (accept.get("add") or []) if role_id]
+
+
+def active_trial_role_ids(settings):
+    """Trial roles, without roles that already mean the person was accepted."""
+    trial_ids = set(trial_role_ids(settings))
+    pure = trial_ids - set(member_role_ids(settings))
+    return pure or trial_ids
+
+
 def setup_complete(settings):
     channels = settings.get("channels") or {}
     return bool(
@@ -182,6 +195,16 @@ def init():
                 role_ids_json TEXT NOT NULL,
                 checked_at TEXT NOT NULL,
                 PRIMARY KEY (user_id, guild_id)
+            );
+            CREATE TABLE IF NOT EXISTS members (
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                username TEXT NOT NULL,
+                nick TEXT,
+                role_ids_json TEXT NOT NULL,
+                joined_at TEXT,
+                PRIMARY KEY (guild_id, user_id)
             );
             CREATE TABLE IF NOT EXISTS errors (
                 id INTEGER PRIMARY KEY,
@@ -443,6 +466,99 @@ def list_errors():
 def _trials_for(conn, guild_id):
     rows = conn.execute("SELECT * FROM trials WHERE guild_id = ? ORDER BY id", (guild_id,)).fetchall()
     return [_trial_from_row(row) for row in rows]
+
+
+def replace_members(guild_id, people):
+    guild_id = str(guild_id)
+    with _LOCK:
+        conn = connect()
+        conn.execute("DELETE FROM members WHERE guild_id = ?", (guild_id,))
+        conn.executemany(
+            """INSERT INTO members (guild_id, user_id, name, username, nick, role_ids_json, joined_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            [
+                (
+                    guild_id,
+                    person["user_id"],
+                    person["name"],
+                    person["username"],
+                    person.get("nick"),
+                    json.dumps(person.get("role_ids") or []),
+                    person.get("joined_at"),
+                )
+                for person in people
+            ],
+        )
+        conn.commit()
+        conn.close()
+
+
+def upsert_member(guild_id, person):
+    with _LOCK:
+        conn = connect()
+        conn.execute(
+            """INSERT INTO members (guild_id, user_id, name, username, nick, role_ids_json, joined_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               ON CONFLICT(guild_id, user_id) DO UPDATE SET
+                 name = excluded.name,
+                 username = excluded.username,
+                 nick = excluded.nick,
+                 role_ids_json = excluded.role_ids_json,
+                 joined_at = excluded.joined_at""",
+            (
+                str(guild_id),
+                person["user_id"],
+                person["name"],
+                person["username"],
+                person.get("nick"),
+                json.dumps(person.get("role_ids") or []),
+                person.get("joined_at"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+
+def remove_member(guild_id, user_id):
+    with _LOCK:
+        conn = connect()
+        conn.execute("DELETE FROM members WHERE guild_id = ? AND user_id = ?", (str(guild_id), str(user_id)))
+        conn.commit()
+        conn.close()
+
+
+def list_members(guild_id):
+    conn = connect()
+    rows = conn.execute("SELECT * FROM members WHERE guild_id = ? ORDER BY name COLLATE NOCASE", (str(guild_id),)).fetchall()
+    conn.close()
+    people = []
+    for row in rows:
+        people.append(
+            {
+                "user_id": row["user_id"],
+                "name": row["name"],
+                "username": row["username"],
+                "nick": row["nick"],
+                "role_ids": _loads(row["role_ids_json"], []),
+                "joined_at": row["joined_at"],
+            }
+        )
+    return people
+
+
+def full_member_user_ids(guild_id, settings):
+    wanted = set(member_role_ids(settings))
+    if not wanted:
+        return set()
+    return {person["user_id"] for person in list_members(guild_id) if wanted & set(person["role_ids"])}
+
+
+def delete_trial(trial_id):
+    with _LOCK:
+        conn = connect()
+        conn.execute("DELETE FROM trials WHERE id = ? AND verdict IS NULL", (trial_id,))
+        conn.commit()
+        conn.close()
 
 
 def open_trial(guild_id, user_id):

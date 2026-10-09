@@ -1,0 +1,99 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import avatar, pill %}
+
+{% block title %}Members · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Members</h1>
+    <p class="page-subtitle">{{ guild.name }} · everyone in the Discord server. Trials stay on the Trials page.</p>
+  </div>
+  <button class="button button--outline" type="button" id="sync-members">{{ icon("users", 16) }} Sync members</button>
+</header>
+
+{% if not people %}
+<section class="empty-state">
+  {{ icon("users", 28) }}
+  <h2>No members loaded yet</h2>
+  <p>Sync members to fill this list from Discord. People with a trial role, and without a full member role, also show up under Trials.</p>
+</section>
+{% else %}
+<section class="section">
+  <div class="section-head">
+    <h2 class="section-title">{{ people | length }} members</h2>
+    <label class="search">
+      {{ icon("search", 16) }}
+      <input type="search" id="member-search" placeholder="Search name" autocomplete="off">
+    </label>
+  </div>
+  <div class="table-wrap">
+    <table class="table table--cards" id="member-table">
+      <thead>
+        <tr>
+          <th>Name</th>
+          <th>Status</th>
+          <th>Roles</th>
+          <th>Joined</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for person in people %}
+        <tr data-search="{{ (person.name ~ ' ' ~ person.username ~ ' ' ~ (person.nick or '')) | lower }}">
+          <td data-label="Name">
+            <span class="cell-user">{{ avatar(person.name, person.color) }}
+              <span>
+                <span class="cell-user__name">{{ person.name }}</span>
+                <span class="cell-user__sub">@{{ person.username }}</span>
+              </span>
+            </span>
+          </td>
+          <td data-label="Status">{{ pill(person.status, person.tone) }}</td>
+          <td data-label="Roles">{% if person.labels %}{{ person.labels | join(", ") }}{% else %}<span class="muted">—</span>{% endif %}</td>
+          <td data-label="Joined">{% if person.joined_at %}<span data-datetime="{{ person.joined_at }}"></span>{% else %}<span class="muted">—</span>{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</section>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+(function () {
+  document.querySelectorAll("[data-datetime]").forEach((node) => {
+    node.textContent = Ik.formatDate(node.dataset.datetime.slice(0, 10));
+  });
+  const search = document.getElementById("member-search");
+  if (search) {
+    search.addEventListener("input", () => {
+      const query = search.value.trim().toLowerCase();
+      document.querySelectorAll("#member-table tbody tr").forEach((row) => {
+        row.hidden = query && !row.dataset.search.includes(query);
+      });
+    });
+  }
+  const sync = document.getElementById("sync-members");
+  if (!sync) return;
+  const slug = {{ guild.slug | tojson }};
+  sync.addEventListener("click", () => {
+    if (document.body.dataset.live !== "1") {
+      Ik.toast("Members would be loaded from Discord");
+      return;
+    }
+    sync.disabled = true;
+    fetch("/api/" + slug + "/sync", { method: "POST" }).then((response) => {
+      sync.disabled = false;
+      if (!response.ok) {
+        Ik.toast("Could not start the sync", "red");
+        return;
+      }
+      Ik.toast("Checking the server. Refresh in a minute.");
+    });
+  });
+})();
+</script>
+{% endblock %}
