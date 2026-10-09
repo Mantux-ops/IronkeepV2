@@ -35,8 +35,23 @@
         confirmLabel: "Approve",
         tone: "green",
         onConfirm() {
-          resolvePending(slug, true);
-          Ik.toast(`${name} approved`);
+          if (document.body.dataset.live !== "1") {
+            resolvePending(slug, true);
+            Ik.toast(`${name} approved`);
+            return;
+          }
+          fetch(`/api/admin/guilds/${slug}/decision`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ decision: "approve" }),
+          }).then((response) => {
+            if (!response.ok) {
+              Ik.toast("Could not approve the guild", "red");
+              return;
+            }
+            resolvePending(slug, true);
+            Ik.toast(`${name} approved`);
+          });
         },
       });
       return;
@@ -52,10 +67,26 @@
                <textarea class="input textarea" rows="2" name="reason"></textarea></label>`,
         confirmLabel: "Reject and leave server",
         tone: "red",
-        onConfirm() {
-          resolvePending(slug, false);
-          Ik.toast(`${name} rejected. The bot left the server.`);
-        },
+          onConfirm(modal) {
+            const reason = modal.querySelector("[name=reason]")?.value.trim() || "";
+            if (document.body.dataset.live !== "1") {
+              resolvePending(slug, false);
+              Ik.toast(`${name} rejected. The bot left the server.`);
+              return;
+            }
+            fetch(`/api/admin/guilds/${slug}/decision`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ decision: "reject", reason }),
+            }).then((response) => {
+              if (!response.ok) {
+                Ik.toast("Could not reject the guild", "red");
+                return;
+              }
+              resolvePending(slug, false);
+              Ik.toast(`${name} rejected. The bot left the server.`);
+            });
+          },
       });
     }
   });

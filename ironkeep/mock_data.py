@@ -383,7 +383,8 @@ STATUS_META = {
 }
 
 
-def trial_status(trial, settings):
+def trial_status(trial, settings, today=None):
+    today = today or TODAY
     if trial["verdict"]:
         return trial["verdict"]
     if trial["action_error"]:
@@ -394,7 +395,7 @@ def trial_status(trial, settings):
         return "no_start"
     start = date.fromisoformat(trial["start"])
     length = settings["trial_days"] + trial["extra_days"]
-    day = (TODAY - start).days + 1
+    day = (today - start).days + 1
     days_left = length - day
     if day > length:
         return "verdict_due"
@@ -408,22 +409,23 @@ def trial_status(trial, settings):
     return "active"
 
 
-def albion_flagged(trial, settings):
+def albion_flagged(trial, settings, today=None):
     """Mirrors albionFlags() in trials.js: no linked name, or not in the guild in-game after a day's grace."""
+    today = today or TODAY
     albion, conf = trial["albion"], settings["albion"]
     if not albion["name"]:
         return True
     if conf["guild_check"] == "off" or not conf["guild_name"] or albion["in_guild"] is not False:
         return False
-    return not trial["start"] or (TODAY - date.fromisoformat(trial["start"])).days >= 1
+    return not trial["start"] or (today - date.fromisoformat(trial["start"])).days >= 1
 
 
-def guild_summary(guild):
+def guild_summary(guild, today=None):
     counts = {"open": 0, "attention": 0}
     for t in guild["trials"]:
-        group = STATUS_META[trial_status(t, guild["settings"])][2]
+        group = STATUS_META[trial_status(t, guild["settings"], today)][2]
         if group != "closed":
             counts["open"] += 1
-        if group in ("attention", "verdict", "ending") or (group != "closed" and albion_flagged(t, guild["settings"])):
+        if group in ("attention", "verdict", "ending") or (group != "closed" and albion_flagged(t, guild["settings"], today)):
             counts["attention"] += 1
     return counts

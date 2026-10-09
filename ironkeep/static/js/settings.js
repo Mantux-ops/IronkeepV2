@@ -8,7 +8,7 @@
   state.overview_enabled = true;
   let saved = JSON.stringify(state);
 
-  const botRole = roles.find((r) => r.managed && r.name === "Ironkeep");
+  const botRole = roles.find((r) => r.bot) || roles.find((r) => r.managed && r.name === "Ironkeep");
   const roleById = (id) => roles.find((r) => r.id === id);
   const channelById = (id) => channels.find((c) => c.id === id);
   const pickableRoles = roles.filter((r) => !r.everyone && !r.managed).sort((a, b) => b.position - a.position);
@@ -448,14 +448,29 @@
 
   /* Settings mode */
 
+  function saveSettings() {
+    if (!data.live) return Promise.resolve(true);
+    return fetch(`/api/${guild.slug}/settings`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(state),
+    }).then((response) => response.ok);
+  }
+
   const saveBtn = document.querySelector("[data-save]");
   if (saveBtn) {
     saveBtn.addEventListener("click", () => {
       const errors = renderChecks().filter((c) => c.level === "error");
-      saved = JSON.stringify(state);
-      markDirty();
-      if (errors.length) Ik.toast(`Saved, but ${errors.length} check${errors.length > 1 ? "s need" : " needs"} attention`, "red");
-      else Ik.toast("Settings saved");
+      saveSettings().then((ok) => {
+        if (!ok) {
+          Ik.toast("Could not save settings", "red");
+          return;
+        }
+        saved = JSON.stringify(state);
+        markDirty();
+        if (errors.length) Ik.toast(`Saved, but ${errors.length} check${errors.length > 1 ? "s need" : " needs"} attention`, "red");
+        else Ik.toast("Settings saved");
+      });
     });
     document.querySelector("[data-discard]").addEventListener("click", () => window.location.reload());
 
@@ -502,7 +517,7 @@
       return;
     }
     const pending = guild.approval === "pending";
-    Ik.openModal(
+    const showDone = () => Ik.openModal(
       `<header class="modal__header"><h2>${pending ? "Setup saved" : "Ironkeep is ready"}</h2></header>
        <div class="modal__body">
          ${pending
@@ -514,6 +529,13 @@
          <a class="button button--accent" href="/${esc(guild.slug)}/trial">Go to trials ${Ik.icon("arrow-right", 15)}</a>
        </footer>`
     );
+    saveSettings().then((ok) => {
+      if (!ok) {
+        Ik.toast("Could not save settings", "red");
+        return;
+      }
+      showDone();
+    });
   }
 
   if (setupMode) {

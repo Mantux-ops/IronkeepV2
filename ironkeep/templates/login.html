@@ -7,7 +7,14 @@
 {% set adding = request.query_params.get("add") %}
 <div class="login-card">
   <span class="brand__mark" style="display:inline-grid">{{ icon("logo", 40) }}</span>
-  {% if adding %}
+  {% if error %}
+  <div class="callout callout--red"><div><p>{{ error }}</p></div></div>
+  {% endif %}
+  {% if live %}
+  <h1>{{ "Add Ironkeep to your server" if adding else "Log in to Ironkeep" }}</h1>
+  <p>{% if adding %}Discord asks which server to add the bot to. You need the Manage Server permission there. The bot stays silent until the server is approved.{% else %}Recruiters log in with Discord. Ironkeep checks that you have a recruitment role in your guild's server.{% endif %}</p>
+  <a class="button button--discord button--lg" href="/login{% if adding %}?add=1{% endif %}">{{ icon("discord", 18) }} {{ "Add to Discord" if adding else "Continue with Discord" }}</a>
+  {% elif adding %}
   <h1>Add Ironkeep to your server</h1>
   <p>Discord asks which server to add the bot to. You need the Manage Server permission there. Your guild's environment waits for approval before the bot does anything.</p>
   <a class="button button--discord button--lg" href="/blackrose/setup">{{ icon("discord", 18) }} Continue with Discord</a>
