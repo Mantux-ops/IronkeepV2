@@ -5,8 +5,9 @@ import os
 SUPERADMIN_ID = "268813802391207937"
 PUBLIC_URL = "https://ironkeep.gg"
 
-# View channel, send messages, embed links, read history, view audit log, manage roles.
-INVITE_PERMISSIONS = (1 << 7) + (1 << 10) + (1 << 11) + (1 << 14) + (1 << 16) + (1 << 28)
+# View channel, send messages, embed links, read history, view audit log, manage roles,
+# create private threads, send messages in threads.
+INVITE_PERMISSIONS = (1 << 7) + (1 << 10) + (1 << 11) + (1 << 14) + (1 << 16) + (1 << 28) + (1 << 36) + (1 << 38)
 
 RESERVED_SLUGS = {
     "admin", "api", "auth", "login", "logout", "privacy", "prototype", "static", "trial",

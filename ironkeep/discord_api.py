@@ -99,6 +99,26 @@ def send_message(channel_id, content):
     return _api("POST", f"/channels/{channel_id}/messages", token=config.BOT_TOKEN, bot=True, body={"content": content})
 
 
+def create_private_thread(channel_id, message_id, name):
+    """Private thread hanging off a message. Type 12 is a private thread; invitable stays off."""
+    return _api(
+        "POST",
+        f"/channels/{channel_id}/messages/{message_id}/threads",
+        token=config.BOT_TOKEN,
+        bot=True,
+        body={
+            "name": (name or "Welcome")[:100],
+            "type": 12,
+            "auto_archive_duration": 4320,
+            "invitable": False,
+        },
+    )
+
+
+def add_thread_member(thread_id, user_id):
+    _api("PUT", f"/channels/{thread_id}/thread-members/{user_id}", token=config.BOT_TOKEN, bot=True)
+
+
 def leave_guild(guild_id):
     _api("DELETE", f"/users/@me/guilds/{guild_id}", token=config.BOT_TOKEN, bot=True)
 

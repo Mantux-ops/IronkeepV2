@@ -21,7 +21,7 @@
   const manageable = (role) => !botRole || role.position < botRole.position;
 
   const MESSAGES = [
-    { key: "welcome", title: "Welcome in the perms channel", when: "When someone joins the server.", placeholders: ["member", "guild"] },
+    { key: "welcome", title: "Welcome in the perms channel", when: "When someone joins the server. Ironkeep posts this message, starts a private thread on it, and sends that person a direct message with the thread link.", placeholders: ["member", "guild"] },
     { key: "trial_started", title: "Trial started", when: "When a trial role is given. The start date is recorded at that moment.", placeholders: ["member", "guild", "days", "start_date", "end_date"] },
     { key: "reminder", title: "Content role reminder", when: "Sent once, on the reminder day, if they still have no content role.", placeholders: ["member", "guild", "day", "days", "end_date"] },
     { key: "accepted", title: "Accepted", when: "When a recruiter accepts a trial on this website.", placeholders: ["member", "guild"] },
