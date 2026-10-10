@@ -89,13 +89,22 @@ def consider_member(guild_row, member, *, known_new, before_ids=None):
         db.update_trial_roles(existing["id"], content, lost or existing["lost_content_role"], note, settings)
 
 
+def welcome_thread_name(display_name):
+    raw = (display_name or "").replace("\n", " ").strip()
+    return raw[:100] or "Welcome"
+
+
+def welcome_thread_url(guild_id, thread_id):
+    return f"https://discord.com/channels/{guild_id}/{thread_id}"
+
+
 def _send_template(guild_row, key, member, start=None):
     settings = guild_row["settings"]
     message = (settings.get("messages") or {}).get(key) or {}
     if not message.get("enabled") or not message.get("channel"):
-        return
+        return None
     if not guild_row["approval"] == "approved" or not guild_row["setup_complete"]:
-        return
+        return None
     today = db.guild_today(settings)
     length = int(settings.get("trial_days") or 14)
     start_date = start or today.isoformat()
@@ -115,10 +124,43 @@ def _send_template(guild_row, key, member, start=None):
     try:
         from .discord_api import send_message
 
-        send_message(message["channel"], fill(message.get("text"), values)[:2000])
+        return send_message(message["channel"], fill(message.get("text"), values)[:2000])
     except Exception as error:
         log.warning("Could not post %s in %s: %s", key, guild_row["name"], error)
         db.set_last_error(guild_row["id"], f"Could not post {key.replace('_', ' ')}")
+        return None
+
+
+def _open_welcome_thread(guild_row, member, posted):
+    """Private thread on the welcome message, then a DM with the link. Closed DMs leave the thread in place."""
+    from .discord_api import DiscordError, add_thread_member, create_private_thread, send_dm
+
+    message_id = (posted or {}).get("id")
+    channel_id = (posted or {}).get("channel_id")
+    if not message_id or not channel_id:
+        return
+    try:
+        thread = create_private_thread(channel_id, message_id, welcome_thread_name(member.display_name))
+    except DiscordError as error:
+        log.warning("Could not open welcome thread in %s: %s", guild_row["name"], error)
+        db.set_last_error(
+            guild_row["id"],
+            "Could not open a private welcome thread. Ironkeep needs Create Private Threads and Send Messages in Threads in that channel.",
+        )
+        return
+    thread_id = (thread or {}).get("id")
+    if not thread_id:
+        return
+    try:
+        add_thread_member(thread_id, member.id)
+    except DiscordError as error:
+        log.warning("Could not add %s to welcome thread: %s", member.id, error)
+        db.set_last_error(guild_row["id"], "Could not add the new member to their welcome thread.")
+        return
+    try:
+        send_dm(member.id, f"Typ je antwoorden in deze thread: {welcome_thread_url(guild_row['id'], thread_id)}")
+    except DiscordError as error:
+        log.warning("Welcome thread link was not delivered to %s: %s", member.id, error)
 
 
 def _sync_guild(guild, *, rejoin=False, added_by=None, added_by_id=None):
@@ -275,7 +317,7 @@ def main():
         if row is None or row["approval"] != "approved" or not row["setup_complete"]:
             return
         db.upsert_member(row["id"], _member_record(member))
-        _send_template(row, "welcome", member)
+        _open_welcome_thread(row, member, _send_template(row, "welcome", member))
 
     @client.event
     async def on_member_remove(member):
