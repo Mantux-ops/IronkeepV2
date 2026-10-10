@@ -194,12 +194,14 @@
     const linkText = a.link === "manual" ? "Set by a recruiter" : "From Discord nickname";
     let guildRow = "";
     if (settings.albion.guild_check !== "off" && settings.albion.guild_name) {
-      if (a.in_guild) {
+      if (a.in_guild === true) {
         guildRow = `<div class="albion-row"><span class="muted">In-game guild</span><span class="tag tag--xs tag--green">${Ik.icon("check", 12)} In ${esc(albionGuild)}</span></div>`;
-      } else {
+      } else if (a.in_guild === false) {
         const seen = a.last_in_guild ? `Was in ${esc(albionGuild)} until ${Ik.formatDate(a.last_in_guild)}.` : `Hasn't been seen in ${esc(albionGuild)} since the trial started.`;
         guildRow = `<div class="callout callout--red albion-callout">${Ik.icon("alert")}<div><strong>Not in ${esc(albionGuild)} in-game</strong>
           <p>${seen} They may have left, never joined, or the linked name is wrong.</p></div></div>`;
+      } else {
+        guildRow = `<div class="albion-row"><span class="muted">In-game guild</span><span class="muted">Not checked yet</span></div>`;
       }
     }
 
@@ -223,7 +225,7 @@
             return `<span class="fame-chart__day" title="${Ik.formatDate(d.date)}: ${formatFame(total)}"><span style="height:${total ? Math.max(4, Math.round((total / dayMax) * 100)) : 0}%"></span></span>`;
           }).join("")}</div>
           <div class="fame-chart__axis muted small"><span>${Ik.formatDate(a.fame[0].date)}</span><span>${Ik.formatDate(a.fame[a.fame.length - 1].date)}</span></div>`
-          : `<p class="muted small">No daily numbers yet. The first update comes tomorrow.</p>`}
+          : `<p class="muted small">No gain since the first Albion reading yet. The next check adds fame gained after that.</p>`}
         <p class="muted small fame-note">Albion updates these numbers about once a day. Last update: ${Ik.formatDateTime(data.albionUpdatedAt)}.${sinceNote}</p>
       </section>`;
     }
@@ -266,9 +268,13 @@
           const hint = modal.querySelector("[data-lookup]");
           const update = () => {
             const value = input.value.trim();
-            hint.innerHTML = value.length >= 3
-              ? `${Ik.icon("check", 13)} Found <strong>${esc(value)}</strong> · ${esc(albionGuild)} <span class="muted">(prototype: every name is found)</span>`
-              : "At least 3 characters.";
+            if (value.length < 3) {
+              hint.textContent = "At least 3 characters.";
+              return;
+            }
+            hint.innerHTML = data.live
+              ? "Ironkeep checks this name on Albion at the next update."
+              : `${Ik.icon("check", 13)} Found <strong>${esc(value)}</strong> · ${esc(albionGuild)} <span class="muted">(prototype: every name is found)</span>`;
           };
           input.addEventListener("input", update);
           update();
@@ -277,7 +283,7 @@
             if (value.length < 3) return input.focus();
             const previous = t.albion.name;
             if (value !== previous) {
-              t.albion = { name: value, link: "manual", in_guild: true, last_in_guild: null, fame_since: today, fame: [] };
+              t.albion = { name: value, link: "manual", in_guild: data.live ? null : true, last_in_guild: null, fame_since: today, fame: [] };
               log(t, previous ? `Albion name changed from ${previous} to ${value} by ${viewer}` : `Albion name ${value} linked by ${viewer}`);
             }
             persist(t);

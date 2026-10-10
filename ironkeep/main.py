@@ -378,7 +378,15 @@ def trials(slug: str, request: Request):
         if on_trial:
             guild["trials"] = [trial for trial in guild["trials"] if trial["user_id"] in on_trial]
     today = db.guild_today(guild["settings"]).isoformat() if config.live() else None
-    return render(request, "trials.html", guild=guild, nav="trials", **({"today": today} if today else {}))
+    extra = {"today": today} if today else {}
+    if config.live():
+        stamps = [
+            (trial.get("albion") or {}).get("updated_at")
+            for trial in guild["trials"]
+            if (trial.get("albion") or {}).get("updated_at")
+        ]
+        extra["albion_updated_at"] = max(stamps) if stamps else ""
+    return render(request, "trials.html", guild=guild, nav="trials", **extra)
 
 
 def _shown_role(role, content_ids):
