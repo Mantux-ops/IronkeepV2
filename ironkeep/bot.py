@@ -6,6 +6,7 @@ Requires DISCORD_BOT_TOKEN and the Server Members intent in the Discord develope
 
 import asyncio
 import logging
+import time
 from datetime import date, timedelta
 
 import discord
@@ -285,6 +286,7 @@ def main():
         log.error("DISCORD_BOT_TOKEN is not set. The bot stays stopped.")
         return
     db.init()
+    albion_after = 0.0
     intents = discord.Intents.default()
     intents.members = True
     intents.guilds = True
@@ -339,6 +341,7 @@ def main():
         consider_member(row, after, known_new=True, before_ids={str(role.id) for role in before.roles})
 
     async def _hourly():
+        nonlocal albion_after
         while not client.is_closed():
             try:
                 for guild in list(client.guilds):
@@ -346,8 +349,15 @@ def main():
                     if row and row["needs_scan"]:
                         await _scan(guild)
                 await asyncio.to_thread(_reminders)
+                if time.time() >= albion_after:
+                    from .albion import refresh_open_trials
+
+                    await asyncio.to_thread(refresh_open_trials)
+                    albion_after = time.time() + 3600
             except Exception:
                 log.exception("Background pass failed")
+                if time.time() >= albion_after:
+                    albion_after = time.time() + 600
             await asyncio.sleep(10)
 
     try:

@@ -669,6 +669,14 @@ def mark_left(guild_id, user_id, settings):
         conn.close()
 
 
+def save_albion(trial_id, albion):
+    with _LOCK:
+        conn = connect()
+        conn.execute("UPDATE trials SET albion_json = ? WHERE id = ?", (json.dumps(albion), trial_id))
+        conn.commit()
+        conn.close()
+
+
 def get_trial(trial_id):
     conn = connect()
     row = conn.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)).fetchone()
@@ -682,6 +690,11 @@ def save_trial(trial_id, fields):
         return None
     timeline = fields.get("timeline", current["timeline"])
     albion = fields.get("albion", current["albion"])
+    if isinstance(albion, dict) and (current.get("albion") or {}).get("name") == albion.get("name"):
+        stored = current.get("albion") or {}
+        for key in ("history", "lifetime", "player_id", "updated_at", "fame", "fame_since", "in_guild", "last_in_guild"):
+            if key in stored:
+                albion[key] = stored[key]
     with _LOCK:
         conn = connect()
         conn.execute(
