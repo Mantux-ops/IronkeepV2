@@ -404,15 +404,11 @@ def prepare_members(guild, people):
     content_ids = {str(role_id) for role_id in (settings.get("content_roles") or []) if role_id}
     roles = {str(role["id"]): role for role in guild["roles"]}
     counts = {}
-    member_count = 0
     prepared = []
     for person in people:
         person = dict(person)
         held = {str(role_id) for role_id in person.get("role_ids") or []}
         is_member = bool(held & member_ids)
-        person["is_member"] = is_member
-        if is_member:
-            member_count += 1
         if held & trial_ids:
             person["status"], person["tone"] = "Trial", "orange"
         elif is_member:
@@ -422,29 +418,24 @@ def prepare_members(guild, people):
         shown = [roles[role_id] for role_id in held if _shown_role(roles.get(role_id), content_ids)]
         shown.sort(key=lambda role: role.get("position") or 0, reverse=True)
         person["labels"] = [role["name"] for role in shown]
-        person["filter_roles"] = [str(role["id"]) for role in shown]
-        for role in shown:
-            role_id = str(role["id"])
-            if role_id not in member_ids:
-                counts[role_id] = counts.get(role_id, 0) + 1
+        person["filter_roles"] = sorted(held)
+        for role_id in held:
+            counts[role_id] = counts.get(role_id, 0) + 1
         person["color"] = db.PALETTE[int(person["user_id"]) % len(db.PALETTE)]
         prepared.append(person)
     role_filters = []
-    for role in sorted(guild["roles"], key=lambda item: item.get("position") or 0, reverse=True):
-        role_id = str(role["id"])
-        if not _shown_role(role, content_ids) or role_id in member_ids:
+    seen = set()
+    for role_id in db.member_filter_ids(settings):
+        if role_id in seen:
             continue
-        count = counts.get(role_id, 0)
-        if count:
-            role_filters.append({"id": role_id, "name": role["name"], "count": count})
-    member_names = [roles[role_id]["name"] for role_id in db.member_role_ids(settings) if role_id in roles]
+        seen.add(role_id)
+        role = roles.get(role_id)
+        if not role or role.get("everyone") or role.get("managed") or role.get("bot"):
+            continue
+        role_filters.append({"id": role_id, "name": role["name"], "count": counts.get(role_id, 0)})
     return {
         "people": prepared,
         "role_filters": role_filters,
-        "member_count": member_count,
-        "other_count": len(prepared) - member_count,
-        "member_label": ", ".join(member_names) if member_names else "Members",
-        "has_member_role": bool(member_ids),
     }
 
 
@@ -570,6 +561,7 @@ async def save_settings(slug: str, request: Request):
     saved.pop("slug", None)
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
+    saved["member_filters"] = db.member_filter_ids(saved)
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
