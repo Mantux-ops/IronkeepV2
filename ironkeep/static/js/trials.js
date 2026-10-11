@@ -439,7 +439,7 @@
           <td data-label="Start">${Ik.formatDate(t.start)}</td>
           <td data-label="Ends">${Ik.formatDate(endDate(t))} ${extended}</td>
           <td data-label="Progress">${progressBar(t)}</td>
-          <td data-label="Content role"><span class="chips">${contentChips(t)}</span></td>
+          <td data-label="Content role"><span class="chips chips--rows">${contentChips(t)}</span></td>
           ${settings.albion.track_fame ? `<td data-label="Current fame">${currentFameCell(t)}</td><td data-label="Trial fame">${fameCell(t)}</td>` : ""}
           <td data-label="Status"><span class="status-cell">${Ik.pill(STATUS[s].label, STATUS[s].tone)}${flagTags(t)}</span></td>
         </tr>`;
