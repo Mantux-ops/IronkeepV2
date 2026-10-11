@@ -162,6 +162,18 @@
     return t.content_roles.map((id) => Ik.roleChip(roleById(id), roles)).join("");
   }
 
+  function lifetimeOf(t) {
+    const life = t.albion && t.albion.lifetime;
+    if (!life || life.pve == null) return null;
+    return life;
+  }
+
+  function currentFameCell(t) {
+    const life = lifetimeOf(t);
+    if (!life) return '<span class="muted">—</span>';
+    return `<span class="fame-cell"><strong>${formatFame(life.pve || 0)}</strong><span class="muted small">PvE · ${formatFame(life.pvp || 0)} PvP</span></span>`;
+  }
+
   function fameCell(t) {
     if (!t.albion.name) return '<span class="muted">—</span>';
     const totals = fameTotals(t);
@@ -174,8 +186,10 @@
     if (!settings.albion.track_fame) return "";
     if (!t.albion.name) return `<p class="muted small fame-line">No Albion name linked, so no fame numbers.</p>`;
     const totals = fameTotals(t);
+    const life = lifetimeOf(t);
+    const current = life ? `<strong>${formatFame(life.pve || 0)} PvE</strong> <span class="muted">· ${formatFame(life.pvp || 0)} PvP now</span> · ` : "";
     const parts = FAME_KINDS.filter((k) => totals[k.key]).map((k) => `${k.label.split(" ")[0]} ${formatFame(totals[k.key])}`);
-    return `<p class="small fame-line"><strong>${formatFame(fameSum(totals))} fame</strong> during the trial${parts.length ? ` <span class="muted">· ${parts.join(" · ")}</span>` : ""}</p>`;
+    return `<p class="small fame-line">${current}<strong>${formatFame(fameSum(totals))} fame</strong> during the trial${parts.length ? ` <span class="muted">· ${parts.join(" · ")}</span>` : ""}</p>`;
   }
 
   function renderAlbionTab(t) {
@@ -207,12 +221,26 @@
 
     let fame = "";
     if (settings.albion.track_fame) {
+      const life = lifetimeOf(t);
+      if (life) {
+        const lifeMax = Math.max(1, ...FAME_KINDS.map((k) => life[k.key] || 0));
+        fame += `<section class="panel__section">
+          <h3 class="panel__heading">Current fame</h3>
+          <div class="fame-total"><strong>${formatFame(life.pve || 0)}</strong><span class="muted small">PvE on Albion</span></div>
+          <div class="fame-kinds">${FAME_KINDS.map((k) => `<div class="fame-kind">
+              <span class="fame-kind__label">${k.label}</span>
+              <span class="fame-kind__bar"><span style="width:${Math.round(((life[k.key] || 0) / lifeMax) * 100)}%;background:${k.color}"></span></span>
+              <span class="fame-kind__value">${formatFame(life[k.key] || 0)}</span>
+            </div>`).join("")}</div>
+          <p class="muted small fame-note">Lifetime totals, including fame from before this trial. Albion refreshes these about once a day.</p>
+        </section>`;
+      }
       const totals = fameTotals(t);
       const sum = fameSum(totals);
       const max = Math.max(1, ...FAME_KINDS.map((k) => totals[k.key]));
       const dayMax = Math.max(1, ...a.fame.map((d) => fameSum(d)));
       const sinceNote = t.start ? "" : ` Ironkeep started tracking on ${Ik.formatDate(a.fame_since)}; fame from before that isn't known.`;
-      fame = `<section class="panel__section">
+      fame += `<section class="panel__section">
         <h3 class="panel__heading">Fame during trial</h3>
         <div class="fame-total"><strong>${formatFame(sum)}</strong><span class="muted small">since ${Ik.formatDate(a.fame_since)}</span></div>
         <div class="fame-kinds">${FAME_KINDS.map((k) => `<div class="fame-kind">
@@ -381,6 +409,10 @@
         return t.start ? dayOf(t) / length(t) : -1;
       case "fame":
         return t.albion.name ? fameSum(fameTotals(t)) : -1;
+      case "current": {
+        const life = lifetimeOf(t);
+        return life ? life.pve || 0 : -1;
+      }
       default:
         return STATUS[statusOf(t)].rank;
     }
@@ -408,7 +440,7 @@
           <td data-label="Ends">${Ik.formatDate(endDate(t))} ${extended}</td>
           <td data-label="Progress">${progressBar(t)}</td>
           <td data-label="Content role"><span class="chips">${contentChips(t)}</span></td>
-          ${settings.albion.track_fame ? `<td data-label="Trial fame">${fameCell(t)}</td>` : ""}
+          ${settings.albion.track_fame ? `<td data-label="Current fame">${currentFameCell(t)}</td><td data-label="Trial fame">${fameCell(t)}</td>` : ""}
           <td data-label="Status"><span class="status-cell">${Ik.pill(STATUS[s].label, STATUS[s].tone)}${flagTags(t)}</span></td>
         </tr>`;
       })

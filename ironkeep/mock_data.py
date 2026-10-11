@@ -105,13 +105,17 @@ def _albion(tid, name, start, verdict_at, kw):
         return {"name": None, "link": None, "in_guild": None, "last_in_guild": None, "fame_since": None, "fame": []}
     since = start or kw.pop("tracking_since", _d(20))
     until = date.fromisoformat(verdict_at[:10]) if verdict_at else TODAY
+    fame = _fame(tid, since, until, kw.pop("fame_profile", "mixed"))
+    gained = {key: sum(day[key] for day in fame) for key in ("pve", "pvp", "gathering", "crafting")}
+    base = {"pve": 48_000_000, "pvp": 1_200_000, "gathering": 600_000, "crafting": 80_000}
     return {
         "name": albion_name,
         "link": kw.pop("albion_link", "nickname"),
         "in_guild": kw.pop("in_guild", True),
         "last_in_guild": kw.pop("last_in_guild", None),
         "fame_since": since,
-        "fame": _fame(tid, since, until, kw.pop("fame_profile", "mixed")),
+        "fame": fame,
+        "lifetime": {"date": until.isoformat(), **{key: base[key] + gained[key] for key in base}},
     }
 
 
