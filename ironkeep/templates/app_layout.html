@@ -30,7 +30,7 @@
       </button>
       <div class="dropdown" role="listbox" hidden>
         {% for g in switcher_guilds %}
-        <a class="dropdown__item {% if guild and g.slug == guild.slug %}is-active{% endif %}" href="/{{ g.slug }}/trial">
+        <a class="dropdown__item {% if guild and g.slug == guild.slug %}is-active{% endif %}" href="{{ g.home or ('/' ~ g.slug ~ '/trial') }}">
           {{ guild_icon(g, "sm") }}
           <span>{{ g.name }}</span>
           {% if g.approval == "pending" %}<span class="dropdown__meta">Pending</span>{% endif %}
@@ -50,9 +50,19 @@
 
       {% if guild %}
       <div class="nav__section">{{ guild.name }}</div>
+      {% if access.trials %}
       <a class="nav__item {% if nav == 'trials' %}is-active{% endif %}" href="/{{ guild.slug }}/trial">{{ icon("scale") }}<span>Trials</span></a>
       <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
+      {% endif %}
+      {% if access.payout %}
+      <a class="nav__item {% if nav == 'payout' %}is-active{% endif %}" href="/{{ guild.slug }}/payout">{{ icon("inbox") }}<span>Payout</span></a>
+      {% endif %}
+      {% if access.lootsplit %}
+      <a class="nav__item {% if nav == 'lootsplit' %}is-active{% endif %}" href="/{{ guild.slug }}/lootsplit">{{ icon("flag") }}<span>Lootsplit</span></a>
+      {% endif %}
+      {% if access.trials %}
       <a class="nav__item {% if nav == 'settings' %}is-active{% endif %}" href="/{{ guild.slug }}/settings">{{ icon("settings") }}<span>Settings</span></a>
+      {% endif %}
       {% elif not viewer.superadmin %}
       <a class="nav__item" href="/trial">{{ icon("scale") }}<span>Trials</span></a>
       {% endif %}
@@ -62,7 +72,7 @@
       {{ avatar(viewer.name, viewer.color) }}
       <span class="sidebar__user-text">
         <span class="sidebar__user-name">{{ viewer.name }}</span>
-        <span class="sidebar__user-role">{{ "Superadmin" if viewer.superadmin else "Recruiter" }}</span>
+        <span class="sidebar__user-role">{{ access.label if access is defined else ("Superadmin" if viewer.superadmin else "Recruiter") }}</span>
       </span>
       <a class="icon-button" href="/logout" title="Log out">{{ icon("log-out", 16) }}</a>
     </div>

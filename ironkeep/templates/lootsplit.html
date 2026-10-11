@@ -1,0 +1,109 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Lootsplit · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<div class="banner banner--orange">
+  {{ icon("info", 16) }}
+  {% if payout.sample %}
+  <span><strong>Mockup.</strong> Booking stays on this page. The payout sheet is not changed.</span>
+  {% else %}
+  <span><strong>No numbers yet.</strong> The form is here. Booking stays off until payouts are connected.</span>
+  {% endif %}
+</div>
+
+<div class="chip-group payout-switch" aria-label="Mockup views">
+  <a class="chip" href="/{{ guild.slug }}/payout">Your payout</a>
+  <a class="chip is-active" href="/{{ guild.slug }}/lootsplit">Book a lootsplit</a>
+</div>
+
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Lootsplit</h1>
+    <p class="page-subtitle">{{ guild.name }} · for the people who handle the split</p>
+  </div>
+</header>
+
+<div class="loot-layout">
+  <section class="card" id="loot-form">
+    <div class="card__head">
+      <div>
+        <h2 class="card__title" id="form-title">New split</h2>
+        <p class="card__desc" id="form-desc">Market value and bags, then the state of the loot. The share is rounded down to the nearest 1,000 silver.</p>
+      </div>
+    </div>
+
+    <div class="field-row">
+      <label class="field">
+        <span class="field__label">Market value</span>
+        <input class="input" id="market" inputmode="decimal" placeholder="260m" autocomplete="off">
+      </label>
+      <label class="field">
+        <span class="field__label">Bags</span>
+        <input class="input" id="bags" inputmode="decimal" placeholder="16m" autocomplete="off">
+      </label>
+    </div>
+    <p class="muted small" id="raw-line">Raw value shows up once both fields have a number.</p>
+
+    <div class="field">
+      <span class="field__label">State of the loot</span>
+      <div class="loot-opts" role="group" aria-label="State of the loot">
+        <button class="loot-opt" type="button" data-state="niet">Niet repaired<b>{{ payout.pct.niet }}%</b></button>
+        <button class="loot-opt" type="button" data-state="repaired">Repaired<b>{{ payout.pct.repaired }}%</b></button>
+      </div>
+    </div>
+
+    <label class="field">
+      <span class="field__label">Note <span class="muted">optional · members see this</span></span>
+      <input class="input" id="note" type="text" placeholder="Leave empty for the standard line" autocomplete="off">
+    </label>
+
+    <div class="field">
+      <span class="field__label">Who was there</span>
+      <label class="search">
+        {{ icon("search", 16) }}
+        <input type="search" id="who" placeholder="Search a name" autocomplete="off">
+      </label>
+      <div class="loot-roster" id="roster"></div>
+      <div class="chip-group" id="picked"></div>
+    </div>
+
+    <label class="check-row">
+      <input type="checkbox" id="fine">
+      <span>Add a fine · <span id="fine-pct-label">{{ payout.fine_pct }}%</span> of the raw value, split across the same people and booked separately</span>
+    </label>
+    <div class="field-row" id="fine-fields" hidden>
+      <label class="field">
+        <span class="field__label">Fine %</span>
+        <input class="input" id="fine-pct" inputmode="decimal" value="{{ payout.fine_pct }}">
+      </label>
+      <label class="field">
+        <span class="field__label">Fine note</span>
+        <input class="input" id="fine-note" type="text" value="Boete - onjuiste lootsplit">
+      </label>
+    </div>
+
+    <div class="loot-preview" id="preview" hidden></div>
+    <div class="loot-actions">
+      <button class="button button--accent" type="button" id="book" disabled>Book split</button>
+      <button class="button button--ghost" type="button" id="cancel-edit" hidden>Cancel edit</button>
+    </div>
+    <p class="muted small" id="form-msg"></p>
+  </section>
+
+  <section class="card">
+    <div class="card__head">
+      <div>
+        <h2 class="card__title">Recent splits</h2>
+        <p class="card__desc">Open one to change the people, the value, or the state.</p>
+      </div>
+    </div>
+    <div class="split-list" id="split-list"></div>
+  </section>
+</div>
+
+<script id="page-data" type="application/json">{{ {"payout": payout, "page": "officer"} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script src="{{ asset('js/payout.js') }}"></script>{% endblock %}

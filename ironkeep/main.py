@@ -94,17 +94,90 @@ def _member_roles(session, guild):
     return roles
 
 
-def can_access(session, guild):
+def _staff(session, guild):
     if session is None:
         return False
     if session["user_id"] == config.SUPERADMIN_ID:
         return True
-    if guild.get("added_by_id") and guild["added_by_id"] == session["user_id"]:
-        return True
-    recruitment = set(guild["settings"].get("recruitment_roles") or [])
-    if not recruitment:
+    return bool(guild.get("added_by_id") and guild["added_by_id"] == session["user_id"])
+
+
+def _holds(session, guild, role_ids):
+    if session is None or not role_ids:
         return False
-    return bool(recruitment & _member_roles(session, guild))
+    return bool(set(role_ids) & _member_roles(session, guild))
+
+
+def can_access(session, guild):
+    """Trials, members and settings."""
+    if _staff(session, guild):
+        return True
+    return _holds(session, guild, guild["settings"].get("recruitment_roles") or [])
+
+
+def can_view_payout(session, guild):
+    """Own payout page. An empty setting keeps this with the recruitment roles."""
+    if _staff(session, guild):
+        return True
+    chosen = db.payout_view_role_ids(guild["settings"])
+    if chosen:
+        return _holds(session, guild, chosen)
+    return _holds(session, guild, guild["settings"].get("recruitment_roles") or [])
+
+
+def can_book_lootsplit(session, guild):
+    """Lootsplit page. An empty setting keeps this with the recruitment roles."""
+    if _staff(session, guild):
+        return True
+    chosen = db.lootsplit_access_role_ids(guild["settings"])
+    if chosen:
+        return _holds(session, guild, chosen)
+    return _holds(session, guild, guild["settings"].get("recruitment_roles") or [])
+
+
+def can_open_guild(session, guild):
+    return can_access(session, guild) or can_view_payout(session, guild) or can_book_lootsplit(session, guild)
+
+
+def home_path(session, guild):
+    slug = guild["slug"]
+    if can_access(session, guild):
+        return f"/{slug}/trial"
+    if can_book_lootsplit(session, guild):
+        return f"/{slug}/lootsplit"
+    if can_view_payout(session, guild):
+        return f"/{slug}/payout"
+    return f"/{slug}/trial"
+
+
+def page_access(request, guild):
+    person = viewer(request)
+    if not config.live():
+        label = "Superadmin" if person["superadmin"] else "Recruiter"
+        return {"trials": True, "payout": True, "lootsplit": True, "label": label}
+    session = _session(request)
+    trials = can_access(session, guild)
+    payout = can_view_payout(session, guild)
+    lootsplit = can_book_lootsplit(session, guild)
+    if person["superadmin"]:
+        label = "Superadmin"
+    elif trials:
+        label = "Recruiter"
+    elif lootsplit:
+        label = "Lootsplit"
+    else:
+        label = "Member"
+    return {"trials": trials, "payout": payout, "lootsplit": lootsplit, "label": label}
+
+
+def deny_unless(request, guild, area):
+    if not config.live():
+        return None
+    session = _session(request)
+    allowed = {"trials": can_access, "payout": can_view_payout, "lootsplit": can_book_lootsplit}[area]
+    if allowed(session, guild):
+        return None
+    return forbidden(request, "Your roles don't include this page.")
 
 
 def visible_guilds(request: Request):
@@ -116,7 +189,12 @@ def visible_guilds(request: Request):
     if person["superadmin"]:
         return rows
     session = _session(request)
-    return [guild for guild in rows if can_access(session, guild)]
+    visible = []
+    for guild in rows:
+        if can_open_guild(session, guild):
+            guild["home"] = home_path(session, guild)
+            visible.append(guild)
+    return visible
 
 
 def render(request: Request, template: str, status_code: int = 200, **context):
@@ -128,6 +206,8 @@ def render(request: Request, template: str, status_code: int = 200, **context):
         context.setdefault("today", data.TODAY.isoformat())
     context.setdefault("albion_updated_at", data.ALBION_UPDATED_AT)
     context.setdefault("live", config.live())
+    if context.get("guild"):
+        context.setdefault("access", page_access(request, context["guild"]))
     return templates.TemplateResponse(request, template, context, status_code=status_code)
 
 
@@ -162,8 +242,8 @@ def guild_or_404(request: Request, slug: str):
         )
     person = viewer(request)
     if config.live():
-        if not person["superadmin"] and not can_access(_session(request), guild):
-            return None, forbidden(request, "You need a recruitment role in this Discord server to open this page.")
+        if not person["superadmin"] and not can_open_guild(_session(request), guild):
+            return None, forbidden(request, "You need a role in this Discord server to open this page.")
     elif not person["superadmin"] and slug not in recruiter_guild_slugs():
         return None, forbidden(request, "You need a recruitment role in this Discord server to open this page.")
     return guild, None
@@ -258,7 +338,8 @@ def trial_redirect(request: Request):
         return login_redirect(request)
     slugs = [g["slug"] for g in visible_guilds(request)]
     if len(slugs) == 1:
-        return RedirectResponse(f"/{slugs[0]}/trial", status_code=303)
+        guild = next(item for item in visible_guilds(request) if item["slug"] == slugs[0])
+        return RedirectResponse(guild.get("home") or f"/{slugs[0]}/trial", status_code=303)
     if viewer(request)["superadmin"]:
         return RedirectResponse("/admin", status_code=303)
     return render(request, "forbidden.html", status_code=404, message="Ironkeep isn't in any of your servers yet.", guild=None, nav=None)
@@ -359,8 +440,12 @@ def admin_data(request: Request):
 
 
 @app.get("/{slug}")
-def guild_home(slug: str):
-    return RedirectResponse(f"/{slug}/trial", status_code=303)
+def guild_home(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    session = _session(request) if config.live() else None
+    return RedirectResponse(home_path(session, guild) if config.live() else f"/{slug}/trial", status_code=303)
 
 
 @app.get("/{slug}/trial", response_class=HTMLResponse)
@@ -368,6 +453,9 @@ def trials(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     if config.live():
         pure = db.active_trial_role_ids(guild["settings"])
         on_trial = {
@@ -444,16 +532,100 @@ def members(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
     prepared = prepare_members(guild, source)
     return render(request, "members.html", guild=guild, nav="members", **prepared)
+
+
+def payout_page(request: Request):
+    """Sample figures stay on the local prototype. The live site shows the layout only."""
+    if config.live() or request.query_params.get("preview") == "empty":
+        return {
+            "member": "",
+            "threshold": None,
+            "pct": {"niet": 70, "repaired": 80},
+            "fine_pct": 10,
+            "mutations": [],
+            "roster": [],
+            "splits": [],
+            "sample": False,
+        }
+    return {**data.PAYOUT_MOCK, "sample": True}
+
+
+def lootsplit_names(guild):
+    """Display names from the member list, limited to the roles chosen in settings."""
+    chosen = db.lootsplit_role_ids(guild["settings"])
+    if not chosen:
+        return [], "Choose the roles for this list under Settings → Roles → Lootsplit names."
+    wanted = set(chosen)
+    if config.live():
+        people = db.list_members(guild["id"])
+    else:
+        people = data.DEMO_MEMBERS.get(guild["slug"], [])
+    rows = []
+    for person in people:
+        held = {str(role_id) for role_id in person.get("role_ids") or []}
+        if not held & wanted:
+            continue
+        label = str(person.get("name") or "").strip()
+        if not label:
+            continue
+        rows.append({"id": str(person.get("user_id") or label), "name": label, "username": str(person.get("username") or "")})
+    counts = {}
+    for row in rows:
+        key = row["name"].casefold()
+        counts[key] = counts.get(key, 0) + 1
+    named = []
+    for row in rows:
+        label = row["name"]
+        if counts[label.casefold()] > 1 and row["username"]:
+            label = label + " (@" + row["username"] + ")"
+        named.append({"id": row["id"], "name": label})
+    named.sort(key=lambda item: item["name"].casefold())
+    if not named:
+        return [], "Nobody with those roles is on the member list yet."
+    return named, ""
+
+
+@app.get("/{slug}/payout", response_class=HTMLResponse)
+def payout_mock(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "payout")
+    if blocked:
+        return blocked
+    return render(request, "payout.html", guild=guild, nav="payout", payout=payout_page(request))
+
+
+@app.get("/{slug}/lootsplit", response_class=HTMLResponse)
+def lootsplit_mock(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "lootsplit")
+    if blocked:
+        return blocked
+    payout = payout_page(request)
+    if not payout["sample"]:
+        names, hint = lootsplit_names(guild)
+        payout["roster"] = names
+        payout["rosterHint"] = hint
+    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=payout)
 
 
 @app.put("/api/{slug}/trials/{trial_id}")
 async def save_trial(slug: str, trial_id: int, request: Request):
     guild, error = guild_or_404(request, slug)
     if error or not config.live():
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+        return error or JSONResponse({"error": "forbidden"}, status_code=403)
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     trial = db.get_trial(trial_id)
     if trial is None or not any(item["id"] == trial_id for item in guild["trials"]):
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -467,7 +639,10 @@ async def save_trial(slug: str, trial_id: int, request: Request):
 async def give_verdict(slug: str, trial_id: int, request: Request):
     guild, error = guild_or_404(request, slug)
     if error or not config.live():
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+        return error or JSONResponse({"error": "forbidden"}, status_code=403)
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     trial = db.get_trial(trial_id)
     if trial is None or not any(item["id"] == trial_id for item in guild["trials"]):
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -534,7 +709,10 @@ async def give_verdict(slug: str, trial_id: int, request: Request):
 def request_member_sync(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error or not config.live():
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+        return error or JSONResponse({"error": "forbidden"}, status_code=403)
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     if guild["approval"] != "approved":
         return JSONResponse({"error": "This guild is not approved yet."}, status_code=400)
     if not db.trial_role_ids(guild["settings"]):
@@ -547,7 +725,10 @@ def request_member_sync(slug: str, request: Request):
 async def save_settings(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error or not config.live():
-        return JSONResponse({"error": "forbidden"}, status_code=403)
+        return error or JSONResponse({"error": "forbidden"}, status_code=403)
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     body = await request.json()
     if not isinstance(body, dict):
         return JSONResponse({"error": "bad body"}, status_code=400)
@@ -562,6 +743,9 @@ async def save_settings(slug: str, request: Request):
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
     saved["member_filters"] = db.member_filter_ids(saved)
+    saved["lootsplit_roles"] = db.lootsplit_role_ids(saved)
+    saved["payout_view_roles"] = db.payout_view_role_ids(saved)
+    saved["lootsplit_access_roles"] = db.lootsplit_access_role_ids(saved)
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
@@ -574,6 +758,9 @@ def settings(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     return render(request, "settings.html", guild=guild, nav="settings", setup_mode=False)
 
 
@@ -582,4 +769,7 @@ def setup(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
     return render(request, "settings.html", guild=guild, nav="settings", setup_mode=True)

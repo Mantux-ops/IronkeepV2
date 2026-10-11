@@ -2906,3 +2906,174 @@ a.albion-name:hover {
     flex-wrap: wrap;
   }
 }
+
+/* Payout mockup */
+
+.payout-switch {
+  margin-bottom: 18px;
+}
+
+a.chip {
+  color: var(--text-2);
+}
+
+.stat-grid--3 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+#payout-callout {
+  margin-top: 14px;
+}
+
+.silver {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.silver--plus { color: var(--green); }
+.silver--minus { color: var(--red); }
+
+.loot-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.loot-card,
+.split-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  width: 100%;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel);
+  text-align: left;
+  color: var(--text);
+}
+
+.split-row {
+  cursor: pointer;
+}
+
+.split-row:hover,
+.loot-opt:hover {
+  border-color: var(--border-strong);
+}
+
+.split-row.is-on,
+.loot-opt.is-on {
+  border-color: var(--accent-border);
+  background: var(--accent-bg);
+}
+
+.split-row strong,
+.loot-card strong {
+  display: block;
+}
+
+.loot-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(280px, 0.8fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.loot-opts {
+  display: flex;
+  gap: 8px;
+}
+
+.loot-opt {
+  flex: 1;
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  padding: 10px 8px;
+  text-align: center;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.loot-opt b {
+  display: block;
+  margin-top: 2px;
+  font-size: 18px;
+  color: var(--accent);
+}
+
+.loot-roster {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px 12px;
+  max-height: 220px;
+  margin-top: 8px;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.loot-person {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0;
+  cursor: pointer;
+}
+
+#picked {
+  margin-top: 8px;
+}
+
+.check-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 16px;
+  color: var(--text-2);
+}
+
+.loot-preview {
+  margin-top: 16px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--accent-border);
+  background: var(--accent-bg);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+
+.loot-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+
+.split-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+#form-msg {
+  min-height: 18px;
+  margin-top: 8px;
+}
+
+@media (max-width: 1180px) {
+  .stat-grid--3,
+  .loot-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 560px) {
+  .loot-roster {
+    grid-template-columns: 1fr;
+  }
+}
