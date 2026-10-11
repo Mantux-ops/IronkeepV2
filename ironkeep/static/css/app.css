@@ -615,6 +615,25 @@ a.stat-card:hover {
   gap: 6px;
 }
 
+.chips--rows {
+  display: flex;
+  align-content: flex-start;
+  max-height: calc(22.75px * 2 + 6px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.chips--rows::-webkit-scrollbar {
+  width: 6px;
+}
+
+.chips--rows::-webkit-scrollbar-thumb {
+  border-radius: 99px;
+  background: var(--border-strong);
+}
+
 .channel {
   display: inline-flex;
   align-items: center;
