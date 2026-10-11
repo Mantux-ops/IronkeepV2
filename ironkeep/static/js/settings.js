@@ -15,6 +15,10 @@
   else state.member_filters = state.member_filters.filter(Boolean).map(String);
   if (!Array.isArray(state.lootsplit_roles)) state.lootsplit_roles = [];
   else state.lootsplit_roles = state.lootsplit_roles.filter(Boolean).map(String);
+  if (!Array.isArray(state.payout_view_roles)) state.payout_view_roles = [];
+  else state.payout_view_roles = state.payout_view_roles.filter(Boolean).map(String);
+  if (!Array.isArray(state.lootsplit_access_roles)) state.lootsplit_access_roles = [];
+  else state.lootsplit_access_roles = state.lootsplit_access_roles.filter(Boolean).map(String);
   if (state.messages.reminder && state.messages.reminder.delivery !== "dm") state.messages.reminder.delivery = "channel";
   let saved = JSON.stringify(state);
 

@@ -75,6 +75,8 @@ def default_settings():
         "content_roles": [],
         "member_filters": [],
         "lootsplit_roles": [],
+        "payout_view_roles": [],
+        "lootsplit_access_roles": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -110,7 +112,21 @@ def member_filter_ids(settings):
 
 def lootsplit_role_ids(settings):
     """Roles whose members can be picked when booking a lootsplit."""
-    chosen = (settings or {}).get("lootsplit_roles")
+    return _role_id_list(settings, "lootsplit_roles")
+
+
+def payout_view_role_ids(settings):
+    """Roles that may open their own payout page."""
+    return _role_id_list(settings, "payout_view_roles")
+
+
+def lootsplit_access_role_ids(settings):
+    """Roles that may open the lootsplit page."""
+    return _role_id_list(settings, "lootsplit_access_roles")
+
+
+def _role_id_list(settings, key):
+    chosen = (settings or {}).get(key)
     if not isinstance(chosen, list):
         return []
     return [str(role_id) for role_id in chosen if role_id]
