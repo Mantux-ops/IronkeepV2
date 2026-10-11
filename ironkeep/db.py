@@ -77,6 +77,7 @@ def default_settings():
         "lootsplit_roles": [],
         "payout_view_roles": [],
         "lootsplit_access_roles": [],
+        "lootsplit_access_users": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -123,6 +124,11 @@ def payout_view_role_ids(settings):
 def lootsplit_access_role_ids(settings):
     """Roles that may open the lootsplit page."""
     return _role_id_list(settings, "lootsplit_access_roles")
+
+
+def lootsplit_access_user_ids(settings):
+    """People who may open the lootsplit page even without one of the roles above."""
+    return _role_id_list(settings, "lootsplit_access_users")
 
 
 def _role_id_list(settings, key):
