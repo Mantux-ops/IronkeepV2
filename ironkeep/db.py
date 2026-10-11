@@ -73,6 +73,7 @@ def default_settings():
         "recruitment_roles": [],
         "trial_roles": [],
         "content_roles": [],
+        "member_filters": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -95,6 +96,14 @@ def trial_role_ids(settings):
     if not isinstance(chosen, list) or not chosen:
         legacy = settings.get("trial_role")
         chosen = legacy if isinstance(legacy, list) else ([legacy] if legacy else [])
+    return [str(role_id) for role_id in chosen if role_id]
+
+
+def member_filter_ids(settings):
+    """Roles chosen in settings to appear as filters on the Members page."""
+    chosen = (settings or {}).get("member_filters")
+    if not isinstance(chosen, list):
+        return []
     return [str(role_id) for role_id in chosen if role_id]
 
 

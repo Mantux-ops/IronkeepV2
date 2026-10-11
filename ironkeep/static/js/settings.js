@@ -11,6 +11,8 @@
     state.trial_roles = Array.isArray(legacy) ? legacy.filter(Boolean).map(String) : legacy ? [String(legacy)] : [];
   }
   delete state.trial_role;
+  if (!Array.isArray(state.member_filters)) state.member_filters = [];
+  else state.member_filters = state.member_filters.filter(Boolean).map(String);
   if (state.messages.reminder && state.messages.reminder.delivery !== "dm") state.messages.reminder.delivery = "channel";
   let saved = JSON.stringify(state);
 

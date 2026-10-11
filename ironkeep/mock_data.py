@@ -279,6 +279,7 @@ GUILDS = [
             "recruitment_roles": ["1103", "1104"],
             "trial_role": "1106",
             "content_roles": ["1107", "1108", "1109"],
+            "member_filters": ["1105", "1106", "1113"],
             "channels": {"perms": "2202", "trial_info": "2203", "recruiter_overview": "2204"},
             "messages": DEFAULT_MESSAGES,
             "accept": {"add": ["1105"], "remove": ["1106"]},
