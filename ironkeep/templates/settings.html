@@ -141,6 +141,10 @@
       {% call setting("Members page filters", "These roles become filters on the Members page, next to All. Someone with the role shows up under that filter, even if they also have another chosen role.") %}
       <div class="picker" data-picker="member_filters" data-kind="role" data-multi></div>
       {% endcall %}
+
+      {% call setting("Lootsplit names", "People with any of these roles appear under Who was there when a lootsplit is booked. The names are the ones on the Members page.") %}
+      <div class="picker" data-picker="lootsplit_roles" data-kind="role" data-multi></div>
+      {% endcall %}
     </section>
 
     <section class="card" id="messages" data-step-panel="2">

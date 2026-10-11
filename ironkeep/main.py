@@ -465,6 +465,41 @@ def payout_page(request: Request):
     return {**data.PAYOUT_MOCK, "sample": True}
 
 
+def lootsplit_names(guild):
+    """Display names from the member list, limited to the roles chosen in settings."""
+    chosen = db.lootsplit_role_ids(guild["settings"])
+    if not chosen:
+        return [], "Choose the roles for this list under Settings → Roles → Lootsplit names."
+    wanted = set(chosen)
+    if config.live():
+        people = db.list_members(guild["id"])
+    else:
+        people = data.DEMO_MEMBERS.get(guild["slug"], [])
+    rows = []
+    for person in people:
+        held = {str(role_id) for role_id in person.get("role_ids") or []}
+        if not held & wanted:
+            continue
+        label = str(person.get("name") or "").strip()
+        if not label:
+            continue
+        rows.append({"id": str(person.get("user_id") or label), "name": label, "username": str(person.get("username") or "")})
+    counts = {}
+    for row in rows:
+        key = row["name"].casefold()
+        counts[key] = counts.get(key, 0) + 1
+    named = []
+    for row in rows:
+        label = row["name"]
+        if counts[label.casefold()] > 1 and row["username"]:
+            label = label + " (@" + row["username"] + ")"
+        named.append({"id": row["id"], "name": label})
+    named.sort(key=lambda item: item["name"].casefold())
+    if not named:
+        return [], "Nobody with those roles is on the member list yet."
+    return named, ""
+
+
 @app.get("/{slug}/payout", response_class=HTMLResponse)
 def payout_mock(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
@@ -478,7 +513,12 @@ def lootsplit_mock(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
-    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=payout_page(request))
+    payout = payout_page(request)
+    if not payout["sample"]:
+        names, hint = lootsplit_names(guild)
+        payout["roster"] = names
+        payout["rosterHint"] = hint
+    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=payout)
 
 
 @app.put("/api/{slug}/trials/{trial_id}")
@@ -594,6 +634,7 @@ async def save_settings(slug: str, request: Request):
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
     saved["member_filters"] = db.member_filter_ids(saved)
+    saved["lootsplit_roles"] = db.lootsplit_role_ids(saved)
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):

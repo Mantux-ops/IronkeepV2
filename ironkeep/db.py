@@ -74,6 +74,7 @@ def default_settings():
         "trial_roles": [],
         "content_roles": [],
         "member_filters": [],
+        "lootsplit_roles": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -102,6 +103,14 @@ def trial_role_ids(settings):
 def member_filter_ids(settings):
     """Roles chosen in settings to appear as filters on the Members page."""
     chosen = (settings or {}).get("member_filters")
+    if not isinstance(chosen, list):
+        return []
+    return [str(role_id) for role_id in chosen if role_id]
+
+
+def lootsplit_role_ids(settings):
+    """Roles whose members can be picked when booking a lootsplit."""
+    chosen = (settings or {}).get("lootsplit_roles")
     if not isinstance(chosen, list):
         return []
     return [str(role_id) for role_id in chosen if role_id]

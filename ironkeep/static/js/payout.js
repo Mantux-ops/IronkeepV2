@@ -180,19 +180,26 @@
       });
     }
 
+    function rosterEntries() {
+      return (payout.roster || []).map((item) => (typeof item === "string" ? { id: item, name: item } : item));
+    }
+
     function drawRoster() {
       const query = who.value.trim().toLowerCase();
-      if (!payout.roster.length) {
-        document.getElementById("roster").innerHTML = '<p class="muted small">Names show up here once payouts are connected.</p>';
+      const entries = rosterEntries();
+      if (!entries.length) {
+        document.getElementById("roster").innerHTML = '<p class="muted small">' + esc(payout.rosterHint || "Choose the roles for this list under Settings → Roles → Lootsplit names.") + "</p>";
         document.getElementById("picked").innerHTML = "";
         return;
       }
-      document.getElementById("roster").innerHTML = payout.roster
-        .filter((name) => !query || name.toLowerCase().includes(query))
-        .map((name) => `<label class="loot-person"><input type="checkbox" value="${esc(name)}" ${picked.has(name) ? "checked" : ""}> ${esc(name)}</label>`)
-        .join("");
+      const visible = entries.filter((item) => !query || item.name.toLowerCase().includes(query));
+      document.getElementById("roster").innerHTML = visible.length
+        ? visible.map((item) => `<label class="loot-person"><input type="checkbox" value="${esc(item.id)}" ${picked.has(item.id) ? "checked" : ""}> ${esc(item.name)}</label>`).join("")
+        : '<p class="muted small">No names match.</p>';
+      const byId = Object.fromEntries(entries.map((item) => [item.id, item.name]));
       document.getElementById("picked").innerHTML = Array.from(picked)
-        .map((name) => `<button class="chip" type="button" data-remove="${esc(name)}">${esc(name)} <span aria-hidden="true">×</span></button>`)
+        .filter((id) => byId[id])
+        .map((id) => `<button class="chip" type="button" data-remove="${esc(id)}">${esc(byId[id])} <span aria-hidden="true">×</span></button>`)
         .join("");
     }
 
