@@ -6,7 +6,11 @@
 {% block main %}
 <div class="banner banner--orange">
   {{ icon("info", 16) }}
+  {% if payout.sample %}
   <span><strong>Mockup.</strong> Sample numbers for {{ payout.member }}. Nothing here is read from the payout sheet.</span>
+  {% else %}
+  <span><strong>No numbers yet.</strong> The layout is here. Balances and mutations show up once payouts are connected.</span>
+  {% endif %}
 </div>
 
 <div class="chip-group payout-switch" aria-label="Mockup views">
@@ -17,7 +21,7 @@
 <header class="page-header">
   <div>
     <h1 class="page-title">Your payout</h1>
-    <p class="page-subtitle">{{ payout.member }} · {{ guild.name }} · only your silver</p>
+    <p class="page-subtitle">{% if payout.member %}{{ payout.member }} · {% endif %}{{ guild.name }} · only your silver</p>
   </div>
 </header>
 

@@ -63,7 +63,20 @@
   if (data.page === "officer") renderOfficer();
 
   function renderMember() {
-    const rows = payout.mutations;
+    const rows = payout.mutations || [];
+    if (!rows.length) {
+      document.getElementById("payout-stats").innerHTML = [
+        stat("Open balance", "—", "grey"),
+        stat("Since last payout", "—", "grey"),
+        stat("Pickup from", "—", "grey"),
+      ].join("");
+      const callout = document.getElementById("payout-callout");
+      callout.className = "callout";
+      callout.innerHTML = "<div><strong>Nothing to show yet.</strong><p>When payouts are connected, this page shows your own balance, the lootsplits you were in, and your mutations.</p></div>";
+      document.getElementById("loot-cards").innerHTML = '<p class="muted">No lootsplits yet.</p>';
+      document.getElementById("mut-rows").innerHTML = '<tr><td colspan="4" class="muted">No mutations yet.</td></tr>';
+      return;
+    }
     const open = rows.reduce((sum, row) => sum + row.amount, 0);
     const lastPayout = rows.find((row) => row.kind === "payout");
     const since = lastPayout
@@ -169,6 +182,11 @@
 
     function drawRoster() {
       const query = who.value.trim().toLowerCase();
+      if (!payout.roster.length) {
+        document.getElementById("roster").innerHTML = '<p class="muted small">Names show up here once payouts are connected.</p>';
+        document.getElementById("picked").innerHTML = "";
+        return;
+      }
       document.getElementById("roster").innerHTML = payout.roster
         .filter((name) => !query || name.toLowerCase().includes(query))
         .map((name) => `<label class="loot-person"><input type="checkbox" value="${esc(name)}" ${picked.has(name) ? "checked" : ""}> ${esc(name)}</label>`)
@@ -186,9 +204,13 @@
       const raw = document.getElementById("raw-line");
       raw.textContent = total > 0 ? "Raw value " + silver(total, false) + " silver" : "Raw value shows up once both fields have a number.";
       const preview = document.getElementById("preview");
-      if (!state || !count || each <= 0) {
-        preview.hidden = true;
+      if (!payout.sample || !state || !count || each <= 0) {
+        preview.hidden = !state || !count || each <= 0;
         book.disabled = true;
+        if (!(!state || !count || each <= 0)) {
+          const booked = each * count;
+          preview.textContent = count + " × " + silver(each, false) + " = " + silver(booked, false) + " silver · " + stateName(state) + " (" + pct + "%)";
+        }
         return;
       }
       const booked = each * count;
@@ -204,6 +226,10 @@
     }
 
     function drawSplits() {
+      if (!splits.length) {
+        document.getElementById("split-list").innerHTML = '<p class="muted">No splits yet.</p>';
+        return;
+      }
       document.getElementById("split-list").innerHTML = splits
         .map((split, index) => {
           const total = split.market + split.bags;
@@ -233,7 +259,7 @@
       fineFields.hidden = true;
       who.value = "";
       document.getElementById("form-title").textContent = "New split";
-      document.getElementById("form-msg").textContent = "";
+      document.getElementById("form-msg").textContent = payout.sample ? "" : "Booking is off until payouts are connected.";
       book.textContent = "Book split";
       cancel.hidden = true;
       selectedState();
@@ -275,6 +301,7 @@
     });
 
     book.addEventListener("click", () => {
+      if (!payout.sample) return;
       const total = parseAmount(market.value) + parseAmount(bags.value);
       const entry = {
         date: new Date().toISOString().slice(0, 16),

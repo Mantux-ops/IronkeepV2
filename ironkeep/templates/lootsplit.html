@@ -6,7 +6,11 @@
 {% block main %}
 <div class="banner banner--orange">
   {{ icon("info", 16) }}
+  {% if payout.sample %}
   <span><strong>Mockup.</strong> Booking stays on this page. The payout sheet is not changed.</span>
+  {% else %}
+  <span><strong>No numbers yet.</strong> The form is here. Booking stays off until payouts are connected.</span>
+  {% endif %}
 </div>
 
 <div class="chip-group payout-switch" aria-label="Mockup views">

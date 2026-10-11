@@ -449,12 +449,28 @@ def members(slug: str, request: Request):
     return render(request, "members.html", guild=guild, nav="members", **prepared)
 
 
+def payout_page(request: Request):
+    """Sample figures stay on the local prototype. The live site shows the layout only."""
+    if config.live() or request.query_params.get("preview") == "empty":
+        return {
+            "member": "",
+            "threshold": None,
+            "pct": {"niet": 70, "repaired": 80},
+            "fine_pct": 10,
+            "mutations": [],
+            "roster": [],
+            "splits": [],
+            "sample": False,
+        }
+    return {**data.PAYOUT_MOCK, "sample": True}
+
+
 @app.get("/{slug}/payout", response_class=HTMLResponse)
 def payout_mock(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
-    return render(request, "payout.html", guild=guild, nav="payout", payout=data.PAYOUT_MOCK)
+    return render(request, "payout.html", guild=guild, nav="payout", payout=payout_page(request))
 
 
 @app.get("/{slug}/lootsplit", response_class=HTMLResponse)
@@ -462,7 +478,7 @@ def lootsplit_mock(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
-    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=data.PAYOUT_MOCK)
+    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=payout_page(request))
 
 
 @app.put("/api/{slug}/trials/{trial_id}")
