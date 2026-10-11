@@ -1,0 +1,55 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Your payout · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<div class="banner banner--orange">
+  {{ icon("info", 16) }}
+  <span><strong>Mockup.</strong> Sample numbers for {{ payout.member }}. Nothing here is read from the payout sheet.</span>
+</div>
+
+<div class="chip-group payout-switch" aria-label="Mockup views">
+  <a class="chip is-active" href="/{{ guild.slug }}/payout">Your payout</a>
+  <a class="chip" href="/{{ guild.slug }}/lootsplit">Book a lootsplit</a>
+</div>
+
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Your payout</h1>
+    <p class="page-subtitle">{{ payout.member }} · {{ guild.name }} · only your silver</p>
+  </div>
+</header>
+
+<section class="stat-grid stat-grid--3" id="payout-stats"></section>
+<div id="payout-callout"></div>
+
+<section class="section">
+  <h2 class="section-title">Lootsplits you were in</h2>
+  <div class="loot-cards" id="loot-cards"></div>
+</section>
+
+<section class="section">
+  <div class="section-head">
+    <h2 class="section-title">Mutations</h2>
+    <div class="chip-group" id="mut-filters" role="tablist" aria-label="Filter mutations"></div>
+  </div>
+  <div class="table-wrap">
+    <table class="table table--cards">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>What</th>
+          <th>Amount</th>
+          <th>Note</th>
+        </tr>
+      </thead>
+      <tbody id="mut-rows"></tbody>
+    </table>
+  </div>
+</section>
+
+<script id="page-data" type="application/json">{{ {"payout": payout, "page": "member"} | tojson }}</script>
+{% endblock %}
+
+{% block scripts %}<script src="{{ asset('js/payout.js') }}"></script>{% endblock %}

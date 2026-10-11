@@ -387,6 +387,46 @@ GUILDS = [
     },
 ]
 
+# Sample payouts for the clickable mockup. Not read from the Google sheet.
+PAYOUT_MOCK = {
+    "member": "Bram",
+    "threshold": 25_000_000,
+    "pct": {"niet": 70, "repaired": 80},
+    "fine_pct": 10,
+    "mutations": [
+        {"date": "2026-10-11", "kind": "lootsplit", "amount": 18_400_000, "note": "Lootsplit · Repaired (80%)", "state": "repaired", "pct": 80, "people": 12},
+        {"date": "2026-10-08", "kind": "lootsplit", "amount": 12_600_000, "note": "Lootsplit · Niet repaired (70%)", "state": "niet", "pct": 70, "people": 10},
+        {"date": "2026-10-05", "kind": "fine", "amount": -1_200_000, "note": "Boete - onjuiste lootsplit"},
+        {"date": "2026-09-28", "kind": "payout", "amount": -40_000_000, "note": "Payout collected"},
+        {"date": "2026-09-22", "kind": "lootsplit", "amount": 22_000_000, "note": "Lootsplit · Repaired (80%)", "state": "repaired", "pct": 80, "people": 9},
+        {"date": "2026-09-18", "kind": "other", "amount": 2_000_000, "note": "Regear"},
+        {"date": "2026-09-12", "kind": "lootsplit", "amount": 16_000_000, "note": "Lootsplit · Niet repaired (70%)", "state": "niet", "pct": 70, "people": 11},
+    ],
+    "roster": ["Sylas", "Bram", "Kaelen", "Orain", "Tharion", "Nymeria", "Luna", "Noor", "Pim", "Mira", "Ravenhold", "Isolde"],
+    "splits": [
+        {
+            "date": "2026-10-11T19:40:00",
+            "state": "repaired",
+            "market": 260_000_000,
+            "bags": 16_000_000,
+            "people": ["Sylas", "Bram", "Kaelen", "Orain", "Tharion", "Nymeria", "Luna", "Noor", "Pim", "Mira", "Ravenhold", "Isolde"],
+            "note": "",
+            "fine": False,
+        },
+        {
+            "date": "2026-10-08T21:05:00",
+            "state": "niet",
+            "market": 170_000_000,
+            "bags": 10_000_000,
+            "people": ["Sylas", "Bram", "Orain", "Tharion", "Nymeria", "Luna", "Noor", "Pim", "Ravenhold", "Isolde"],
+            "note": "",
+            "fine": True,
+            "fine_pct": 10,
+        },
+    ],
+}
+
+
 ERRORS = [
     {"at": _t(0, "07:41"), "guild": "northwind", "text": "Can't send messages in #perms", "detail": "Welcome message for a new member was not posted. Missing permission: Send Messages.", "resolved": False},
     {"at": _t(0, "09:14"), "guild": "dutchchaos", "text": "Role change failed for Luna", "detail": "Accepting the trial could not remove the Trial role. Missing permission: Manage Roles.", "resolved": False},

@@ -449,6 +449,22 @@ def members(slug: str, request: Request):
     return render(request, "members.html", guild=guild, nav="members", **prepared)
 
 
+@app.get("/{slug}/payout", response_class=HTMLResponse)
+def payout_mock(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    return render(request, "payout.html", guild=guild, nav="payout", payout=data.PAYOUT_MOCK)
+
+
+@app.get("/{slug}/lootsplit", response_class=HTMLResponse)
+def lootsplit_mock(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    return render(request, "lootsplit.html", guild=guild, nav="lootsplit", payout=data.PAYOUT_MOCK)
+
+
 @app.put("/api/{slug}/trials/{trial_id}")
 async def save_trial(slug: str, trial_id: int, request: Request):
     guild, error = guild_or_404(request, slug)

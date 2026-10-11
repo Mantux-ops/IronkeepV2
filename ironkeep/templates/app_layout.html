@@ -52,6 +52,8 @@
       <div class="nav__section">{{ guild.name }}</div>
       <a class="nav__item {% if nav == 'trials' %}is-active{% endif %}" href="/{{ guild.slug }}/trial">{{ icon("scale") }}<span>Trials</span></a>
       <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
+      <a class="nav__item {% if nav == 'payout' %}is-active{% endif %}" href="/{{ guild.slug }}/payout">{{ icon("inbox") }}<span>Payout</span></a>
+      <a class="nav__item {% if nav == 'lootsplit' %}is-active{% endif %}" href="/{{ guild.slug }}/lootsplit">{{ icon("flag") }}<span>Lootsplit</span></a>
       <a class="nav__item {% if nav == 'settings' %}is-active{% endif %}" href="/{{ guild.slug }}/settings">{{ icon("settings") }}<span>Settings</span></a>
       {% elif not viewer.superadmin %}
       <a class="nav__item" href="/trial">{{ icon("scale") }}<span>Trials</span></a>
