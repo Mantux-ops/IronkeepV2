@@ -4,6 +4,7 @@
 
   const esc = Ik.escape;
   const { roles, channels, guild, setupMode } = data;
+  const members = Array.isArray(data.members) ? data.members : [];
   const state = JSON.parse(JSON.stringify(data.settings));
   state.overview_enabled = true;
   if (!Array.isArray(state.trial_roles)) {
@@ -19,11 +20,14 @@
   else state.payout_view_roles = state.payout_view_roles.filter(Boolean).map(String);
   if (!Array.isArray(state.lootsplit_access_roles)) state.lootsplit_access_roles = [];
   else state.lootsplit_access_roles = state.lootsplit_access_roles.filter(Boolean).map(String);
+  if (!Array.isArray(state.lootsplit_access_users)) state.lootsplit_access_users = [];
+  else state.lootsplit_access_users = state.lootsplit_access_users.filter(Boolean).map(String);
   if (state.messages.reminder && state.messages.reminder.delivery !== "dm") state.messages.reminder.delivery = "channel";
   let saved = JSON.stringify(state);
 
   const botRole = roles.find((r) => r.bot) || roles.find((r) => r.managed && r.name === "Ironkeep");
   const roleById = (id) => roles.find((r) => r.id === id);
+  const memberById = (id) => members.find((person) => person.id === id);
   const channelById = (id) => channels.find((c) => c.id === id);
   const pickableRoles = roles.filter((r) => !r.everyone && !r.managed).sort((a, b) => b.position - a.position);
   const manageable = (role) => !botRole || role.position < botRole.position;
@@ -63,20 +67,30 @@
         if (kind === "role") {
           const role = roleById(id);
           if (!role) return "";
-          const remove = multi ? `<span class="picker__remove" role="button" tabindex="0" data-remove="${id}" aria-label="Remove ${esc(role.name)}">${Ik.icon("x", 12)}</span>` : "";
-          return Ik.roleChip(role, roles, remove);
+          const roleRemove = multi ? `<span class="picker__remove" role="button" tabindex="0" data-remove="${id}" aria-label="Remove ${esc(role.name)}">${Ik.icon("x", 12)}</span>` : "";
+          return Ik.roleChip(role, roles, roleRemove);
+        }
+        if (kind === "member") {
+          const person = memberById(id);
+          const label = person ? person.label : "Unknown member";
+          const color = person ? person.color : "#8d95a1";
+          const letter = person ? person.name : "?";
+          const remove = multi ? `<span class="picker__remove" role="button" tabindex="0" data-remove="${id}" aria-label="Remove ${esc(label)}">${Ik.icon("x", 12)}</span>` : "";
+          return `<span class="person-chip">${Ik.avatar(letter, color, "sm")}<span>${esc(label)}</span>${remove}</span>`;
         }
         const channel = channelById(id);
         return channel ? `<span class="channel">#${esc(channel.name)}</span>` : "";
       })
       .join("");
 
+    const placeholder = kind === "role" ? (multi ? "Choose roles…" : "Choose a role…") : kind === "member" ? "Choose people…" : "Choose a channel…";
+    const searchLabel = kind === "role" ? "roles" : kind === "member" ? "people" : "channels";
     el.innerHTML = `
       <div class="picker__field" role="button" tabindex="0" aria-haspopup="listbox" aria-expanded="${open}" data-picker-toggle>
-        ${chips || `<span class="picker__placeholder">${kind === "role" ? (multi ? "Choose roles…" : "Choose a role…") : "Choose a channel…"}</span>`}
+        ${chips || `<span class="picker__placeholder">${placeholder}</span>`}
       </div>
       ${open ? `<div class="picker__menu">
-        <input class="input picker__search" type="search" placeholder="Search ${kind === "role" ? "roles" : "channels"}" value="${esc(query)}">
+        <input class="input picker__search" type="search" placeholder="Search ${searchLabel}" value="${esc(query)}">
         <div class="picker__list">${pickerOptions(el, ids, query)}</div>
       </div>` : ""}`;
 
@@ -92,6 +106,24 @@
   function pickerOptions(el, ids, query) {
     const q = query.trim().toLowerCase();
     const needsManage = el.hasAttribute("data-manageable");
+    if (el.dataset.kind === "member") {
+      const options = members.filter((person) => {
+        if (!q) return true;
+        return person.label.toLowerCase().includes(q) || person.name.toLowerCase().includes(q) || (person.username || "").toLowerCase().includes(q);
+      });
+      if (!members.length) return '<div class="picker__empty">The member list is empty.</div>';
+      if (!options.length) return '<div class="picker__empty">No people match.</div>';
+      return options
+        .map((person) => {
+          const meta = person.username && person.label === person.name ? `<span class="picker__option-meta">@${esc(person.username)}</span>` : "";
+          return `<button class="picker__option ${ids.includes(person.id) ? "is-selected" : ""}" type="button" data-option="${person.id}">
+            ${Ik.avatar(person.name, person.color, "sm")}
+            <span class="picker__option-name">${esc(person.label)}</span>${meta}
+            <span class="picker__check">${Ik.icon("check", 15)}</span>
+          </button>`;
+        })
+        .join("");
+    }
     if (el.dataset.kind === "role") {
       const options = pickableRoles.filter((r) => !q || r.name.toLowerCase().includes(q));
       if (!options.length) return '<div class="picker__empty">No roles match.</div>';

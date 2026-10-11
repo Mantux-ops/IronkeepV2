@@ -2025,7 +2025,43 @@ a.albion-name:hover {
   width: 90px;
 }
 
-/* Role / channel picker */
+/* Role / channel / member picker */
+
+.picker-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.picker-block + .picker-block {
+  margin-top: 4px;
+}
+
+.picker-label {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.person-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 1px 6px 1px 2px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: var(--panel-3);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.person-chip .avatar {
+  width: 18px;
+  height: 18px;
+  font-size: 10px;
+}
 
 .picker {
   position: relative;
@@ -2135,6 +2171,12 @@ a.albion-name:hover {
 .picker__option .role-chip__dot {
   width: 10px;
   height: 10px;
+}
+
+.picker__option .avatar--sm {
+  width: 22px;
+  height: 22px;
+  font-size: 11px;
 }
 
 .picker__option-name {

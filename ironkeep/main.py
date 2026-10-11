@@ -126,13 +126,18 @@ def can_view_payout(session, guild):
 
 
 def can_book_lootsplit(session, guild):
-    """Lootsplit page. An empty setting keeps this with the recruitment roles."""
+    """Lootsplit page. An empty role list keeps this with the recruitment roles.
+
+    Named people are extra: they can open the page even without one of those roles.
+    """
     if _staff(session, guild):
         return True
     chosen = db.lootsplit_access_role_ids(guild["settings"])
-    if chosen:
-        return _holds(session, guild, chosen)
-    return _holds(session, guild, guild["settings"].get("recruitment_roles") or [])
+    roles = chosen or (guild["settings"].get("recruitment_roles") or [])
+    if _holds(session, guild, roles):
+        return True
+    people = set(db.lootsplit_access_user_ids(guild["settings"]))
+    return bool(session and str(session["user_id"]) in people)
 
 
 def can_open_guild(session, guild):
@@ -556,6 +561,43 @@ def payout_page(request: Request):
     return {**data.PAYOUT_MOCK, "sample": True}
 
 
+def directory_members(guild):
+    """People on the member list, ready for a settings picker."""
+    if config.live():
+        people = db.list_members(guild["id"])
+    else:
+        people = data.DEMO_MEMBERS.get(guild["slug"], [])
+    rows = []
+    for person in people:
+        user_id = str(person.get("user_id") or "").strip()
+        name = str(person.get("name") or "").strip()
+        if not user_id or not name:
+            continue
+        try:
+            color = db.PALETTE[int(user_id) % len(db.PALETTE)]
+        except ValueError:
+            color = "#8d95a1"
+        rows.append(
+            {
+                "id": user_id,
+                "name": name,
+                "username": str(person.get("username") or ""),
+                "color": color,
+            }
+        )
+    counts = {}
+    for row in rows:
+        key = row["name"].casefold()
+        counts[key] = counts.get(key, 0) + 1
+    for row in rows:
+        if counts[row["name"].casefold()] > 1 and row["username"]:
+            row["label"] = row["name"] + " (@" + row["username"] + ")"
+        else:
+            row["label"] = row["name"]
+    rows.sort(key=lambda item: item["label"].casefold())
+    return rows
+
+
 def lootsplit_names(guild):
     """Display names from the member list, limited to the roles chosen in settings."""
     chosen = db.lootsplit_role_ids(guild["settings"])
@@ -746,6 +788,7 @@ async def save_settings(slug: str, request: Request):
     saved["lootsplit_roles"] = db.lootsplit_role_ids(saved)
     saved["payout_view_roles"] = db.payout_view_role_ids(saved)
     saved["lootsplit_access_roles"] = db.lootsplit_access_role_ids(saved)
+    saved["lootsplit_access_users"] = db.lootsplit_access_user_ids(saved)
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
@@ -761,7 +804,7 @@ def settings(slug: str, request: Request):
     blocked = deny_unless(request, guild, "trials")
     if blocked:
         return blocked
-    return render(request, "settings.html", guild=guild, nav="settings", setup_mode=False)
+    return render(request, "settings.html", guild=guild, nav="settings", setup_mode=False, members=directory_members(guild))
 
 
 @app.get("/{slug}/setup", response_class=HTMLResponse)
@@ -772,4 +815,4 @@ def setup(slug: str, request: Request):
     blocked = deny_unless(request, guild, "trials")
     if blocked:
         return blocked
-    return render(request, "settings.html", guild=guild, nav="settings", setup_mode=True)
+    return render(request, "settings.html", guild=guild, nav="settings", setup_mode=True, members=directory_members(guild))
