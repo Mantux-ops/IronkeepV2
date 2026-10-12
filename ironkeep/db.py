@@ -663,6 +663,28 @@ def create_trial(guild, user_id, name, username, *, start, content_roles, albion
     return trial_id
 
 
+def sync_trial_identity(guild_id, user_id, name, username, settings):
+    """Keep an open trial's Discord name in step with a nickname or username change."""
+    trial = open_trial(guild_id, user_id)
+    name = (name or "").strip()
+    username = (username or "").strip()
+    if trial is None or not name:
+        return
+    if name == trial["name"] and username == trial["username"]:
+        return
+    timeline = list(trial["timeline"])
+    if name != trial["name"]:
+        timeline.append({"type": "system", "at": now_stamp(settings), "text": f"Discord name changed from {trial['name']} to {name}"})
+    with _LOCK:
+        conn = connect()
+        conn.execute(
+            "UPDATE trials SET name = ?, username = ?, timeline_json = ? WHERE id = ?",
+            (name, username or trial["username"], json.dumps(timeline), trial["id"]),
+        )
+        conn.commit()
+        conn.close()
+
+
 def update_trial_roles(trial_id, content_roles, lost_content_role, timeline_text, settings):
     with _LOCK:
         conn = connect()

@@ -79,6 +79,7 @@ def consider_member(guild_row, member, *, known_new, before_ids=None):
 
     if existing is None:
         return
+    db.sync_trial_identity(guild_row["id"], member.id, member.display_name, member.name, settings)
     lost = bool(existing["content_roles"]) and not content
     note = None
     if content != existing["content_roles"]:
@@ -331,14 +332,19 @@ def main():
 
     @client.event
     async def on_member_update(before, after):
-        if before.roles == after.roles:
+        roles_changed = before.roles != after.roles
+        identity_changed = before.display_name != after.display_name or before.name != after.name or before.nick != after.nick
+        if not roles_changed and not identity_changed:
             return
         row = db.guild_by_id(after.guild.id)
         if row is None or row["approval"] != "approved":
             return
         if not after.bot:
             db.upsert_member(row["id"], _member_record(after))
-        consider_member(row, after, known_new=True, before_ids={str(role.id) for role in before.roles})
+        if roles_changed:
+            consider_member(row, after, known_new=True, before_ids={str(role.id) for role in before.roles})
+        elif identity_changed and not after.bot:
+            db.sync_trial_identity(row["id"], after.id, after.display_name, after.name, row["settings"])
 
     async def _hourly():
         nonlocal albion_after
