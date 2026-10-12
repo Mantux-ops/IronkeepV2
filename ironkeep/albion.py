@@ -113,11 +113,33 @@ def _exact(items, name):
     return matches[0] if len(matches) == 1 else None
 
 
+def player_detail(region, found):
+    """Read lifetime fame from the player page.
+
+    The guild member list includes LifetimeStatistics, but those numbers stay
+    frozen while the player is online. The player page moves.
+    """
+    if not found or not found.get("Id"):
+        return None
+    try:
+        detail = _get(region, f"/api/gameinfo/players/{found['Id']}")
+    except AlbionError as error:
+        if error.status == 429:
+            raise
+        log.warning("Albion player lookup failed: %s", error)
+        detail = None
+    if detail and detail.get("LifetimeStatistics"):
+        return detail
+    if found.get("LifetimeStatistics"):
+        return found
+    return None
+
+
 def find_player(region, name, guild_members):
     for candidate in name_candidates(name):
         found = _exact(guild_members, candidate)
         if found:
-            return found
+            return player_detail(region, found)
     for candidate in name_candidates(name):
         quoted = urllib.parse.quote(candidate)
         try:
@@ -128,16 +150,8 @@ def find_player(region, name, guild_members):
             log.warning("Albion search failed for a trial name: %s", error)
             return None
         found = _exact((payload or {}).get("players"), candidate)
-        if found and found.get("LifetimeStatistics"):
-            return found
-        if found and found.get("Id"):
-            try:
-                return _get(region, f"/api/gameinfo/players/{found['Id']}")
-            except AlbionError as error:
-                if error.status == 429:
-                    raise
-                log.warning("Albion player lookup failed: %s", error)
-                return None
+        if found:
+            return player_detail(region, found)
     return None
 
 
