@@ -45,18 +45,32 @@ def _session(request: Request):
     return db.get_session(request.cookies.get(SESSION_COOKIE))
 
 
-def viewer(request: Request):
+def viewer(request: Request, guild=None):
     if not config.live():
         if request.cookies.get(VIEW_COOKIE) == "recruiter":
-            return {**data.RECRUITER, "superadmin": False, "role": "recruiter"}
-        return {**data.SUPERADMIN, "superadmin": True, "role": "superadmin"}
+            person = {**data.RECRUITER, "superadmin": False, "role": "recruiter"}
+        else:
+            person = {**data.SUPERADMIN, "superadmin": True, "role": "superadmin"}
+        person["names"] = [person["name"]]
+        return person
     session = _session(request)
     if not session:
-        return {"id": "", "name": "Guest", "color": "#8d95a1", "superadmin": False, "role": "guest"}
+        return {"id": "", "name": "Guest", "names": ["Guest"], "color": "#8d95a1", "superadmin": False, "role": "guest"}
+    account = session["name"]
+    name = account
+    if guild is not None:
+        server_name = db.member_server_name(guild["id"], session["user_id"])
+        if server_name:
+            name = server_name
+    names = []
+    for item in (name, account):
+        if item and item not in names:
+            names.append(item)
     superadmin = session["user_id"] == config.SUPERADMIN_ID
     return {
         "id": session["user_id"],
-        "name": session["name"],
+        "name": name,
+        "names": names,
         "username": session["username"],
         "color": db.PALETTE[int(session["user_id"]) % len(db.PALETTE)],
         "superadmin": superadmin,
@@ -203,7 +217,7 @@ def visible_guilds(request: Request):
 
 
 def render(request: Request, template: str, status_code: int = 200, **context):
-    context.setdefault("viewer", viewer(request))
+    context.setdefault("viewer", viewer(request, context.get("guild")))
     context.setdefault("guilds", visible_guilds(request))
     if config.live():
         context.setdefault("today", date.today().isoformat())
@@ -737,7 +751,7 @@ async def give_verdict(slug: str, trial_id: int, request: Request):
     updated = db.record_verdict(
         trial_id,
         kind=kind,
-        by=viewer(request)["name"],
+        by=viewer(request, guild)["name"],
         reason=(body.get("reason") or "").strip(),
         role_note=role_note,
         message_note=message_note,
