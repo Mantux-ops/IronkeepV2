@@ -587,6 +587,23 @@ def remove_member(guild_id, user_id):
         conn.close()
 
 
+def member_server_name(guild_id, user_id):
+    """The name this person uses in the Discord server. A nickname wins over the account name."""
+    if not config.DB_PATH or not guild_id or not user_id:
+        return None
+    conn = connect()
+    row = conn.execute(
+        "SELECT name, nick FROM members WHERE guild_id = ? AND user_id = ?",
+        (str(guild_id), str(user_id)),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    nick = (row["nick"] or "").strip()
+    name = (row["name"] or "").strip()
+    return nick or name or None
+
+
 def list_members(guild_id):
     conn = connect()
     rows = conn.execute("SELECT * FROM members WHERE guild_id = ? ORDER BY name COLLATE NOCASE", (str(guild_id),)).fetchall()

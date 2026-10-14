@@ -3,6 +3,7 @@
   if (!data || !document.getElementById("trial-rows")) return;
 
   const { settings, roles, channels, guild, viewer, today } = data;
+  const viewerNames = new Set([viewer, ...(data.viewerNames || [])].filter(Boolean));
   const trials = data.trials;
   const esc = Ik.escape;
 
@@ -517,7 +518,7 @@
     return `<ol class="timeline">${entries
       .map((e) => {
         if (e.type === "observation") {
-          const mine = e.author === viewer;
+          const mine = viewerNames.has(e.author);
           const editing = state.editing === e.index;
           const body = editing
             ? `<textarea class="input textarea" rows="3" data-edit-text>${esc(e.text)}</textarea>
