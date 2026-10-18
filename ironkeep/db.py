@@ -266,6 +266,14 @@ def init():
                 joined_at TEXT,
                 PRIMARY KEY (guild_id, user_id)
             );
+            CREATE TABLE IF NOT EXISTS raid_signups (
+                guild_id TEXT NOT NULL,
+                raid_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                seat TEXT NOT NULL,
+                PRIMARY KEY (guild_id, raid_id, user_id)
+            );
             CREATE TABLE IF NOT EXISTS errors (
                 id INTEGER PRIMARY KEY,
                 at TEXT NOT NULL,
@@ -602,6 +610,39 @@ def member_server_name(guild_id, user_id):
     nick = (row["nick"] or "").strip()
     name = (row["name"] or "").strip()
     return nick or name or None
+
+
+def list_raid_signups(guild_id):
+    if not config.DB_PATH:
+        return []
+    conn = connect()
+    rows = conn.execute(
+        "SELECT raid_id, user_id, name, seat FROM raid_signups WHERE guild_id = ? ORDER BY name COLLATE NOCASE",
+        (str(guild_id),),
+    ).fetchall()
+    conn.close()
+    return [{"raid_id": row["raid_id"], "user_id": row["user_id"], "name": row["name"], "seat": row["seat"]} for row in rows]
+
+
+def set_raid_signup(guild_id, raid_id, user_id, name, seat):
+    """seat is roster, reserve, or None to remove the person from this raid."""
+    if not config.DB_PATH:
+        return
+    with _LOCK:
+        conn = connect()
+        if seat is None:
+            conn.execute(
+                "DELETE FROM raid_signups WHERE guild_id = ? AND raid_id = ? AND user_id = ?",
+                (str(guild_id), raid_id, str(user_id)),
+            )
+        else:
+            conn.execute(
+                """INSERT INTO raid_signups (guild_id, raid_id, user_id, name, seat) VALUES (?, ?, ?, ?, ?)
+                   ON CONFLICT(guild_id, raid_id, user_id) DO UPDATE SET name = excluded.name, seat = excluded.seat""",
+                (str(guild_id), raid_id, str(user_id), name, seat),
+            )
+        conn.commit()
+        conn.close()
 
 
 def list_members(guild_id):

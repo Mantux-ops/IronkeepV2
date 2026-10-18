@@ -1,0 +1,62 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Raids · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<div class="banner banner--accent">
+  {{ icon("info", 16) }}
+  <span><strong>World of Warcraft: Forever.</strong> These raids open 9 Dec 2026. Names are Discord members. Classes are not linked yet.</span>
+</div>
+
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Raids</h1>
+    <p class="page-subtitle">{{ guild.name }} · a full group stays full. Extra people go on the reserve.</p>
+  </div>
+</header>
+
+<div class="raid-grid" id="raid-grid">
+  {% for raid in raids %}
+  <article class="card raid-card" data-raid="{{ raid.id }}">
+    <div class="card__head">
+      <div>
+        <h2 class="card__title">{{ raid.name }}</h2>
+        <p class="card__desc">{{ raid.detail }} Opens {{ raid.opens }}.</p>
+      </div>
+      <div class="raid-count-wrap">
+        <span class="raid-count" data-count>0 / {{ raid.size }}</span>
+        <span class="raid-count__label">on the raid</span>
+      </div>
+    </div>
+    <div class="raid-seats">
+      <section>
+        <h3 class="raid-seat__title">On the raid</h3>
+        <div class="raid-list" data-roster></div>
+      </section>
+      <section>
+        <h3 class="raid-seat__title">Reserve <span class="muted" data-reserve-count>0</span></h3>
+        <div class="raid-list" data-reserve></div>
+      </section>
+    </div>
+    <div class="raid-add">
+      <label class="search raid-search">
+        {{ icon("search", 16) }}
+        <input type="search" data-search placeholder="Search a member to add" autocomplete="off" aria-label="Search a member to add to {{ raid.name }}">
+      </label>
+      <div class="raid-results" data-results hidden></div>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script id="page-data" type="application/json">{{ {
+  "slug": guild.slug,
+  "raids": raids,
+  "signups": signups,
+  "people": people
+} | tojson }}</script>
+<script src="{{ asset('js/raids.js') }}"></script>
+{% endblock %}

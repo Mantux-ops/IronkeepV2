@@ -53,6 +53,7 @@
       {% if access.trials %}
       <a class="nav__item {% if nav == 'trials' %}is-active{% endif %}" href="/{{ guild.slug }}/trial">{{ icon("scale") }}<span>Trials</span></a>
       <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
+      <a class="nav__item {% if nav == 'raids' %}is-active{% endif %}" href="/{{ guild.slug }}/raids">{{ icon("flag") }}<span>Raids</span></a>
       {% endif %}
       {% if access.payout %}
       <a class="nav__item {% if nav == 'payout' %}is-active{% endif %}" href="/{{ guild.slug }}/payout">{{ icon("inbox") }}<span>Payout</span></a>

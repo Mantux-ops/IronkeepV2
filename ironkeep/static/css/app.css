@@ -3119,3 +3119,106 @@ a.chip {
     grid-template-columns: 1fr;
   }
 }
+
+/* Forever raids */
+
+.raid-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.raid-count-wrap {
+  text-align: right;
+  flex-shrink: 0;
+}
+
+.raid-count {
+  display: block;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+}
+
+.raid-count.is-full {
+  color: var(--orange);
+}
+
+.raid-count__label {
+  display: block;
+  margin-top: 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.raid-seats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-top: 16px;
+}
+
+.raid-seat__title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text-2);
+  margin-bottom: 8px;
+}
+
+.raid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 36px;
+}
+
+.raid-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+.raid-row__name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.raid-add {
+  margin-top: 16px;
+}
+
+.raid-search {
+  width: 100%;
+}
+
+.raid-search input {
+  width: 100%;
+  min-width: 0;
+}
+
+.raid-results {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 220px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+@media (max-width: 700px) {
+  .raid-seats {
+    grid-template-columns: 1fr;
+  }
+
+  .raid-row .button--sm {
+    padding: 5px 8px;
+  }
+}

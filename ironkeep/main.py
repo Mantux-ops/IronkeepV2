@@ -559,6 +559,115 @@ def members(slug: str, request: Request):
     return render(request, "members.html", guild=guild, nav="members", **prepared)
 
 
+FOREVER_RAIDS = [
+    {"id": "barrow", "name": "Barrow Deeps", "size": 10, "opens": "9 Dec 2026", "detail": "The 10-player raid. About eight bosses."},
+    {"id": "hyjal", "name": "Hyjal Summit", "size": 20, "opens": "9 Dec 2026", "detail": "The 20-player raid. Same tier as the 10."},
+    {"id": "onyxia", "name": "Onyxia's Lair", "size": 40, "opens": "9 Dec 2026", "detail": "The 40-player guild night."},
+]
+_RAID_MEMORY = {}
+
+
+def _raid_by_id(raid_id):
+    return next((raid for raid in FOREVER_RAIDS if raid["id"] == raid_id), None)
+
+
+def _seed_raid_memory(guild_id):
+    if guild_id in _RAID_MEMORY:
+        return _RAID_MEMORY[guild_id]
+    sample = [
+        ("barrow", "9001", "Sylas", "roster"),
+        ("barrow", "9002", "Bram", "roster"),
+        ("barrow", "9004", "Mira", "roster"),
+        ("barrow", "9003", "Kaelen", "reserve"),
+        ("hyjal", "9001", "Sylas", "roster"),
+        ("hyjal", "9006", "Noor", "roster"),
+        ("hyjal", "9005", "Pim", "reserve"),
+    ]
+    _RAID_MEMORY[guild_id] = [
+        {"raid_id": raid_id, "user_id": user_id, "name": name, "seat": seat} for raid_id, user_id, name, seat in sample
+    ]
+    return _RAID_MEMORY[guild_id]
+
+
+def raid_signups(guild):
+    if config.live():
+        return db.list_raid_signups(guild["id"])
+    return list(_seed_raid_memory(guild["id"]))
+
+
+def raid_people(guild):
+    source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
+    people = []
+    for person in source:
+        user_id = str(person.get("user_id") or "").strip()
+        name = str(person.get("name") or "").strip()
+        if user_id and name:
+            people.append({"id": user_id, "name": name})
+    people.sort(key=lambda item: item["name"].casefold())
+    return people
+
+
+def save_raid_seat(guild, raid, user_id, name, seat):
+    """Put someone on the raid, on the reserve, or take them off. A full raid stays full."""
+    current = [row for row in raid_signups(guild) if row["raid_id"] == raid["id"]]
+    others = [row for row in current if row["user_id"] != user_id]
+    if seat == "roster" and sum(1 for row in others if row["seat"] == "roster") >= raid["size"]:
+        return "This raid is full. Put them on the reserve."
+    if config.live():
+        db.set_raid_signup(guild["id"], raid["id"], user_id, name, seat)
+    else:
+        stored = [row for row in _seed_raid_memory(guild["id"]) if not (row["raid_id"] == raid["id"] and row["user_id"] == user_id)]
+        if seat is not None:
+            stored.append({"raid_id": raid["id"], "user_id": user_id, "name": name, "seat": seat})
+        _RAID_MEMORY[guild["id"]] = stored
+    return None
+
+
+@app.get("/{slug}/raids", response_class=HTMLResponse)
+def raids(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    return render(
+        request,
+        "raids.html",
+        guild=guild,
+        nav="raids",
+        raids=FOREVER_RAIDS,
+        signups=raid_signups(guild),
+        people=raid_people(guild),
+    )
+
+
+@app.post("/api/{slug}/raids/{raid_id}")
+async def save_raid(slug: str, raid_id: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    raid = _raid_by_id(raid_id)
+    if raid is None:
+        return JSONResponse({"error": "Unknown raid."}, status_code=404)
+    body = await request.json()
+    seat = body.get("seat")
+    if seat not in ("roster", "reserve", None):
+        return JSONResponse({"error": "Pick the raid or the reserve."}, status_code=400)
+    user_id = str(body.get("user_id") or "")
+    person = next((item for item in raid_people(guild) if item["id"] == user_id), None)
+    if person is None:
+        return JSONResponse({"error": "That person is not on the member list."}, status_code=400)
+    message = save_raid_seat(guild, raid, user_id, person["name"], seat)
+    if message:
+        return JSONResponse({"error": message}, status_code=400)
+    signups = [row for row in raid_signups(guild) if row["raid_id"] == raid_id]
+    return {"signups": signups}
+
+
 def payout_page(request: Request):
     """Sample figures stay on the local prototype. The live site shows the layout only."""
     if config.live() or request.query_params.get("preview") == "empty":
