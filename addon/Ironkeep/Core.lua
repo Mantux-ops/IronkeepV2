@@ -16,7 +16,7 @@ ticker:SetPoint("TOPLEFT", UIParent, "TOPLEFT", 0, 0)
 ticker:EnableMouse(false)
 
 function Ironkeep.Print(message)
-	print("|cffc6a15aIronkeep|r " .. tostring(message))
+	print("|cff2dd4bfIronkeep|r " .. tostring(message))
 end
 
 function Ironkeep.Init()
