@@ -1,0 +1,88 @@
+name: Companion
+
+on:
+  push:
+    paths:
+      - "companion/**"
+      - ".github/workflows/companion.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Build with the .NET Framework compiler that ships with Windows
+        working-directory: companion
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          New-Item -ItemType Directory -Force out | Out-Null
+          & $csc /nologo /target:exe /platform:anycpu /optimize+ /out:out\IronkeepCompanion.exe /main:Ironkeep.Program /win32manifest:app.manifest /resource:sample-Ironkeep.lua,sample-Ironkeep.lua Saved.cs Program.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $csc /nologo /target:exe /out:out\CompanionTests.exe /main:Ironkeep.SavedTests /resource:sample-Ironkeep.lua,sample-Ironkeep.lua Saved.cs Program.cs SavedTests.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Test
+        working-directory: companion
+        run: |
+          .\out\CompanionTests.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File test.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = (.\out\IronkeepCompanion.exe --sample 2>$null) -join "`n"
+          $ps = (powershell.exe -NoProfile -ExecutionPolicy Bypass -File IronkeepCompanion.ps1 --sample 2>$null) -join "`n"
+          Write-Output $exe
+          if ($exe -ne $ps) { Write-Error 'The exe and the script print different lists.'; exit 1 }
+
+      - name: Scan with Microsoft Defender
+        working-directory: companion
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          try { Set-MpPreference -MAPSReporting Advanced -SubmitSamplesConsent SendAllSamples -CloudBlockLevel High } catch { Write-Output "Cloud settings: $_" }
+          & $mp -SignatureUpdate | Out-Host
+          Get-MpComputerStatus | Format-List AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
+
+          New-Item -ItemType Directory -Force earlier | Out-Null
+          cmd /c "git show d041f33:companion/IronkeepCompanion.exe > earlier\go.exe"
+          cmd /c "git show 3f314d2:companion/IronkeepCompanion.exe > earlier\mono.exe"
+
+          $flagged = $false
+          foreach ($file in @('out\IronkeepCompanion.exe', 'earlier\go.exe', 'earlier\mono.exe')) {
+            $path = (Resolve-Path $file).Path
+            & $mp -Scan -ScanType 3 -File $path -DisableRemediation | Out-Host
+            $code = $LASTEXITCODE
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash
+            Write-Output "$file  exit $code  sha256 $hash"
+            if ($file -eq 'out\IronkeepCompanion.exe' -and $code -ne 0) { $flagged = $true }
+          }
+          try { Get-MpThreatDetection | Format-List | Out-Host } catch { }
+          if ($flagged) { Write-Error 'Defender flagged the new build.'; exit 1 }
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IronkeepCompanion
+          path: |
+            companion/out/IronkeepCompanion.exe
+            companion/IronkeepCompanion.ps1
+            companion/IronkeepCompanion.cmd
+
+      - name: Publish the download
+        if: github.ref == 'refs/heads/cursor/forever-companion-f675'
+        working-directory: companion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $hash = (Get-FileHash out\IronkeepCompanion.exe -Algorithm SHA256).Hash
+          $notes = "Reads the group list the Ironkeep addon saves and prints it. It does not change the game and does not send anything.`n`nBuilt from $env:GITHUB_SHA by the Companion workflow and scanned by Microsoft Defender before publishing.`n`nSHA256: $hash"
+          gh release delete companion-latest --yes --cleanup-tag 2>$null
+          gh release create companion-latest out\IronkeepCompanion.exe IronkeepCompanion.ps1 IronkeepCompanion.cmd --prerelease --target $env:GITHUB_SHA --title 'Ironkeep Companion' --notes $notes
