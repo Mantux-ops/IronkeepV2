@@ -1,5 +1,5 @@
--- The in-game list, drawn with the same colors, type, and mark as ironkeep.gg.
--- Drag the title. The report box is there to copy.
+-- The group as the site shows a raid: by role, not as a table.
+-- Drag the title. Copy list opens the text. It stays on this computer.
 
 Ironkeep = Ironkeep or {}
 Ironkeep.Window = {}
@@ -10,7 +10,6 @@ local FONT_SEMI = MEDIA .. "Inter-SemiBold.ttf"
 
 local BG = { 0.047, 0.055, 0.071, 1 }
 local PANEL = { 0.075, 0.086, 0.110, 1 }
-local PANEL_2 = { 0.094, 0.110, 0.137, 1 }
 local PANEL_3 = { 0.118, 0.137, 0.169, 1 }
 local BORDER = { 0.141, 0.165, 0.200, 1 }
 local BORDER_STRONG = { 0.192, 0.220, 0.263, 1 }
@@ -20,11 +19,12 @@ local MUTED = { 0.553, 0.584, 0.631, 1 }
 local ACCENT = { 0.176, 0.831, 0.749, 1 }
 local ACCENT_STRONG = { 0.369, 0.918, 0.831, 1 }
 local ACCENT_INK = { 0.024, 0.145, 0.129, 1 }
+local GREEN = { 0.247, 0.824, 0.561, 1 }
+local GREEN_BG = { 0.247, 0.824, 0.561, 0.10 }
 local RED_BG = { 0.949, 0.427, 0.427, 0.10 }
 local RED_BORDER = { 0.949, 0.427, 0.427, 0.40 }
 local RED_TEXT = { 1, 0.612, 0.612, 1 }
 
-local ROW_H = 24
 local ROW_CAP = 200
 
 local CLASS_COLOR = {
@@ -91,6 +91,10 @@ local function paintButton(button, hover)
 		bg = hover and RED_BG or { 0, 0, 0, 0 }
 		border = RED_BORDER
 		text = RED_TEXT
+	elseif button.kind == "quiet" then
+		bg = { 0, 0, 0, 0 }
+		border = { 0, 0, 0, 0 }
+		text = hover and TEXT or MUTED
 	elseif hover then
 		border = BORDER_STRONG
 	end
@@ -124,6 +128,27 @@ local function button(parent, label, width, kind)
 	return widget
 end
 
+local function pill(parent)
+	local frame = CreateFrame("Frame", nil, parent)
+	frame:SetHeight(20)
+	frame.bg = solid(frame)
+	frame.bg:SetAllPoints()
+	frame.label = face(frame:CreateFontString(nil, "OVERLAY"), 11, true)
+	frame.label:SetPoint("CENTER")
+	frame:Hide()
+	return frame
+end
+
+local function showPill(frame, text, fg, bg)
+	frame.label:SetText(text)
+	frame.label:SetTextColor(fg[1], fg[2], fg[3])
+	local width = frame.label:GetStringWidth() or 0
+	if width < 8 then width = #text * 7 end
+	frame:SetWidth(width + 14)
+	tint(frame.bg, bg)
+	frame:Show()
+end
+
 local function savePoint()
 	if not window or not Ironkeep.db then return end
 	local point, _, _, x, y = window:GetPoint(1)
@@ -135,12 +160,9 @@ end
 local function setConfirm(on)
 	if not window or not window.clear then return end
 	window.confirming = on and true or false
-	window.refresh:SetShown(not on)
-	window.previous:SetShown(not on)
-	window.clear:SetShown(not on)
-	window.confirmText:SetShown(on)
-	window.confirmYes:SetShown(on)
-	window.confirmNo:SetShown(on)
+	window.confirmText:SetShown(window.confirming)
+	window.confirmYes:SetShown(window.confirming)
+	window.confirmNo:SetShown(window.confirming)
 end
 
 local function kindLabel(instanceType)
@@ -149,91 +171,131 @@ local function kindLabel(instanceType)
 	return "Group"
 end
 
-local function counts(session)
-	local here, gone = 0, 0
-	if not session then return here, gone end
-	for _, person in pairs(session.people) do
-		if person.present then here = here + 1 else gone = gone + 1 end
-	end
-	return here, gone
-end
-
-local function applyRow(row, person, session)
-	if not person then
+local function applyRow(row, item, session)
+	if not item then
 		row:Hide()
 		return
 	end
 	row:Show()
-	local name = person.name or "Unknown"
-	if session.instanceType == "raid" and person.subgroup then
-		name = person.subgroup .. "  " .. name
+	if item.kind == "lane" then
+		row.swatch:Hide()
+		row.group:SetText("")
+		row.name:SetText(item.label)
+		row.name:ClearAllPoints()
+		row.name:SetPoint("LEFT", 4, 0)
+		if item.key == "LEFT" then
+			row.name:SetTextColor(RED_TEXT[1], RED_TEXT[2], RED_TEXT[3])
+		else
+			row.name:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
+		end
+		row.count:SetText(tostring(item.count))
+		row.count:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+		local width = row.name:GetStringWidth() or 0
+		if width < 8 then width = #item.label * 8 end
+		row.count:ClearAllPoints()
+		row.count:SetPoint("LEFT", row.name, "LEFT", width + 8, 0)
+		row.time:SetText("")
+		return
 	end
-	row.name:SetText(name)
-	local color = CLASS_COLOR[person.classFile]
+
+	local person = item.person
+	row.swatch:Show()
+	local color = CLASS_COLOR[person.classFile] or ACCENT
 	local alpha = person.present and 1 or 0.45
-	if color then
-		row.name:SetTextColor(color[1], color[2], color[3], alpha)
-		row.swatch:SetVertexColor(color[1], color[2], color[3], alpha)
+	row.swatch:SetVertexColor(color[1], color[2], color[3], alpha)
+	row.name:ClearAllPoints()
+	row.name:SetPoint("RIGHT", row.time, "LEFT", -8, 0)
+	row.name:SetText(person.name or "Unknown")
+	row.name:SetTextColor(color[1], color[2], color[3], alpha)
+	if session.instanceType == "raid" and person.subgroup then
+		row.group:SetText(tostring(person.subgroup))
+		row.name:SetPoint("LEFT", row.group, "RIGHT", 4, 0)
 	else
-		row.name:SetTextColor(TEXT[1], TEXT[2], TEXT[3], alpha)
-		row.swatch:SetVertexColor(ACCENT[1], ACCENT[2], ACCENT[3], alpha)
+		row.group:SetText("")
+		row.name:SetPoint("LEFT", row.swatch, "RIGHT", 8, 0)
 	end
-	row.className:SetText(person.className or "")
-	row.role:SetText(Ironkeep.Group.RoleLabel(person.role))
+	row.count:SetText("")
 	local seen = Ironkeep.Group.Seen(person)
 	if person.present then
-		row.seen:SetText(seen)
-		row.seen:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
-		row.className:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
-		row.role:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
+		row.time:SetText(seen)
+		row.time:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 	else
-		row.seen:SetText(seen .. " left")
-		row.seen:SetTextColor(RED_TEXT[1], RED_TEXT[2], RED_TEXT[3])
-		row.className:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-		row.role:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+		row.time:SetText(seen)
+		row.time:SetTextColor(RED_TEXT[1], RED_TEXT[2], RED_TEXT[3])
 	end
 end
 
 local function makeRow(parent, index)
 	local row = CreateFrame("Frame", nil, parent)
-	row:SetSize(484, ROW_H)
-	row:SetPoint("TOPLEFT", 0, -((index - 1) * ROW_H))
-	local line = solid(row, "BORDER")
-	line:SetPoint("BOTTOMLEFT", 8, 0)
-	line:SetPoint("BOTTOMRIGHT", -8, 0)
-	line:SetHeight(1)
-	tint(line, BORDER)
+	row:SetSize(396, 22)
 	row.swatch = solid(row, "ARTWORK")
-	row.swatch:SetPoint("LEFT", 10, 0)
 	row.swatch:SetSize(8, 8)
-	row.name = face(row:CreateFontString(nil, "OVERLAY"), 12, true)
-	row.name:SetPoint("LEFT", 24, 0)
-	row.name:SetWidth(166)
+	row.swatch:SetPoint("LEFT", 2, 0)
+	row.group = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.group:SetPoint("LEFT", 16, 0)
+	row.group:SetWidth(14)
+	row.group:SetJustifyH("LEFT")
+	row.group:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+	row.time = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.time:SetPoint("RIGHT", -2, 0)
+	row.time:SetWidth(52)
+	row.time:SetJustifyH("RIGHT")
+	row.name = face(row:CreateFontString(nil, "OVERLAY"), 13, true)
 	row.name:SetJustifyH("LEFT")
 	row.name:SetWordWrap(false)
 	if row.name.SetMaxLines then row.name:SetMaxLines(1) end
-	row.className = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
-	row.className:SetPoint("LEFT", 196, 0)
-	row.className:SetWidth(84)
-	row.className:SetJustifyH("LEFT")
-	row.role = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
-	row.role:SetPoint("LEFT", 286, 0)
-	row.role:SetWidth(74)
-	row.role:SetJustifyH("LEFT")
-	row.seen = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
-	row.seen:SetPoint("LEFT", 366, 0)
-	row.seen:SetWidth(100)
-	row.seen:SetJustifyH("LEFT")
+	row.count = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
 	row:Hide()
 	rows[index] = row
 	return row
+end
+
+local function placePills()
+	local x = 16
+	local function put(frame)
+		if not frame:IsShown() then return end
+		frame:ClearAllPoints()
+		frame:SetPoint("TOPLEFT", window, "TOPLEFT", x, -50)
+		x = x + frame:GetWidth() + 6
+	end
+	put(window.kindPill)
+	put(window.herePill)
+	put(window.leftPill)
+	window.started:ClearAllPoints()
+	if x > 16 then
+		window.started:SetPoint("TOPLEFT", window, "TOPLEFT", x + 2, -52)
+		window.started:Show()
+	else
+		window.started:Hide()
+	end
+end
+
+local function layoutChrome()
+	local open = window.reportOpen and true or false
+	local confirm = window.confirming and true or false
+	local hasPrevious = Ironkeep.db and Ironkeep.db.lastReport and true or false
+	window.copy:SetShown(not confirm)
+	window.clear:SetShown(not confirm)
+	window.previous:SetShown(not confirm and hasPrevious)
+	window.reportLabel:SetShown(open and not confirm)
+	window.reportScroll:SetShown(open)
+	window.reportBorder:SetShown(open)
+	window.scroll:ClearAllPoints()
+	window.scroll:SetPoint("TOPLEFT", 12, -80)
+	window.scroll:SetPoint("BOTTOMRIGHT", -12, open and 168 or 52)
+	window.copy:SetText(open and "Hide" or "Copy list")
+	if Ironkeep.showingPrevious then
+		window.previous:SetText("Current")
+	else
+		window.previous:SetText("Previous")
+	end
 end
 
 function Ironkeep.Window.Build()
 	if window then return end
 
 	window = frameWithBackdrop("IronkeepFrame", UIParent)
-	window:SetSize(500, 560)
+	window:SetSize(420, 480)
 	window:SetFrameStrata("MEDIUM")
 	window:SetClampedToScreen(true)
 	window:SetMovable(true)
@@ -252,7 +314,7 @@ function Ironkeep.Window.Build()
 	local title = CreateFrame("Frame", nil, window)
 	title:SetPoint("TOPLEFT", 8, -8)
 	title:SetPoint("TOPRIGHT", -8, -8)
-	title:SetHeight(44)
+	title:SetHeight(36)
 	title:EnableMouse(true)
 	title:RegisterForDrag("LeftButton")
 	title:SetScript("OnDragStart", function() window:StartMoving() end)
@@ -262,94 +324,70 @@ function Ironkeep.Window.Build()
 	end)
 
 	local logo = title:CreateTexture(nil, "ARTWORK")
-	logo:SetSize(28, 28)
+	logo:SetSize(22, 22)
 	logo:SetPoint("LEFT", 8, 0)
 	logo:SetTexture(MEDIA .. "logo.tga")
 
-	local titleText = face(title:CreateFontString(nil, "OVERLAY"), 16, true)
-	titleText:SetPoint("LEFT", logo, "RIGHT", 8, 0)
-	titleText:SetText("Ironkeep")
-	titleText:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
-
-	local close = button(title, "Close", 58, "ghost")
-	close:SetPoint("RIGHT", -4, 0)
+	local close = button(title, "Close", 48, "quiet")
+	close:SetPoint("RIGHT", -2, 0)
 	close:SetScript("OnClick", function() Ironkeep.Window.Hide() end)
 
-	local rule = solid(window, "BORDER")
-	rule:SetPoint("TOPLEFT", 8, -52)
-	rule:SetPoint("TOPRIGHT", -8, -52)
-	rule:SetHeight(1)
-	tint(rule, BORDER)
-
-	window.place = face(window:CreateFontString(nil, "OVERLAY"), 14, true)
-	window.place:SetPoint("TOPLEFT", 16, -60)
-	window.place:SetWidth(468)
+	window.place = face(title:CreateFontString(nil, "OVERLAY"), 16, true)
+	window.place:SetPoint("LEFT", logo, "RIGHT", 8, 0)
+	window.place:SetPoint("RIGHT", close, "LEFT", -8, 0)
 	window.place:SetJustifyH("LEFT")
+	window.place:SetWordWrap(false)
 	window.place:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
 
-	window.summary = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
-	window.summary:SetPoint("TOPLEFT", 16, -80)
-	window.summary:SetWidth(468)
-	window.summary:SetJustifyH("LEFT")
-	window.summary:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-
-	local columns = CreateFrame("Frame", nil, window)
-	columns:SetPoint("TOPLEFT", 8, -112)
-	columns:SetSize(484, 28)
-	local columnFill = solid(columns)
-	columnFill:SetAllPoints()
-	tint(columnFill, PANEL_2)
-	local columnLine = solid(columns, "BORDER")
-	columnLine:SetPoint("BOTTOMLEFT")
-	columnLine:SetPoint("BOTTOMRIGHT")
-	columnLine:SetHeight(1)
-	tint(columnLine, BORDER)
-
-	local function column(text, x)
-		local label = face(columns:CreateFontString(nil, "OVERLAY"), 11, true)
-		label:SetPoint("LEFT", columns, "LEFT", x, 0)
-		label:SetText(text)
-		label:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-	end
-	column("NAME", 24)
-	column("CLASS", 196)
-	column("ROLE", 286)
-	column("SEEN", 366)
+	window.kindPill = pill(window)
+	window.herePill = pill(window)
+	window.leftPill = pill(window)
+	window.started = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
+	window.started:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
 	local scroll = CreateFrame("ScrollFrame", nil, window)
-	scroll:SetPoint("TOPLEFT", 8, -140)
-	scroll:SetPoint("BOTTOMRIGHT", -8, 168)
+	scroll:SetPoint("TOPLEFT", 12, -80)
+	scroll:SetPoint("BOTTOMRIGHT", -12, 52)
 	scroll:EnableMouseWheel(true)
 	scroll:SetScript("OnMouseWheel", function(self, delta)
-		local nextScroll = self:GetVerticalScroll() - delta * ROW_H * 2
+		local nextScroll = self:GetVerticalScroll() - delta * 44
 		local maxScroll = self:GetVerticalScrollRange()
 		if nextScroll < 0 then nextScroll = 0 end
 		if nextScroll > maxScroll then nextScroll = maxScroll end
 		self:SetVerticalScroll(nextScroll)
 	end)
-
 	local child = CreateFrame("Frame", nil, scroll)
-	child:SetSize(484, ROW_H)
+	child:SetSize(396, 22)
 	scroll:SetScrollChild(child)
+	window.scroll = scroll
 	window.list = child
 
-	local refresh = button(window, "Refresh", 84, "accent")
-	refresh:SetPoint("BOTTOMLEFT", 16, 124)
-	refresh:SetScript("OnClick", function()
-		setConfirm(false)
-		Ironkeep.Refresh()
-	end)
+	window.empty = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
+	window.empty:SetPoint("TOPLEFT", 16, -88)
+	window.empty:SetWidth(388)
+	window.empty:SetJustifyH("LEFT")
+	window.empty:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
 
-	local previous = button(window, "Previous", 84, "ghost")
-	previous:SetPoint("LEFT", refresh, "RIGHT", 8, 0)
-	previous:SetScript("OnClick", function()
+	local copy = button(window, "Copy list", 96, "accent")
+	copy:SetPoint("BOTTOMLEFT", 16, 14)
+	copy:SetScript("OnClick", function()
 		setConfirm(false)
-		Ironkeep.showingPrevious = not Ironkeep.showingPrevious
+		window.reportOpen = not window.reportOpen
+		if not window.reportOpen then Ironkeep.showingPrevious = false end
 		Ironkeep.Window.Update()
 	end)
 
-	local clear = button(window, "Clear", 84, "danger")
-	clear:SetPoint("LEFT", previous, "RIGHT", 8, 0)
+	local previous = button(window, "Previous", 84, "ghost")
+	previous:SetPoint("LEFT", copy, "RIGHT", 8, 0)
+	previous:SetScript("OnClick", function()
+		setConfirm(false)
+		Ironkeep.showingPrevious = not Ironkeep.showingPrevious
+		window.reportOpen = true
+		Ironkeep.Window.Update()
+	end)
+
+	local clear = button(window, "Clear", 64, "danger")
+	clear:SetPoint("BOTTOMRIGHT", -16, 14)
 	clear:SetScript("OnClick", function()
 		if not Ironkeep.db or not Ironkeep.db.session then return end
 		setConfirm(true)
@@ -357,39 +395,43 @@ function Ironkeep.Window.Build()
 	end)
 
 	local confirmText = face(window:CreateFontString(nil, "OVERLAY"), 12, true)
-	confirmText:SetPoint("BOTTOMLEFT", 16, 130)
+	confirmText:SetPoint("BOTTOMLEFT", 16, 20)
 	confirmText:SetText("Clear this list?")
 	confirmText:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
 	confirmText:Hide()
 
-	local confirmNo = button(window, "Cancel", 84, "ghost")
-	confirmNo:SetPoint("BOTTOMRIGHT", -16, 124)
+	local confirmNo = button(window, "Cancel", 72, "ghost")
+	confirmNo:SetPoint("BOTTOMRIGHT", -16, 14)
 	confirmNo:SetScript("OnClick", function()
 		setConfirm(false)
 		Ironkeep.Window.Update()
 	end)
 	confirmNo:Hide()
 
-	local confirmYes = button(window, "Clear", 84, "danger")
+	local confirmYes = button(window, "Clear", 64, "danger")
 	confirmYes:SetPoint("RIGHT", confirmNo, "LEFT", -8, 0)
 	confirmYes:SetScript("OnClick", function()
 		setConfirm(false)
+		window.reportOpen = false
 		Ironkeep.ClearSession()
 	end)
 	confirmYes:Hide()
 
 	local reportLabel = face(window:CreateFontString(nil, "OVERLAY"), 11, false)
-	reportLabel:SetPoint("BOTTOMLEFT", 16, 104)
+	reportLabel:SetPoint("BOTTOMLEFT", 16, 112)
 	reportLabel:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-	reportLabel:SetText("Report. Click it, then copy. It stays on this computer.")
+	reportLabel:SetText("Click the text, then copy. It stays on this computer.")
+	reportLabel:Hide()
 
 	local reportScroll = CreateFrame("ScrollFrame", nil, window)
-	reportScroll:SetPoint("BOTTOMLEFT", 16, 14)
-	reportScroll:SetSize(468, 84)
+	reportScroll:SetPoint("BOTTOMLEFT", 16, 48)
+	reportScroll:SetSize(388, 58)
+	reportScroll:Hide()
 	local reportBorder = frameWithBackdrop(nil, window)
 	reportBorder:SetPoint("TOPLEFT", reportScroll, "TOPLEFT", -4, 4)
 	reportBorder:SetPoint("BOTTOMRIGHT", reportScroll, "BOTTOMRIGHT", 4, -4)
 	reportBorder:SetFrameLevel(window:GetFrameLevel())
+	reportBorder:Hide()
 	if not card(reportBorder, "input-edge.tga", "input-bg.tga") then
 		local fill = solid(reportBorder)
 		fill:SetAllPoints()
@@ -401,18 +443,20 @@ function Ironkeep.Window.Build()
 	reportBox:SetMultiLine(true)
 	reportBox:SetAutoFocus(false)
 	face(reportBox, 11, false)
-	reportBox:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
-	reportBox:SetWidth(452)
+	reportBox:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
+	reportBox:SetWidth(372)
 	reportBox:SetMaxLetters(8000)
-	if reportBox.SetTextInsets then reportBox:SetTextInsets(8, 8, 6, 6) end
+	if reportBox.SetTextInsets then reportBox:SetTextInsets(8, 8, 4, 4) end
 	reportBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 	reportBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
 	reportBox:SetScript("OnEditFocusLost", function() Ironkeep.Window.Update() end)
 	reportScroll:SetScrollChild(reportBox)
 
 	window.reportLabel = reportLabel
+	window.reportScroll = reportScroll
+	window.reportBorder = reportBorder
+	window.copy = copy
 	window.previous = previous
-	window.refresh = refresh
 	window.clear = clear
 	window.confirmText = confirmText
 	window.confirmYes = confirmYes
@@ -441,54 +485,70 @@ function Ironkeep.Window.Update()
 	local db = Ironkeep.db
 	local session = db and db.session
 	if not session then setConfirm(false) end
+
+	window.kindPill:Hide()
+	window.herePill:Hide()
+	window.leftPill:Hide()
 	if not session then
 		window.place:SetText("No group yet")
-		window.summary:SetText("Join a party or a raid. The list fills itself, also while this window is closed.")
+		window.empty:SetText("Join a party or a raid. The list fills itself, also while this window is closed.")
+		window.empty:Show()
 	else
-		local here, gone = counts(session)
-		local place = session.place or "Unknown"
-		window.place:SetText(place .. " - " .. kindLabel(session.instanceType))
-		local summary = here .. " here"
-		if gone > 0 then summary = summary .. " - " .. gone .. " left" end
-		if session.started and date then
-			summary = summary .. " - started " .. date("%H:%M", session.started)
+		local here, gone = 0, 0
+		for _, person in pairs(session.people) do
+			if person.present then here = here + 1 else gone = gone + 1 end
 		end
-		if here == 0 then
-			summary = summary .. " - kept until you clear it"
+		window.place:SetText(session.place or "Unknown")
+		showPill(window.kindPill, kindLabel(session.instanceType), TEXT_2, PANEL_3)
+		showPill(window.herePill, here .. " here", GREEN, GREEN_BG)
+		if gone > 0 then showPill(window.leftPill, gone .. " left", RED_TEXT, RED_BG) end
+		window.empty:Hide()
+	end
+	if session and session.started and date then
+		window.started:SetText(date("%H:%M", session.started))
+	else
+		window.started:SetText("")
+	end
+	placePills()
+
+	local items = Ironkeep.Group.Lanes(session)
+	if #items > ROW_CAP then
+		local trimmed = {}
+		for i = 1, ROW_CAP do trimmed[i] = items[i] end
+		items = trimmed
+	end
+	local y = 0
+	for i = 1, #items do
+		local item = items[i]
+		local row = rows[i] or makeRow(window.list, i)
+		local height = 22
+		local gap = 0
+		if item.kind == "lane" then
+			height = 24
+			if i > 1 then gap = 10 end
 		end
-		window.summary:SetText(summary)
+		row:ClearAllPoints()
+		row:SetPoint("TOPLEFT", 0, -(y + gap))
+		row:SetHeight(height)
+		applyRow(row, item, session or {})
+		y = y + gap + height
 	end
+	for i = #items + 1, #rows do rows[i]:Hide() end
+	window.list:SetHeight(math.max(y, 1))
 
-	local people = Ironkeep.Group.Rows(session)
-	local shown = math.min(#people, ROW_CAP)
-	local child = window.list
-	child:SetHeight(math.max(shown, 1) * ROW_H)
-	for i = 1, shown do
-		applyRow(rows[i] or makeRow(child, i), people[i], session or {})
-	end
-	for i = shown + 1, #rows do
-		rows[i]:Hide()
-	end
-
+	layoutChrome()
+	if not window.reportOpen then return end
 	if reportBox.HasFocus and reportBox:HasFocus() then return end
 	local text
-	if window.confirming then
-		window.reportLabel:SetText("People still in the group start a new list.")
-	elseif Ironkeep.showingPrevious then
+	if Ironkeep.showingPrevious then
 		text = (db and db.lastReport) or "Ironkeep group\n\nNo previous list."
-		window.reportLabel:SetText("Previous list. Click it, then copy.")
-		window.previous:SetText("Current")
+		window.reportLabel:SetText("Previous list. Click the text, then copy.")
 	else
 		text = Ironkeep.Group.Report(session, time and time() or 0)
-		window.reportLabel:SetText("Report. Click it, then copy. It stays on this computer.")
-		window.previous:SetText("Previous")
+		window.reportLabel:SetText("Click the text, then copy. It stays on this computer.")
 	end
-	if window.confirming then
-		text = text or ((db and db.session) and Ironkeep.Group.Report(db.session, time and time() or 0) or "")
-	end
-	if not text then return end
 	local _, breaks = text:gsub("\n", "\n")
-	reportBox:SetHeight(math.max(84, (breaks + 1) * 14))
+	reportBox:SetHeight(math.max(58, (breaks + 1) * 14))
 	if reportBox._last ~= text then
 		reportBox:SetText(text)
 		reportBox._last = text

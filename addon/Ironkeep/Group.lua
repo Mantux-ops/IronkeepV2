@@ -234,6 +234,42 @@ function Ironkeep.Group.RoleLabel(role)
 	return ROLE_LABEL[role] or ""
 end
 
+local LANES = {
+	{ key = "TANK", label = "Tank" },
+	{ key = "HEALER", label = "Healer" },
+	{ key = "DAMAGER", label = "DPS" },
+	{ key = "NONE", label = "Group" },
+	{ key = "LEFT", label = "Left" },
+}
+
+-- The site lists a raid by role, not as one table. People who left sit in their own lane.
+function Ironkeep.Group.Lanes(session)
+	local items = {}
+	if not session then return items end
+	local buckets = { TANK = {}, HEALER = {}, DAMAGER = {}, NONE = {}, LEFT = {} }
+	local people = Ironkeep.Group.Rows(session)
+	for i = 1, #people do
+		local person = people[i]
+		if person.present then
+			local key = buckets[person.role] and person.role or "NONE"
+			buckets[key][#buckets[key] + 1] = person
+		else
+			buckets.LEFT[#buckets.LEFT + 1] = person
+		end
+	end
+	for i = 1, #LANES do
+		local lane = LANES[i]
+		local list = buckets[lane.key]
+		if #list > 0 then
+			items[#items + 1] = { kind = "lane", key = lane.key, label = lane.label, count = #list }
+			for n = 1, #list do
+				items[#items + 1] = { kind = "person", person = list[n] }
+			end
+		end
+	end
+	return items
+end
+
 function Ironkeep.Group.Report(session, now)
 	if not session then
 		return "Ironkeep group\n\nNobody recorded yet."

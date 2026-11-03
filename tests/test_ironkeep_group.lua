@@ -74,6 +74,12 @@ assertTrue(not ada:find("20m", 1, true))
 assertTrue(report:find("Chehul", 1, true) < report:find("Ada", 1, true), "people still inside sort first")
 assertTrue(report:find("format: ironkeep-group 1", 1, true))
 
+local lanes = Ironkeep.Group.Lanes(session)
+assertTrue(lanes[1].kind == "lane" and lanes[1].label == "Healer" and lanes[1].count == 1, "people still inside sit under their role")
+assertTrue(lanes[2].kind == "person" and lanes[2].person.name == "Chehul Druida")
+assertTrue(lanes[3].kind == "lane" and lanes[3].label == "Left", "someone who left is not a row in the role")
+assertTrue(lanes[4].kind == "person" and lanes[4].person.name == "Ada")
+
 local kept = nil
 for _, row in pairs(session.people) do
 	if row.name == "Chehul Druida" then kept = row.role end
