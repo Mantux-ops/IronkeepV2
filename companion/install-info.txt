@@ -1,0 +1,5 @@
+Ironkeep Companion leest de groepslijst die de addon bewaart als je uitlogt of /reload typt.
+
+Het programma verandert niets aan het spel en stuurt de lijst nergens heen.
+
+Na de installatie staat het in het startmenu. De map van WoW: Forever wordt zelf gezocht, eerst op G: en daarna op C:. Staat het spel ergens anders, dan kies je die map in het venster.

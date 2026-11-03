@@ -1,15 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
-using System.Text;
-
-[assembly: AssemblyTitle("Ironkeep Companion")]
-[assembly: AssemblyDescription("Reads the Ironkeep group list saved by the WoW: Forever addon. It does not change the game and does not send the list anywhere.")]
-[assembly: AssemblyCompany("Ironkeep")]
-[assembly: AssemblyProduct("Ironkeep")]
-[assembly: AssemblyVersion("1.0.0.0")]
-[assembly: AssemblyFileVersion("1.0.0.0")]
 
 namespace Ironkeep
 {
@@ -62,7 +53,7 @@ namespace Ironkeep
             path = "";
             if (args.Length == 0)
             {
-                foreach (string folder in DefaultWowFolders())
+                foreach (string folder in Saved.DefaultWowFolders())
                 {
                     var files = Saved.SavedFiles(folder);
                     if (files.Count == 0) continue;
@@ -83,10 +74,7 @@ namespace Ironkeep
             }
             if (args.Length == 2 && args[0] == "--wow")
             {
-                var files = Saved.SavedFiles(args[1]);
-                if (files.Count == 0)
-                    throw new SavedException("No Ironkeep.lua under " + args[1] + ". Log out once so the addon can write it.");
-                path = Saved.Newest(files);
+                path = Saved.FindSaved(args[1]);
                 return Saved.LoadPath(path);
             }
             if (args.Length == 1 && !args[0].StartsWith("-"))
@@ -95,14 +83,6 @@ namespace Ironkeep
                 return Saved.LoadPath(path);
             }
             return null;
-        }
-
-        static string[] DefaultWowFolders()
-        {
-            return new string[] {
-                @"G:\World of Warcraft\_forever_",
-                @"C:\World of Warcraft\_forever_"
-            };
         }
 
         static string AccountName(string path)
@@ -115,12 +95,7 @@ namespace Ironkeep
 
         static string SampleText()
         {
-            using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("sample-Ironkeep.lua"))
-            {
-                if (stream == null) throw new SavedException("The built-in sample is missing.");
-                using (var reader = new StreamReader(stream, Encoding.UTF8))
-                    return reader.ReadToEnd();
-            }
+            return Saved.EmbeddedSample();
         }
 
         static string Usage()

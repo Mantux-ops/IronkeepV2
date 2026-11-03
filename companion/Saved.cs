@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Text;
 
 namespace Ironkeep
@@ -9,6 +10,25 @@ namespace Ironkeep
     public class SavedException : Exception
     {
         public SavedException(string message) : base(message) { }
+    }
+
+    public sealed class PersonLine
+    {
+        public string Name = "";
+        public string ClassName = "";
+        public string ClassFile = "";
+        public string Role = "";
+        public string Time = "";
+        public bool Here;
+    }
+
+    public sealed class GroupList
+    {
+        public string Place = "";
+        public string Started = "";
+        public string Text = "";
+        public bool Previous;
+        public readonly List<PersonLine> People = new List<PersonLine>();
     }
 
     public static class Saved
@@ -58,6 +78,24 @@ namespace Ironkeep
             return Load(text);
         }
 
+        public static string EmbeddedSample()
+        {
+            using (Stream stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("sample-Ironkeep.lua"))
+            {
+                if (stream == null) throw new SavedException("The built-in sample is missing.");
+                using (var reader = new StreamReader(stream, Encoding.UTF8))
+                    return reader.ReadToEnd();
+            }
+        }
+
+        public static string[] DefaultWowFolders()
+        {
+            return new string[] {
+                @"G:\World of Warcraft\_forever_",
+                @"C:\World of Warcraft\_forever_"
+            };
+        }
+
         public static List<string> SavedFiles(string wowDir)
         {
             string root = Path.Combine(wowDir, "WTF", "Account");
@@ -90,20 +128,78 @@ namespace Ironkeep
             return best;
         }
 
+        public static string FindSaved(string start)
+        {
+            if (start == null) start = "";
+            start = start.Trim().Trim('"').Replace('/', Path.DirectorySeparatorChar);
+            start = start.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (start.Length == 0)
+                throw new SavedException("No Ironkeep.lua yet. Log out of WoW once so the addon can write it.");
+            if (File.Exists(start))
+            {
+                if (string.Equals(Path.GetFileName(start), "Ironkeep.lua", StringComparison.OrdinalIgnoreCase))
+                    return start;
+                throw new SavedException("No Ironkeep.lua under " + start + ".");
+            }
+            if (!Directory.Exists(start))
+                throw new SavedException("No Ironkeep.lua under " + start + ".");
+
+            string direct = Path.Combine(start, "Ironkeep.lua");
+            if (File.Exists(direct)) return direct;
+            string inAccount = Path.Combine(start, "SavedVariables", "Ironkeep.lua");
+            if (File.Exists(inAccount)) return inAccount;
+
+            var files = SavedFiles(start);
+            if (files.Count > 0) return Newest(files);
+
+            if (string.Equals(Path.GetFileName(start), "WTF", StringComparison.OrdinalIgnoreCase))
+            {
+                string parent = Path.GetDirectoryName(start);
+                if (parent != null)
+                {
+                    files = SavedFiles(parent);
+                    if (files.Count > 0) return Newest(files);
+                }
+            }
+            throw new SavedException("No Ironkeep.lua under " + start + ". Log out once so the addon can write it.");
+        }
+
+        public static GroupList Describe(Dictionary<object, object> db)
+        {
+            var group = new GroupList();
+            object session;
+            if (db != null && db.TryGetValue("session", out session) && session is Dictionary<object, object>)
+            {
+                Fill(group, (Dictionary<object, object>)session, null);
+                group.Text = Format(group);
+                return group;
+            }
+            object previous;
+            if (db != null && db.TryGetValue("lastReport", out previous) && previous is string && ((string)previous).Trim().Length > 0)
+            {
+                group.Previous = true;
+                group.Text = (string)previous;
+                return group;
+            }
+            group.Text = "Ironkeep group\n\nNobody recorded yet.";
+            return group;
+        }
+
         public static string TextFor(Dictionary<object, object> db)
         {
-            object session;
-            if (db.TryGetValue("session", out session) && session is Dictionary<object, object>)
-                return Report((Dictionary<object, object>)session, null);
-            object previous;
-            if (db.TryGetValue("lastReport", out previous) && previous is string && ((string)previous).Trim().Length > 0)
-                return (string)previous;
-            return "Ironkeep group\n\nNobody recorded yet.";
+            return Describe(db).Text;
         }
 
         public static string Report(Dictionary<object, object> session, string startedAt)
         {
             if (session == null) return "Ironkeep group\n\nNobody recorded yet.";
+            var group = new GroupList();
+            Fill(group, session, startedAt);
+            return Format(group);
+        }
+
+        static void Fill(GroupList group, Dictionary<object, object> session, string startedAt)
+        {
             if (startedAt == null)
             {
                 double started;
@@ -112,29 +208,42 @@ namespace Ironkeep
                 else
                     startedAt = "";
             }
+            group.Started = startedAt;
             string place = AsString(Get(session, "place"));
-            if (place.Length == 0) place = "Unknown";
-            var lines = new List<string> {
-                "Ironkeep group",
-                "Place: " + place,
-                "Started: " + startedAt,
-                "",
-                "Name | Class | Role | Time | Status"
-            };
-            var people = Rows(session);
-            foreach (var person in people)
+            group.Place = place.Length == 0 ? "Unknown" : place;
+            foreach (var person in Rows(session))
             {
-                string status = Get(person, "present") is bool && (bool)Get(person, "present") ? "here" : "left";
-                string name = AsString(Get(person, "name"));
-                if (name.Length == 0) name = "Unknown";
-                string className = AsString(Get(person, "className"));
-                if (className.Length == 0) className = AsString(Get(person, "classFile"));
+                var line = new PersonLine();
+                line.Here = Get(person, "present") is bool && (bool)Get(person, "present");
+                line.Name = AsString(Get(person, "name"));
+                if (line.Name.Length == 0) line.Name = "Unknown";
+                line.ClassName = AsString(Get(person, "className"));
+                if (line.ClassName.Length == 0) line.ClassName = AsString(Get(person, "classFile"));
+                line.ClassFile = AsString(Get(person, "classFile"));
                 string role = AsString(Get(person, "role"));
                 string label;
                 if (!RoleLabel.TryGetValue(role, out label)) label = "";
-                lines.Add(string.Join(" | ", new string[] { name, className, label, Seen(person), status }));
+                line.Role = label;
+                line.Time = Seen(person);
+                group.People.Add(line);
             }
-            if (people.Count == 0) lines.Add("Nobody recorded yet.");
+        }
+
+        static string Format(GroupList group)
+        {
+            var lines = new List<string> {
+                "Ironkeep group",
+                "Place: " + group.Place,
+                "Started: " + group.Started,
+                "",
+                "Name | Class | Role | Time | Status"
+            };
+            if (group.People.Count == 0) lines.Add("Nobody recorded yet.");
+            foreach (var person in group.People)
+            {
+                string status = person.Here ? "here" : "left";
+                lines.Add(string.Join(" | ", new string[] { person.Name, person.ClassName, person.Role, person.Time, status }));
+            }
             lines.Add("");
             lines.Add("format: ironkeep-group 1");
             return string.Join("\n", lines.ToArray());

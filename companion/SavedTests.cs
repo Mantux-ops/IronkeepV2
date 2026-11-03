@@ -16,6 +16,7 @@ namespace Ironkeep
             MissingListIsRefused();
             NewestAccountFileIsChosen();
             SampleCommandPrintsTheGroup();
+            DescribeSampleHasThreePeople();
             if (failures > 0)
             {
                 Console.Error.WriteLine(failures + " failed");
@@ -54,6 +55,7 @@ namespace Ironkeep
         {
             var db = Saved.Load("IronkeepDB = { [\"lastReport\"] = \"Ironkeep group\\n\\nformat: ironkeep-group 1\" }\n");
             Check(Saved.TextFor(db) == "Ironkeep group\n\nformat: ironkeep-group 1", "previous report");
+            Check(Saved.Describe(db).Previous && Saved.Describe(db).People.Count == 0, "previous flag");
         }
 
         static void ACallInTheFileIsRefused()
@@ -84,6 +86,11 @@ namespace Ironkeep
             File.SetLastWriteTimeUtc(older, new DateTime(2000, 1, 1, 0, 0, 0, DateTimeKind.Utc));
             File.SetLastWriteTimeUtc(newer, new DateTime(2000, 1, 2, 0, 0, 0, DateTimeKind.Utc));
             Check(Saved.Newest(Saved.SavedFiles(wow)) == newer, "newest file");
+            Check(Saved.FindSaved(wow) == newer, "find under wow");
+            Check(Saved.FindSaved(newer) == newer, "find file");
+            Check(Saved.FindSaved(Path.GetDirectoryName(newer)) == newer, "find savedvariables");
+            string wtf = Path.Combine(wow, "WTF");
+            Check(Saved.FindSaved(wtf) == newer, "find wtf");
             var stdout = new StringWriter();
             var stderr = new StringWriter();
             int code = Program.Run(new string[] { "--wow", wow }, stdout, stderr);
@@ -102,6 +109,19 @@ namespace Ironkeep
             Check(code == 0, "sample exit " + stderr);
             Check(stdout.ToString().Contains("Hall of Thanes"), "place");
             Check(stdout.ToString().Contains("Dain Frost | Mage | Damage | 5m | left"), "left");
+        }
+
+        static void DescribeSampleHasThreePeople()
+        {
+            GroupList group = Saved.Describe(Saved.LoadPath("sample-Ironkeep.lua"));
+            Check(group.People.Count == 3, "count " + group.People.Count);
+            Check(!group.Previous, "not previous");
+            Check(group.Place == "Hall of Thanes", "place " + group.Place);
+            Check(group.People[0].Name == "Ada Smith" && group.People[0].Here && group.People[0].ClassFile == "WARRIOR", "ada");
+            Check(group.People[1].Name == "Bram Holt" && group.People[1].Role == "Healer", "bram");
+            Check(group.People[2].Name == "Dain Frost" && !group.People[2].Here && group.People[2].Role == "Damage", "dain");
+            Check(group.Text.Contains("format: ironkeep-group 1"), "text");
+            Check(Saved.Describe(Saved.Load(Saved.EmbeddedSample())).Place == "Hall of Thanes", "embedded");
         }
     }
 }
