@@ -8,7 +8,7 @@
 <header class="page-header">
   <div>
     <h1 class="page-title">Members</h1>
-    <p class="page-subtitle">{{ guild.name }} · everyone in the Discord server. Trials stay on the Trials page.</p>
+    <p class="page-subtitle">{{ guild.name }} · everyone in the Discord server. The main is the character they raid on.</p>
   </div>
   <button class="button button--outline" type="button" id="sync-members">{{ icon("users", 16) }} Sync members</button>
 </header>
@@ -39,6 +39,7 @@
       <thead>
         <tr>
           <th>Name</th>
+          <th>Character</th>
           <th>Status</th>
           <th>Roles</th>
           <th>Joined</th>
@@ -46,7 +47,7 @@
       </thead>
       <tbody>
         {% for person in people %}
-        <tr data-search="{{ (person.name ~ ' ' ~ person.username ~ ' ' ~ (person.nick or '')) | lower }}" data-roles="{{ person.filter_roles | join(',') }}">
+        <tr data-search="{{ (person.name ~ ' ' ~ person.username ~ ' ' ~ (person.nick or '') ~ ' ' ~ (person.character_search or '')) | lower }}" data-roles="{{ person.filter_roles | join(',') }}">
           <td data-label="Name">
             <span class="cell-user">{{ avatar(person.name, person.color) }}
               <span>
@@ -54,6 +55,19 @@
                 <span class="cell-user__sub">@{{ person.username }}</span>
               </span>
             </span>
+          </td>
+          <td data-label="Character">
+            {% if person.main %}
+            <a class="character-ref" href="/{{ guild.slug }}/characters">
+              <span class="class-swatch" style="background: {{ person.main.color }}"></span>
+              <span>
+                <span class="character-ref__name" style="color: {{ person.main.color }}">{{ person.main.name }}</span>
+                <span class="cell-user__sub">{{ person.main.class_name }} · {{ person.main.spec_name }}{% if person.alt_count %} · {{ person.alt_count }} alt{% if person.alt_count != 1 %}s{% endif %}{% endif %}</span>
+              </span>
+            </a>
+            {% else %}
+            <a class="character-ref__add" href="/{{ guild.slug }}/characters">Add character</a>
+            {% endif %}
           </td>
           <td data-label="Status">{{ pill(person.status, person.tone) }}</td>
           <td data-label="Roles">{% if person.labels %}{{ person.labels | join(", ") }}{% else %}<span class="muted">—</span>{% endif %}</td>
