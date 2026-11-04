@@ -1,6 +1,7 @@
 import os
 import shutil
 import tempfile
+import threading
 import unittest
 
 from fastapi.testclient import TestClient
@@ -160,7 +161,44 @@ class AttendanceTests(unittest.TestCase):
             self.assertFalse(first.json()["duplicate"])
             self.assertTrue(second.json()["duplicate"])
             self.assertEqual(db.count_attendance(stored["id"]), 1)
+            self.assertEqual(db.count_attendance_hashes(stored["id"]), 1)
             self.assertIn("Hall of Thanes", client.get("/foreverguild/raids").text)
+
+            for index in range(20):
+                report = REPORT.replace("Ada Smith", "Ada Smith %s" % index)
+                posted = client.post("/api/foreverguild/attendance", content=report, headers=headers)
+                self.assertEqual(posted.status_code, 200)
+                self.assertFalse(posted.json()["duplicate"])
+            self.assertEqual(db.count_attendance(stored["id"]), 20)
+            self.assertEqual(db.count_attendance_hashes(stored["id"]), 21)
+            oldest = client.post("/api/foreverguild/attendance", content=REPORT, headers=headers)
+            self.assertEqual(oldest.status_code, 200)
+            self.assertTrue(oldest.json()["duplicate"])
+            self.assertEqual(oldest.json()["place"], "Hall of Thanes")
+            self.assertEqual(oldest.json()["people"], 3)
+            self.assertEqual(db.count_attendance(stored["id"]), 20)
+            self.assertEqual(db.count_attendance_hashes(stored["id"]), 21)
+
+            barrier = threading.Barrier(4)
+            raced = []
+
+            def post_same():
+                barrier.wait()
+                raced.append(db.add_attendance(stored["id"], {
+                    "place": "Hall of Thanes",
+                    "started": "2026-11-01 12:00",
+                    "received_at": "2026-11-04T19:00:00+00:00",
+                    "people": [],
+                    "digest": attendance.digest(REPORT.replace("Ada Smith", "Raced Smith")),
+                }))
+
+            threads = [threading.Thread(target=post_same) for _ in range(4)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(sum(1 for saved_row in raced if saved_row), 1)
+            self.assertEqual(db.count_attendance_hashes(stored["id"]), 22)
         finally:
             config.BOT_TOKEN, config.CLIENT_ID, config.CLIENT_SECRET, config.DB_PATH = old
             shutil.rmtree(tmp)
