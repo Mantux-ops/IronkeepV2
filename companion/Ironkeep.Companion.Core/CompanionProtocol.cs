@@ -84,6 +84,7 @@ namespace Ironkeep.Companion
         {
             byte[] a = Encoding.UTF8.GetBytes(left ?? "");
             byte[] b = Encoding.UTF8.GetBytes(right ?? "");
+            if (a.Length != b.Length) return false;
             return CryptographicOperations.FixedTimeEquals(a, b);
         }
 

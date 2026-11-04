@@ -498,8 +498,9 @@ namespace Ironkeep.Companion
             CompanionConfig config = _read() ?? new CompanionConfig();
             if (config.AuthMode != CompanionConfig.ModeDiscord)
                 return Denied();
-            if (config.SessionStatus == CompanionConfig.StatusExpired || config.SessionStatus == CompanionConfig.StatusDenied || config.SessionStatus == CompanionConfig.StatusChoose)
-                return config.SessionStatus == CompanionConfig.StatusExpired ? Unauthorized() : Denied();
+            string status = config.SessionStatus ?? "";
+            if (status.Length > 0)
+                return status == CompanionConfig.StatusExpired ? Unauthorized() : Denied();
             string selected = (config.Slug ?? "").Trim();
             if (selected.Length == 0 || guildId == null || !string.Equals(guildId.Trim(), selected, StringComparison.OrdinalIgnoreCase))
                 return Denied();

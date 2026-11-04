@@ -61,9 +61,9 @@
           <StackPanel>
             <StackPanel Orientation="Horizontal">
               <Ellipse Style="{StaticResource StatusDot}"/>
-              <TextBlock Text="{Binding Headline}" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Text="{Binding Headline}" Style="{StaticResource CardTitle}"/>
             </StackPanel>
-            <TextBlock Margin="16,4,0,0" Style="{StaticResource MutedText}" Text="{Binding Detail}"/>
+            <TextBlock Margin="16,4,0,0" Style="{StaticResource MutedText}" Foreground="{StaticResource Text2Brush}" Text="{Binding Detail}"/>
           </StackPanel>
         </Border>
 

@@ -39,6 +39,7 @@ namespace Ironkeep.Companion.Core.Tests
             Assert.Equal(64, secret.Length);
             Assert.Equal(43, CompanionProtocol.ChallengeS256(secret).Length);
             Assert.False(CompanionProtocol.FixedEqual("state-one-value", "state-two-value"));
+            Assert.False(CompanionProtocol.FixedEqual("short", "much-longer-state-value"));
             Assert.True(CompanionProtocol.FixedEqual("same-state-value", "same-state-value"));
         }
 
@@ -404,6 +405,160 @@ namespace Ironkeep.Companion.Core.Tests
         }
 
         [Fact]
+        public void ExpiredSessionLeavesTheQueuedGuildAlone()
+        {
+            using (var api = new FakeSite())
+            {
+                var posted = new List<string>();
+                api.On("/api/companion/token", delegate { posted.Add("refresh"); return Json(401, "{\"ok\":false}"); });
+                api.On("/api/companion/guilds/dutchchaos/attendance", delegate { posted.Add("companion"); return Json(200, "{\"ok\":true}"); });
+                api.On("/api/companion/guilds/other/attendance", delegate { posted.Add("other"); return Json(200, "{\"ok\":true}"); });
+                api.On("/api/dutchchaos/attendance", delegate { posted.Add("legacy"); return Json(200, "{\"ok\":true}"); });
+                Holder holder = Hold(api);
+                holder.Config.AuthMode = CompanionConfig.ModeDiscord;
+                holder.Config.Token = Legacy;
+                holder.Config.AccessToken = Access;
+                holder.Config.RefreshToken = Refresh;
+                holder.Config.AccessExpiresAt = "2000-01-01T00:00:00.0000000Z";
+                holder.Config.Slug = "dutchchaos";
+                holder.Save();
+                string queuePath = Path.Combine(_root, "expired.sqlite");
+                using (var queue = QueueStore.Open(queuePath))
+                {
+                    queue.Enqueue("dutchchaos", "one.lua", "format: ironkeep-group 1\nDutch");
+                    var coordinator = new SyncCoordinator(queue, new SessionUploader(delegate { return holder.Reload(); }, new DiscordUploader(delegate { return holder.Reload(); }, holder.Login), new LegacyUploader(delegate { return holder.Reload(); })), new SyncSettings());
+                    coordinator.GuildId = "dutchchaos";
+                    coordinator.Pump(DateTime.UtcNow);
+                    Assert.Equal(new[] { "refresh" }, posted);
+                    Assert.Equal("dutchchaos", queue.History(5)[0].GuildId);
+                    Assert.Equal(SyncState.FailedPermanent, queue.History(5)[0].State);
+                    Assert.Equal(CompanionConfig.StatusExpired, holder.Reload().SessionStatus);
+                    Assert.Equal(Legacy, holder.Reload().Token);
+                }
+            }
+        }
+
+        [Fact]
+        public void GuildSwitchDoesNotRetargetAQueuedReport()
+        {
+            using (var api = new FakeSite())
+            {
+                var posted = new List<string>();
+                api.On("/api/companion/guilds", delegate
+                {
+                    return Json(200, "{\"ok\":true,\"guilds\":[{\"id\":\"1\",\"slug\":\"alpha\",\"name\":\"Alpha\"},{\"id\":\"2\",\"slug\":\"beta\",\"name\":\"Beta\"}]}");
+                });
+                api.On("/api/companion/guilds/alpha/attendance", delegate (FakeRequest request)
+                {
+                    posted.Add("alpha:" + request.Body);
+                    return Json(200, "{\"ok\":true}");
+                });
+                api.On("/api/companion/guilds/beta/attendance", delegate (FakeRequest request)
+                {
+                    posted.Add("beta:" + request.Body);
+                    return Json(200, "{\"ok\":true}");
+                });
+                api.On("/api/alpha/attendance", delegate (FakeRequest request)
+                {
+                    posted.Add("legacy:" + request.Authorization);
+                    return Json(200, "{\"ok\":true}");
+                });
+                Holder holder = Hold(api);
+                holder.Config.AuthMode = CompanionConfig.ModeDiscord;
+                holder.Config.Token = Legacy;
+                holder.Config.AccessToken = Access;
+                holder.Config.RefreshToken = Refresh;
+                holder.Config.AccessExpiresAt = DateTime.UtcNow.AddMinutes(5).ToString("o");
+                holder.Config.Slug = "alpha";
+                holder.Save();
+                Assert.Equal("success", holder.Login.RefreshGuilds().Kind);
+                string queuePath = Path.Combine(_root, "switch.sqlite");
+                using (var queue = QueueStore.Open(queuePath))
+                {
+                    queue.Enqueue("alpha", "a.lua", "format: ironkeep-group 1\nAlpha");
+                    Assert.True(holder.Session.SelectGuild("beta"));
+                    var coordinator = new SyncCoordinator(queue, new SessionUploader(delegate { return holder.Reload(); }, new DiscordUploader(delegate { return holder.Reload(); }, holder.Login), new LegacyUploader(delegate { return holder.Reload(); })), new SyncSettings());
+                    coordinator.GuildId = "beta";
+                    coordinator.Pump(DateTime.UtcNow);
+                    Assert.Empty(posted);
+                    Assert.Equal("alpha", queue.History(5)[0].GuildId);
+                    Assert.Equal(SyncState.FailedPermanent, queue.History(5)[0].State);
+                    Assert.Equal("beta", holder.Reload().Slug);
+                    Assert.Equal(Legacy, holder.Reload().Token);
+                }
+            }
+        }
+
+        [Fact]
+        public void LogoutRevokesTheDiscordSessionAndLeavesTheLegacyKeyUnused()
+        {
+            using (var api = new FakeSite())
+            {
+                var calls = new List<string>();
+                api.On("/api/companion/logout", delegate (FakeRequest request)
+                {
+                    calls.Add("logout " + request.Authorization);
+                    return Json(200, "{\"ok\":true}");
+                });
+                api.On("/api/companion/guilds/dutchchaos/attendance", delegate (FakeRequest request)
+                {
+                    calls.Add("companion " + request.Authorization);
+                    return Json(200, "{\"ok\":true}");
+                });
+                api.On("/api/dutchchaos/attendance", delegate (FakeRequest request)
+                {
+                    calls.Add("legacy " + request.Authorization);
+                    return Json(200, "{\"ok\":true}");
+                });
+                Holder holder = Hold(api);
+                holder.Config.AuthMode = CompanionConfig.ModeDiscord;
+                holder.Config.Token = Legacy;
+                holder.Config.AccessToken = Access;
+                holder.Config.RefreshToken = Refresh;
+                holder.Config.AccessExpiresAt = DateTime.UtcNow.AddMinutes(5).ToString("o");
+                holder.Config.Slug = "dutchchaos";
+                holder.Save();
+                holder.Session.DisconnectDiscord();
+                CompanionConfig loaded = holder.Reload();
+                Assert.Equal(CompanionConfig.ModeSignedOut, loaded.AuthMode);
+                Assert.Equal("", loaded.AccessToken);
+                Assert.Equal("", loaded.RefreshToken);
+                Assert.Equal(Legacy, loaded.Token);
+                Assert.Contains("logout Bearer " + Access, calls);
+                calls.Clear();
+                var uploader = new SessionUploader(delegate { return holder.Reload(); }, new DiscordUploader(delegate { return holder.Reload(); }, holder.Login), new LegacyUploader(delegate { return holder.Reload(); }));
+                UploadResult blocked = uploader.Upload("dutchchaos", "format: ironkeep-group 1");
+                Assert.Equal(401, blocked.Status);
+                Assert.Empty(calls);
+            }
+        }
+
+        [Fact]
+        public void LoopbackAcceptsOnlyTheLocalCallback()
+        {
+            LoopbackBroker broker = LoopbackBroker.Start();
+            string redirect = broker.RedirectUri;
+            try
+            {
+                Assert.StartsWith("http://127.0.0.1:", redirect);
+                Assert.EndsWith("/callback", redirect);
+                Assert.DoesNotContain("localhost", redirect);
+                string page = Get(redirect + "?code=ikn.secret-code&state=abc");
+                Assert.Contains("close this window", page);
+                Assert.DoesNotContain("ikn.secret-code", page);
+                LoopbackHit hit = broker.Wait(TimeSpan.FromSeconds(2), CancellationToken.None);
+                Assert.Equal("callback", hit.Kind);
+                Assert.Equal("ikn.secret-code", hit.Code);
+                Assert.Equal("abc", hit.State);
+            }
+            finally
+            {
+                broker.Dispose();
+            }
+            Assert.Throws<WebException>(delegate { Get(redirect); });
+        }
+
+        [Fact]
         public void LegacyModeStaysAvailableAndIsNotADiscordFallback()
         {
             using (var api = new FakeSite())
@@ -462,6 +617,59 @@ namespace Ironkeep.Companion.Core.Tests
             Assert.Equal("", loaded.AccessToken);
             Assert.Equal("", loaded.RefreshToken);
             Assert.DoesNotContain(Access, loaded.SessionDetail ?? "");
+        }
+
+        [Fact]
+        public void ProtectedSessionReloadsAfterANewStoreOpensTheFile()
+        {
+            string path = Path.Combine(_root, "restart.txt");
+            var first = new CompanionConfigStore(path, new PrefixProtector());
+            var config = new CompanionConfig();
+            config.AuthMode = CompanionConfig.ModeDiscord;
+            config.Address = "https://ironkeep.gg";
+            config.Slug = "dutchchaos";
+            config.Token = Legacy;
+            config.AccessToken = Access;
+            config.RefreshToken = Refresh;
+            config.AccessExpiresAt = "2026-11-04T22:00:00.0000000Z";
+            config.GuildDiscordId = "4242";
+            config.GuildName = "Dutch Chaos";
+            first.Save(config);
+            string stored = File.ReadAllText(path);
+            Assert.DoesNotContain(Access, stored);
+            Assert.DoesNotContain(Refresh, stored);
+            Assert.DoesNotContain(Legacy, stored);
+            var second = new CompanionConfigStore(path, new PrefixProtector());
+            CompanionConfig loaded = second.Load();
+            Assert.Equal(CompanionConfig.ModeDiscord, loaded.AuthMode);
+            Assert.Equal(Access, loaded.AccessToken);
+            Assert.Equal(Refresh, loaded.RefreshToken);
+            Assert.Equal(Legacy, loaded.Token);
+            Assert.Equal("dutchchaos", loaded.Slug);
+            Assert.Equal("4242", loaded.GuildDiscordId);
+            Assert.False(loaded.SessionUnreadable);
+        }
+
+        [Fact]
+        public void DpapiSessionReloadsForTheSameWindowsUser()
+        {
+            if (!OperatingSystem.IsWindows()) return;
+            string path = Path.Combine(_root, "dpapi.txt");
+            var first = new CompanionConfigStore(path, new DpapiProtector());
+            var config = new CompanionConfig();
+            config.AuthMode = CompanionConfig.ModeDiscord;
+            config.Slug = "dutchchaos";
+            config.AccessToken = Access;
+            config.RefreshToken = Refresh;
+            first.Save(config);
+            string stored = File.ReadAllText(path);
+            Assert.Contains("dpapi:", stored);
+            Assert.DoesNotContain(Access, stored);
+            Assert.DoesNotContain(Refresh, stored);
+            CompanionConfig loaded = new CompanionConfigStore(path, new DpapiProtector()).Load();
+            Assert.Equal(Access, loaded.AccessToken);
+            Assert.Equal(Refresh, loaded.RefreshToken);
+            Assert.False(loaded.SessionUnreadable);
         }
 
         Holder Hold(FakeSite api)
