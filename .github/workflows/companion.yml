@@ -7,6 +7,8 @@ on:
       - "ironkeep/**"
       - "requirements.txt"
       - "tests/test_attendance.py"
+      - "tests/test_website_login.py"
+      - "tests/test_companion_auth.py"
       - ".github/workflows/companion.yml"
   workflow_dispatch:
 
@@ -27,7 +29,7 @@ jobs:
       - name: Test the attendance route
         run: |
           python -m pip install -r requirements.txt httpx
-          python -m unittest tests.test_attendance
+          python -m unittest tests.test_attendance tests.test_website_login tests.test_companion_auth
       - name: Test the sync library
         run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
       - name: Test the WPF companion core
@@ -85,7 +87,7 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           # discover adds tests\ to sys.path. ironkeep lives in the repository root.
           $env:PYTHONPATH = (Resolve-Path ..).Path
-          python -m unittest discover -s ..\tests -p test_attendance.py
+          python -m unittest tests.test_attendance tests.test_website_login tests.test_companion_auth
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
           $server = Start-Process python -ArgumentList '-m','uvicorn','ironkeep.main:app','--host','127.0.0.1','--port','8765' -WorkingDirectory .. -PassThru -WindowStyle Hidden

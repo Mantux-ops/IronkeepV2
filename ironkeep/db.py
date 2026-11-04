@@ -73,6 +73,7 @@ def default_settings():
         "recruitment_roles": [],
         "trial_roles": [],
         "content_roles": [],
+        "companion_roles": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -87,6 +88,14 @@ def default_settings():
         },
         "overview_enabled": True,
     }
+
+
+def companion_role_ids(settings):
+    """Roles that may upload attendance from the Companion. Missing means none."""
+    chosen = (settings or {}).get("companion_roles")
+    if not isinstance(chosen, list):
+        return []
+    return [str(role_id) for role_id in chosen if isinstance(role_id, str) and role_id.strip()]
 
 
 def trial_role_ids(settings):
@@ -233,6 +242,7 @@ def _guild_from_row(row, trials=None):
     settings = _loads(row["settings_json"], default_settings())
     settings["trial_roles"] = trial_role_ids(settings)
     settings.pop("trial_role", None)
+    settings["companion_roles"] = companion_role_ids(settings)
     return {
         "id": row["id"],
         "slug": row["slug"],

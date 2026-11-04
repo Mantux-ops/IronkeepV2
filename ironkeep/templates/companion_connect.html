@@ -1,0 +1,33 @@
+{% extends "public_layout.html" %}
+
+{% block title %}Connect Companion · Ironkeep{% endblock %}
+
+{% block content %}
+<div class="login-card">
+  <img class="brand__logo brand__logo--lg" src="{{ asset('logo.png') }}" alt="" width="64" height="64">
+  <h1>Connect the Companion</h1>
+  {% if error %}
+  <div class="callout callout--red"><div><p>{{ error }}</p></div></div>
+  {% else %}
+  <p>This connects the desktop Companion for one guild. It does not change your website login, and a recruitment role does not include upload.</p>
+  {% if not guilds %}
+  <p>No guild has given you a Companion upload role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
+  {% else %}
+  <form method="post" action="/companion/connect">
+    <input type="hidden" name="state" value="{{ state }}">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% for guild in guilds %}
+    <label class="radio">
+      <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
+      <span><strong>{{ guild.name }}</strong></span>
+    </label>
+    {% endfor %}
+    <p>
+      <button class="button button--discord" type="submit" name="decision" value="allow">Connect</button>
+      <button class="button button--ghost" type="submit" name="decision" value="deny">Cancel</button>
+    </p>
+  </form>
+  {% endif %}
+  {% endif %}
+</div>
+{% endblock %}

@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import attendance, config, db, discord_api
+from . import attendance, companion_auth, config, db, discord_api
 from . import mock_data as data
 from pathlib import Path
 
@@ -476,6 +476,15 @@ async def save_settings(slug: str, request: Request):
     saved.pop("slug", None)
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
+    if "companion_roles" not in body:
+        saved["companion_roles"] = db.companion_role_ids(guild.get("settings"))
+    else:
+        chosen = body.get("companion_roles")
+        if chosen is None:
+            chosen = []
+        if not isinstance(chosen, list) or any(not isinstance(item, str) or not item.strip() for item in chosen):
+            return JSONResponse({"error": "bad companion roles"}, status_code=400)
+        saved["companion_roles"] = [item.strip() for item in chosen]
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
@@ -581,3 +590,15 @@ def rotate_attendance_token(slug: str, request: Request):
         return error
     attendance.token_for(guild, rotate=True)
     return RedirectResponse(f"/{slug}/raids", status_code=303)
+
+
+@app.middleware("http")
+async def _companion_routes_stay_off(request: Request, call_next):
+    # The new companion routes answer 404 until IRONKEEP_COMPANION_AUTH is set.
+    hidden = companion_auth.hidden(request)
+    if hidden is not None:
+        return hidden
+    return await call_next(request)
+
+
+app.include_router(companion_auth.router)
