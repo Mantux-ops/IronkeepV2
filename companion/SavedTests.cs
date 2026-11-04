@@ -205,6 +205,10 @@ namespace Ironkeep
             Check(url != null && url.AbsolutePath == "/api/my-guild/attendance", "local target " + url);
             Check(SiteClient.Target("http://example.com", "my-guild", out problem) == null, "https required");
             Check(SiteClient.Accepted("{\"ok\":true}") && SiteClient.Duplicate("{\"ok\":true,\"duplicate\":true}"), "response words");
+            Check(SiteClient.Accepted("{\"ok\": true, \"duplicate\": false, \"place\": \"Hall of Thanes\", \"people\": 3}"), "api acknowledgement");
+            Check(!SiteClient.Accepted("{\"ok\":false}"), "explicit rejection");
+            Check(!SiteClient.Accepted("nope {\"ok\":true}"), "substring is not acceptance");
+            Check(!SiteClient.Accepted("{\"ok\":true"), "truncated json");
         }
 
         static void WindowsProtectsTheKeyForThisUser()

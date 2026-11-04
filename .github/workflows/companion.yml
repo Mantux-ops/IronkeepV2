@@ -21,10 +21,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
       - name: Test the attendance route
         run: |
           python -m pip install -r requirements.txt httpx
           python -m unittest tests.test_attendance
+      - name: Test the sync library
+        run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
 
   windows:
     runs-on: windows-latest
@@ -37,6 +42,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Test the sync library
+        run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
 
       - name: Build the window and the tests
         working-directory: companion
