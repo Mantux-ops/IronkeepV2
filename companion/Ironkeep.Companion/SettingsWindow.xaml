@@ -1,0 +1,46 @@
+<Window x:Class="Ironkeep.Companion.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Ironkeep settings"
+        Width="480" Height="680"
+        MinWidth="420" MinHeight="520"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="CanResize">
+  <DockPanel Margin="18">
+    <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
+      <Button Content="Retry failed" Style="{StaticResource QuietButton}" Click="RetryClick" AutomationProperties.Name="Retry failed reports"/>
+      <Button Content="Save" Style="{StaticResource PrimaryButton}" Click="SaveClick" AutomationProperties.Name="Save settings"/>
+    </StackPanel>
+    <ScrollViewer VerticalScrollBarVisibility="Auto">
+      <StackPanel>
+        <TextBlock Text="Settings" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,12"/>
+        <TextBlock Text="WOW FOREVER FOLDER" Style="{StaticResource Section}"/>
+        <DockPanel Margin="0,0,0,12">
+          <Button DockPanel.Dock="Right" Content="Browse" Style="{StaticResource QuietButton}" Click="BrowseClick" AutomationProperties.Name="Browse for WoW folder"/>
+          <TextBox x:Name="FolderBox" MinHeight="28" VerticalContentAlignment="Center"/>
+        </DockPanel>
+        <TextBlock Text="LEGACY API" Style="{StaticResource Section}"/>
+        <TextBlock x:Name="KeyNote" TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,0,0,8"/>
+        <TextBlock Text="Site address" Foreground="{StaticResource Muted}"/>
+        <TextBox x:Name="AddressBox" MinHeight="28" Margin="0,4,0,8" VerticalContentAlignment="Center"/>
+        <TextBlock Text="Guild slug" Foreground="{StaticResource Muted}"/>
+        <TextBox x:Name="SlugBox" MinHeight="28" Margin="0,4,0,8" VerticalContentAlignment="Center"/>
+        <TextBlock Text="Legacy key" Foreground="{StaticResource Muted}"/>
+        <PasswordBox x:Name="KeyBox" MinHeight="28" Margin="0,4,0,8"/>
+        <TextBlock TextWrapping="Wrap" Foreground="{StaticResource Muted}" Margin="0,0,0,8" Text="Leave the key blank to keep the saved one. The key is not shown and is not written in the clear."/>
+        <Button Content="Remove saved key" HorizontalAlignment="Left" Style="{StaticResource QuietButton}" Click="ClearKeyClick" AutomationProperties.Name="Remove saved key"/>
+        <CheckBox x:Name="StartupBox" Content="Start with Windows" Margin="0,14,0,14" Foreground="{StaticResource Paper}"/>
+        <TextBlock Text="SYNCHRONIZATION HISTORY" Style="{StaticResource Section}"/>
+        <ListView x:Name="HistoryList" MinHeight="160" Background="#12141A" BorderBrush="#2C3344" Foreground="#F3F1EC">
+          <ListView.View>
+            <GridView>
+              <GridViewColumn Header="When" DisplayMemberBinding="{Binding When}" Width="150"/>
+              <GridViewColumn Header="State" DisplayMemberBinding="{Binding State}" Width="110"/>
+              <GridViewColumn Header="Detail" DisplayMemberBinding="{Binding Detail}" Width="160"/>
+            </GridView>
+          </ListView.View>
+        </ListView>
+      </StackPanel>
+    </ScrollViewer>
+  </DockPanel>
+</Window>

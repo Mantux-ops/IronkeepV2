@@ -30,6 +30,8 @@ jobs:
           python -m unittest tests.test_attendance
       - name: Test the sync library
         run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
+      - name: Test the WPF companion core
+        run: dotnet test companion/Ironkeep.Companion.Core.Tests/Ironkeep.Companion.Core.Tests.csproj -c Release
 
   windows:
     runs-on: windows-latest
@@ -49,6 +51,9 @@ jobs:
 
       - name: Test the sync library
         run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
+
+      - name: Test the WPF companion core
+        run: dotnet test companion/Ironkeep.Companion.Core.Tests/Ironkeep.Companion.Core.Tests.csproj -c Release
 
       - name: Build the window and the tests
         working-directory: companion
@@ -120,6 +125,50 @@ jobs:
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           Set-Content -Path out\BUILD.txt -Encoding ascii -Value $env:GITHUB_SHA
 
+      - name: Publish the WPF companion
+        run: |
+          dotnet publish companion/Ironkeep.Companion/Ironkeep.Companion.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o companion/out/wpf
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = Get-Item companion/out/wpf/IronkeepCompanion.exe
+          Set-Content -Path companion/out/wpf/SIZE.txt -Encoding ascii -Value $exe.Length
+          Write-Output "WPF published size $($exe.Length) bytes"
+
+      - name: Capture the WPF dashboard
+        working-directory: companion
+        run: |
+          New-Item -ItemType Directory -Force out\wpf\preview | Out-Null
+          & .\out\wpf\IronkeepCompanion.exe --capture (Join-Path (Get-Location) 'out\wpf\preview')
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          if (-not (Test-Path out\wpf\preview\dashboard.png)) { Write-Error 'The dashboard capture is missing.'; exit 1 }
+          if (-not (Test-Path out\wpf\preview\settings.png)) { Write-Error 'The settings capture is missing.'; exit 1 }
+
+      - name: Exercise the published WPF companion
+        working-directory: companion
+        run: |
+          python -m pip install -r ..\requirements.txt httpx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:PYTHONPATH = (Resolve-Path ..).Path
+          $server = Start-Process python -ArgumentList '-m','uvicorn','ironkeep.main:app','--host','127.0.0.1','--port','8766' -WorkingDirectory .. -PassThru -WindowStyle Hidden
+          try {
+            $page = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $page = Invoke-WebRequest http://127.0.0.1:8766/dutchchaos/raids -UseBasicParsing
+                if ($page.StatusCode -eq 200) { break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $page -or $page.StatusCode -ne 200) { Write-Error 'The site did not start for the WPF companion.'; exit 1 }
+            if ($page.Content -notmatch 'id="companion-key"[^>]*value="([^"]+)"') { Write-Error 'The raids page has no companion key.'; exit 1 }
+            $key = $Matches[1]
+            & .\out\wpf\IronkeepCompanion.exe --send-check http://127.0.0.1:8766 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $again = & .\out\wpf\IronkeepCompanion.exe --send-check http://127.0.0.1:8766 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            if (($again -join "`n") -notmatch '"duplicate":true') { Write-Error "The WPF companion did not recognize a duplicate.`n$($again -join "`n")"; exit 1 }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
       - name: Scan with Microsoft Defender
         working-directory: companion
         run: |
@@ -129,7 +178,7 @@ jobs:
           Get-MpComputerStatus | Format-List AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
 
           $flagged = $false
-          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe')) {
+          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\wpf\IronkeepCompanion.exe')) {
             $path = (Resolve-Path $file).Path
             & $mp -Scan -ScanType 3 -File $path -DisableRemediation | Out-Host
             $code = $LASTEXITCODE
@@ -149,6 +198,10 @@ jobs:
             companion/out/IronkeepCompanion.exe
             companion/IronkeepCompanion.exe.config
             companion/out/BUILD.txt
+            companion/out/wpf/IronkeepCompanion.exe
+            companion/out/wpf/SIZE.txt
+            companion/out/wpf/preview/dashboard.png
+            companion/out/wpf/preview/settings.png
 
       - name: Publish the download
         if: github.ref == 'refs/heads/cursor/forever-companion-f675' || github.ref == 'refs/heads/cursor/companion-attendance-f675' || github.ref == 'refs/heads/cursor/forever-addon-f675' || github.ref == 'refs/heads/cursor/companion-windows-ci-f675'

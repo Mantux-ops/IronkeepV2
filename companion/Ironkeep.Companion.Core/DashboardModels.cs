@@ -1,0 +1,167 @@
+using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.IO;
+using Ironkeep;
+
+namespace Ironkeep.Companion
+{
+    public sealed class DashboardViewModel : INotifyPropertyChanged
+    {
+        string _connection = "Idle";
+        string _level = "Idle";
+        string _auth = "No legacy key";
+        string _guild = "Not set";
+        string _folder = "Not selected";
+        string _folderStatus = "Choose the WoW Forever folder in Settings.";
+        string _savedStatus = "SavedVariables have not been checked.";
+        string _syncState = "Idle";
+        string _lastUpload = "None yet";
+        string _pending = "0";
+        string _retry = "0";
+        string _failed = "0";
+        string _lastError = "None";
+
+        public event PropertyChangedEventHandler PropertyChanged;
+
+        public string Version { get { return CompanionSession.Version; } }
+        public string Connection { get { return _connection; } }
+        public string Level { get { return _level; } }
+        public string Auth { get { return _auth; } }
+        public string Guild { get { return _guild; } }
+        public string Folder { get { return _folder; } }
+        public string FolderStatus { get { return _folderStatus; } }
+        public string SavedStatus { get { return _savedStatus; } }
+        public string SyncState { get { return _syncState; } }
+        public string LastUpload { get { return _lastUpload; } }
+        public string Pending { get { return _pending; } }
+        public string Retry { get { return _retry; } }
+        public string Failed { get { return _failed; } }
+        public string LastError { get { return _lastError; } }
+
+        public void Apply(SyncSnapshot snap, CompanionConfig config, int savedFiles)
+        {
+            if (snap == null) snap = new SyncSnapshot();
+            if (config == null) config = new CompanionConfig();
+            if (config.TokenUnreadable) Set(ref _auth, "Key could not be read", "Auth");
+            else if ((config.Token ?? "").Length > 0) Set(ref _auth, "Legacy key saved", "Auth");
+            else Set(ref _auth, "No legacy key", "Auth");
+            Set(ref _guild, (config.Slug ?? "").Trim().Length == 0 ? "Not set" : config.Slug.Trim(), "Guild");
+            string folder = (config.WowFolder ?? "").Trim();
+            Set(ref _folder, folder.Length == 0 ? "Not selected" : folder, "Folder");
+            if (folder.Length == 0) Set(ref _folderStatus, "No folder selected. This is not a detected install.", "FolderStatus");
+            else if (!Directory.Exists(folder)) Set(ref _folderStatus, "That folder was not found.", "FolderStatus");
+            else Set(ref _folderStatus, "Folder found. The Forever layout is not verified.", "FolderStatus");
+            if (savedFiles < 0) savedFiles = 0;
+            Set(ref _savedStatus, savedFiles == 0 ? "No Ironkeep.lua found." : savedFiles + " Ironkeep.lua file" + (savedFiles == 1 ? "" : "s") + " found.", "SavedStatus");
+            Set(ref _pending, snap.Pending.ToString(), "Pending");
+            Set(ref _retry, snap.RetryScheduled.ToString(), "Retry");
+            Set(ref _failed, snap.FailedPermanent.ToString(), "Failed");
+            Set(ref _lastUpload, snap.LastConfirmedAt == null || snap.LastConfirmedAt.Length == 0 ? "None yet" : snap.LastConfirmedAt, "LastUpload");
+            Set(ref _lastError, snap.LastError == null || snap.LastError.Length == 0 ? "None" : snap.LastError, "LastError");
+            string state;
+            string level;
+            bool waitingForGuild = snap.WaitingForGuild || (config.Slug ?? "").Trim().Length == 0;
+            if (snap.CorruptionDetected) { state = "Queue file was damaged"; level = "Bad"; }
+            else if (waitingForGuild) { state = "Waiting for a guild"; level = "Warn"; }
+            else if (snap.Pending + snap.Sending > 0) { state = "Upload queued"; level = "Warn"; }
+            else if (snap.RetryScheduled > 0) { state = "Waiting to retry"; level = "Warn"; }
+            else if (snap.FailedPermanent > 0) { state = "A report was rejected"; level = "Bad"; }
+            else if (snap.LastConfirmedAt != null && snap.LastConfirmedAt.Length > 0) { state = "Up to date"; level = "Ok"; }
+            else { state = "Idle"; level = "Idle"; }
+            Set(ref _syncState, state, "SyncState");
+            string connection;
+            if (config.TokenUnreadable) connection = "Key unreadable";
+            else if ((config.Token ?? "").Length > 0) connection = "Legacy channel";
+            else connection = "Not signed in";
+            Set(ref _connection, connection, "Connection");
+            Set(ref _level, level, "Level");
+        }
+
+        void Set(ref string field, string value, string name)
+        {
+            if (field == value) return;
+            field = value ?? "";
+            PropertyChangedEventHandler handler = PropertyChanged;
+            if (handler != null) handler(this, new PropertyChangedEventArgs(name));
+        }
+    }
+
+    public sealed class HistoryRow
+    {
+        public string Id { get; set; }
+        public string When { get; set; }
+        public string State { get; set; }
+        public string Detail { get; set; }
+        public string Source { get; set; }
+    }
+
+    public sealed class SettingsViewModel
+    {
+        public string Address = "https://ironkeep.gg";
+        public string Slug = "";
+        public string WowFolder = "";
+        public bool StartWithWindows;
+        public bool HasKey;
+        public string KeyNote = "No legacy key saved.";
+        public List<HistoryRow> History = new List<HistoryRow>();
+
+        public void Load(CompanionConfig config, IList<QueueItem> items)
+        {
+            if (config == null) config = new CompanionConfig();
+            Address = config.Address ?? "https://ironkeep.gg";
+            Slug = config.Slug ?? "";
+            WowFolder = config.WowFolder ?? "";
+            StartWithWindows = config.StartWithWindows;
+            HasKey = (config.Token ?? "").Length > 0;
+            if (config.TokenUnreadable) KeyNote = "The saved key could not be read. Enter it again.";
+            else if (HasKey) KeyNote = "A legacy key is saved for this Windows user. It is not shown.";
+            else KeyNote = "No legacy key saved.";
+            History = new List<HistoryRow>();
+            if (items == null) return;
+            foreach (QueueItem item in items)
+            {
+                var row = new HistoryRow();
+                row.Id = item.Id ?? "";
+                row.When = item.UpdatedAt ?? "";
+                row.State = Label(item.State);
+                string detail = item.LastError ?? "";
+                if (detail.Length == 0 && item.ConfirmedAt != null && item.ConfirmedAt.Length > 0) detail = "Confirmed " + item.ConfirmedAt;
+                row.Detail = detail;
+                row.Source = item.SourcePath == null || item.SourcePath.Length == 0 ? "" : Path.GetFileName(item.SourcePath);
+                History.Add(row);
+            }
+        }
+
+        static string Label(string state)
+        {
+            if (state == SyncState.Pending) return "Pending";
+            if (state == SyncState.Sending) return "Sending";
+            if (state == SyncState.Confirmed) return "Confirmed";
+            if (state == SyncState.RetryScheduled) return "Retry scheduled";
+            if (state == SyncState.FailedPermanent) return "Failed";
+            return state ?? "";
+        }
+    }
+
+    public sealed class TrayActions
+    {
+        readonly Action _open;
+        readonly Action _sync;
+        readonly Action _website;
+        readonly Action _quit;
+
+        public TrayActions(Action open, Action sync, Action website, Action quit)
+        {
+            _open = open;
+            _sync = sync;
+            _website = website;
+            _quit = quit;
+        }
+
+        public void Open() { if (_open != null) _open(); }
+        public void Sync() { if (_sync != null) _sync(); }
+        public void Website() { if (_website != null) _website(); }
+        public void Quit() { if (_quit != null) _quit(); }
+    }
+}

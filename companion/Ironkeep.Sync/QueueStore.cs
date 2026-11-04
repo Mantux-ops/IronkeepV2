@@ -30,6 +30,9 @@ namespace Ironkeep
         public int Attempts;
         public string NextAttemptAt;
         public string LastError;
+        public string CreatedAt;
+        public string UpdatedAt;
+        public string ConfirmedAt;
     }
 
     public static class SyncPaths
@@ -421,7 +424,59 @@ namespace Ironkeep
             item.NextAttemptAt = reader.IsDBNull(next) ? null : reader.GetString(next);
             int error = reader.GetOrdinal("last_error");
             item.LastError = reader.IsDBNull(error) ? null : reader.GetString(error);
+            item.CreatedAt = Optional(reader, "created_at");
+            item.UpdatedAt = Optional(reader, "updated_at");
+            item.ConfirmedAt = Optional(reader, "confirmed_at");
             return item;
+        }
+
+        static string Optional(SqliteDataReader reader, string column)
+        {
+            int ordinal = reader.GetOrdinal(column);
+            return reader.IsDBNull(ordinal) ? "" : reader.GetString(ordinal);
+        }
+
+        public List<QueueItem> History(int limit)
+        {
+            if (limit < 1) limit = 1;
+            if (limit > 100) limit = 100;
+            var items = new List<QueueItem>();
+            lock (_gate)
+            {
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT * FROM items ORDER BY updated_at DESC LIMIT $limit";
+                    cmd.Parameters.AddWithValue("$limit", limit);
+                    using (var reader = cmd.ExecuteReader())
+                    {
+                        while (reader.Read()) items.Add(ReadItem(reader));
+                    }
+                }
+            }
+            return items;
+        }
+
+        public string LatestError()
+        {
+            return Scalar("SELECT last_error FROM items ORDER BY updated_at DESC LIMIT 1");
+        }
+
+        public string LatestConfirmedAt()
+        {
+            return Scalar("SELECT confirmed_at FROM items WHERE confirmed_at IS NOT NULL ORDER BY confirmed_at DESC LIMIT 1");
+        }
+
+        string Scalar(string sql)
+        {
+            lock (_gate)
+            {
+                using (var cmd = _connection.CreateCommand())
+                {
+                    cmd.CommandText = sql;
+                    object value = cmd.ExecuteScalar();
+                    return value == null || value is DBNull ? "" : value.ToString();
+                }
+            }
         }
 
         static string ConnectionString(string path)

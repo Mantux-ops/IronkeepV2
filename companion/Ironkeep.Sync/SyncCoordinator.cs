@@ -47,9 +47,12 @@ namespace Ironkeep
         public bool WatcherRunning;
         public bool WaitingForGuild;
         public int Pending;
+        public int Sending;
         public int RetryScheduled;
         public int Confirmed;
         public int FailedPermanent;
+        public string LastError = "";
+        public string LastConfirmedAt = "";
         public string Folder = "";
         public string GuildId = "";
     }
@@ -286,10 +289,18 @@ namespace Ironkeep
             Dictionary<string, int> counts = _queue.Counts();
             int count;
             if (counts.TryGetValue(SyncState.Pending, out count)) snap.Pending = count;
+            if (counts.TryGetValue(SyncState.Sending, out count)) snap.Sending = count;
             if (counts.TryGetValue(SyncState.RetryScheduled, out count)) snap.RetryScheduled = count;
             if (counts.TryGetValue(SyncState.Confirmed, out count)) snap.Confirmed = count;
             if (counts.TryGetValue(SyncState.FailedPermanent, out count)) snap.FailedPermanent = count;
+            snap.LastError = _queue.LatestError() ?? "";
+            snap.LastConfirmedAt = _queue.LatestConfirmedAt() ?? "";
             return snap;
+        }
+
+        public List<QueueItem> History(int limit)
+        {
+            return _queue.History(limit);
         }
 
         public static int DelaySeconds(int attempt)
