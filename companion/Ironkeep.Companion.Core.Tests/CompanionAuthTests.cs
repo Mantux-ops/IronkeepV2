@@ -396,10 +396,10 @@ namespace Ironkeep.Companion.Core.Tests
                     List<QueueItem> history = queue.History(10);
                     Assert.Contains(history, item => item.GuildId == "beta" && item.State == SyncState.FailedPermanent);
                     Assert.Contains(history, item => item.GuildId == "alpha" && item.State == SyncState.Confirmed);
-                    byte[] database = File.ReadAllBytes(queuePath);
-                    Assert.False(Contains(database, Encoding.UTF8.GetBytes(Access)));
-                    Assert.False(Contains(database, Encoding.UTF8.GetBytes(Refresh)));
                 }
+                byte[] database = File.ReadAllBytes(queuePath);
+                Assert.False(Contains(database, Encoding.UTF8.GetBytes(Access)));
+                Assert.False(Contains(database, Encoding.UTF8.GetBytes(Refresh)));
             }
         }
 
