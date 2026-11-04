@@ -325,7 +325,7 @@ namespace Ironkeep.Tests
                 Assert.False(store.UnsentReportsRecovered);
                 Assert.Equal(wal, File.ReadAllBytes(store.PreservedCorruptPath + "-wal"));
                 Assert.Equal(0, new FileInfo(store.PreservedCorruptPath).Length);
-                Assert.NotEqual(wal, File.ReadAllBytes(path + "-wal"));
+                Assert.NotEqual(wal, ReadShared(path + "-wal"));
                 Assert.Contains("preserved", File.ReadAllText(path + ".corruption"));
                 if (!OperatingSystem.IsWindows())
                 {
@@ -382,7 +382,7 @@ namespace Ironkeep.Tests
                 Assert.True(store.CorruptionDetected);
                 Assert.False(store.UnsentReportsRecovered);
                 Assert.Equal(wal, File.ReadAllBytes(store.PreservedCorruptPath + "-wal"));
-                Assert.NotEqual(wal, File.ReadAllBytes(path + "-wal"));
+                Assert.NotEqual(wal, ReadShared(path + "-wal"));
             }
             finally
             {
