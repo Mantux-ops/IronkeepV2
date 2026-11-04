@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import attendance, config, db, discord_api
+from . import attendance, companion_auth, config, db, discord_api
 from . import mock_data as data
 from pathlib import Path
 
@@ -581,3 +581,15 @@ def rotate_attendance_token(slug: str, request: Request):
         return error
     attendance.token_for(guild, rotate=True)
     return RedirectResponse(f"/{slug}/raids", status_code=303)
+
+
+@app.middleware("http")
+async def _companion_routes_stay_off(request: Request, call_next):
+    # The new companion routes answer 404 until IRONKEEP_COMPANION_AUTH is set.
+    hidden = companion_auth.hidden(request)
+    if hidden is not None:
+        return hidden
+    return await call_next(request)
+
+
+app.include_router(companion_auth.router)

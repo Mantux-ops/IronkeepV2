@@ -50,3 +50,11 @@ def invite_url() -> str:
         "https://discord.com/oauth2/authorize"
         f"?client_id={CLIENT_ID}&permissions={INVITE_PERMISSIONS}&scope=bot%20applications.commands"
     )
+
+
+def companion_auth_enabled() -> bool:
+    """Companion login is a separate layer and stays off unless this process opts in.
+
+    Website login does not read this flag. Leave it unset in production.
+    """
+    return os.environ.get("IRONKEEP_COMPANION_AUTH", "").strip().lower() in {"1", "true", "yes"}
