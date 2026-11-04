@@ -5,9 +5,10 @@
     <Nullable>disable</Nullable>
     <RootNamespace>Ironkeep.Companion</RootNamespace>
     <LangVersion>12</LangVersion>
-    <NoWarn>CA1416</NoWarn>
+    <NoWarn>CA1416;SYSLIB0014</NoWarn>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\Ironkeep.Sync\Ironkeep.Sync.csproj" />
+    <InternalsVisibleTo Include="Ironkeep.Companion.Core.Tests" />
   </ItemGroup>
 </Project>
