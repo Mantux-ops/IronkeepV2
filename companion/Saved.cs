@@ -164,6 +164,42 @@ namespace Ironkeep
             throw new SavedException("No Ironkeep.lua under " + start + ". Log out once so the addon can write it.");
         }
 
+        public static List<string> AllSaved(string start)
+        {
+            var files = new List<string>();
+            if (start == null) start = "";
+            start = start.Trim().Trim('"').Replace('/', Path.DirectorySeparatorChar);
+            start = start.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (start.Length == 0) return files;
+            if (File.Exists(start))
+            {
+                if (string.Equals(Path.GetFileName(start), "Ironkeep.lua", StringComparison.OrdinalIgnoreCase))
+                    files.Add(start);
+                return files;
+            }
+            if (!Directory.Exists(start)) return files;
+            files = SavedFiles(start);
+            if (files.Count > 0) return files;
+            if (string.Equals(Path.GetFileName(start), "WTF", StringComparison.OrdinalIgnoreCase))
+            {
+                string parent = Path.GetDirectoryName(start);
+                if (parent != null)
+                {
+                    files = SavedFiles(parent);
+                    if (files.Count > 0) return files;
+                }
+            }
+            string inAccount = Path.Combine(start, "SavedVariables", "Ironkeep.lua");
+            if (File.Exists(inAccount))
+            {
+                files.Add(inAccount);
+                return files;
+            }
+            string direct = Path.Combine(start, "Ironkeep.lua");
+            if (File.Exists(direct)) files.Add(direct);
+            return files;
+        }
+
         public static GroupList Describe(Dictionary<object, object> db)
         {
             var group = new GroupList();

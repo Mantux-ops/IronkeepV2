@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, discord_api
+from . import attendance, config, db, discord_api
 from . import mock_data as data
 from pathlib import Path
 
@@ -120,6 +120,11 @@ def visible_guilds(request: Request):
 
 
 def render(request: Request, template: str, status_code: int = 200, **context):
+    guild = context.get("guild")
+    if isinstance(guild, dict) and guild.get("settings"):
+        shown = dict(guild)
+        shown["settings"] = attendance.without_secret(guild["settings"])
+        context["guild"] = shown
     context.setdefault("viewer", viewer(request))
     context.setdefault("guilds", visible_guilds(request))
     if config.live():
@@ -467,7 +472,7 @@ async def save_settings(slug: str, request: Request):
             return JSONResponse({"error": "That address is not available."}, status_code=400)
     else:
         new_slug = None
-    saved = dict(body)
+    saved = attendance.keep_token(guild.get("settings"), body)
     saved.pop("slug", None)
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
@@ -492,3 +497,87 @@ def setup(slug: str, request: Request):
     if error:
         return error
     return render(request, "settings.html", guild=guild, nav="settings", setup_mode=True)
+
+
+def _guild_by_slug(slug):
+    if config.live():
+        return db.guild_by_slug(slug)
+    return data.guild_by_slug(slug)
+
+
+async def _report_body(request: Request):
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > attendance.MAX_BYTES:
+                return None
+        except ValueError:
+            raise attendance.ReportError("This report could not be read.")
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > attendance.MAX_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@app.get("/{slug}/raids", response_class=HTMLResponse)
+def raids(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    stored = attendance.latest(guild)
+    report = attendance.present(stored, guild.get("settings")) if stored else None
+    return render(
+        request,
+        "raids.html",
+        guild=guild,
+        nav="raids",
+        report=report,
+        companion_key=attendance.token_for(guild),
+    )
+
+
+@app.post("/api/{slug}/attendance")
+async def receive_attendance(slug: str, request: Request):
+    """The companion posts the group list here. The key is the only login it has."""
+    guild = _guild_by_slug(slug)
+    if guild is None:
+        return JSONResponse({"ok": False, "error": "Unknown guild."}, status_code=404)
+    header = request.headers.get("authorization", "")
+    if len(header) < 7 or header[:7].lower() != "bearer ":
+        return JSONResponse({"ok": False, "error": "Unknown companion key."}, status_code=401)
+    if not attendance.token_matches(guild, header[7:].strip()):
+        return JSONResponse({"ok": False, "error": "Unknown companion key."}, status_code=401)
+    try:
+        raw = await _report_body(request)
+    except attendance.ReportError as error:
+        return JSONResponse({"ok": False, "error": error.args[0]}, status_code=400)
+    if raw is None:
+        return JSONResponse({"ok": False, "error": "This report is too large."}, status_code=413)
+    try:
+        text = raw.decode("utf-8")
+        report = attendance.parse_text(text)
+        body_hash = attendance.digest(text)
+    except UnicodeDecodeError:
+        return JSONResponse({"ok": False, "error": "This report could not be read."}, status_code=400)
+    except attendance.ReportError as error:
+        return JSONResponse({"ok": False, "error": error.args[0]}, status_code=400)
+    stored, duplicate = attendance.store(guild, report, body_hash)
+    return {
+        "ok": True,
+        "duplicate": duplicate,
+        "place": stored["place"],
+        "people": len(stored["people"]),
+    }
+
+
+@app.post("/api/{slug}/attendance/token")
+def rotate_attendance_token(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    attendance.token_for(guild, rotate=True)
+    return RedirectResponse(f"/{slug}/raids", status_code=303)

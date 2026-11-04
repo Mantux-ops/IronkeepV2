@@ -1,0 +1,56 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Raids · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Raids</h1>
+    <p class="page-subtitle">{{ guild.name }} · the group the companion read from WoW Forever.</p>
+  </div>
+</header>
+
+<article class="card measure-card">
+  <div class="card__head">
+    <div>
+      <h2 class="card__title">Who was in the raid</h2>
+      <p class="card__desc">Log out of the game, or type /reload. The companion sends the list while it is open, and again the next time you open it.</p>
+    </div>
+    {% if report %}
+    <div class="raid-count-wrap">
+      <span class="raid-count">{{ report.here }} here</span>
+      <span class="raid-count__label">{{ report.away }} left</span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="measure-key">
+    <label class="measure-key__label" for="companion-key">Companion key</label>
+    <input class="input" id="companion-key" readonly value="{{ companion_key }}" spellcheck="false">
+    <button class="button button--sm button--accent" type="button" id="companion-copy">Copy key</button>
+    <button class="button button--sm button--ghost" type="button" id="companion-rotate">New key</button>
+  </div>
+  {% if report %}
+  <p class="measure-when">{{ report.place }} · started {{ report.started or "unknown" }} · received {{ report.received_label }}</p>
+  <div class="raid-list">
+    {% for person in report.people %}
+    <div class="raid-row">
+      <span class="class-swatch" style="background: {{ person.color }}"></span>
+      <span class="raid-row__name">
+        <span class="raid-row__title" style="color: {{ person.color }}">{{ person.name }}</span>
+        <span class="raid-row__sub">{{ person.class_name }} · {{ person.role }} · {{ person.time }} · {{ "here" if person.here else "left" }}</span>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No measurement yet. Log out of the game, or type /reload, and leave the companion open.</p>
+  {% endif %}
+</article>
+
+<div class="modal-root" id="modal-root" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ asset('js/raids.js') }}"></script>
+{% endblock %}
