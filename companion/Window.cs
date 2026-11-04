@@ -2,8 +2,10 @@
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Text;
 using System.Windows.Forms;
 
 namespace Ironkeep
@@ -36,6 +38,7 @@ namespace Ironkeep
         readonly Panel brand = new Panel();
         readonly Panel pathRow = new Panel();
         readonly Panel meta = new Panel();
+        readonly Panel siteRow = new Panel();
         readonly Panel bottom = new Panel();
         readonly PictureBox logo = new PictureBox();
         readonly Label titleLabel = new Label();
@@ -48,12 +51,23 @@ namespace Ironkeep
         readonly Label countLabel = new Label();
         readonly DataGridView grid = new DataGridView();
         readonly TextBox reportBox = new TextBox();
+        readonly TextBox addressBox = new TextBox();
+        readonly TextBox slugBox = new TextBox();
+        readonly TextBox tokenBox = new TextBox();
+        readonly Label addressLabel = new Label();
+        readonly Label slugLabel = new Label();
+        readonly Label tokenLabel = new Label();
         readonly Button copyButton;
         readonly Button sampleButton;
+        readonly Button sendButton;
         readonly Label hintLabel = new Label();
         readonly Label statusLabel = new Label();
         MemoryStream logoStream;
         string reportText = "";
+        bool sampleShowing;
+        string loadedFile = "";
+        DateTime loadedWrite;
+        string sentKey = "";
 
         public MainWindow()
         {
@@ -62,20 +76,22 @@ namespace Ironkeep
             BackColor = Bg;
             ForeColor = TextMain;
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(760, 520);
-            ClientSize = new Size(880, 580);
+            MinimumSize = new Size(760, 600);
+            ClientSize = new Size(880, 660);
             DoubleBuffered = true;
             KeyPreview = true;
 
             browseButton = MakeButton("Kies map", false);
             refreshButton = MakeButton("Vernieuwen", true);
-            copyButton = MakeButton("Kopieer lijst", true);
+            copyButton = MakeButton("Kopieer lijst", false);
             sampleButton = MakeButton("Voorbeeld", false);
+            sendButton = MakeButton("Stuur naar de site", true);
             copyButton.Enabled = false;
 
             StylePanel(brand, 72, DockStyle.Top);
             StylePanel(pathRow, 48, DockStyle.Top);
             StylePanel(meta, 58, DockStyle.Top);
+            StylePanel(siteRow, 72, DockStyle.Top);
             StylePanel(bottom, 78, DockStyle.Bottom);
 
             logo.BackColor = Bg;
@@ -88,6 +104,17 @@ namespace Ironkeep
             pathBox.ForeColor = TextMain;
             pathBox.Font = UiFont(10f, FontStyle.Regular);
             pathBox.KeyDown += PathKeyDown;
+            StyleBox(addressBox);
+            StyleBox(slugBox);
+            StyleBox(tokenBox);
+            tokenBox.UseSystemPasswordChar = true;
+            StyleLabel(addressLabel, "Adres", Muted, 9f, FontStyle.Regular);
+            StyleLabel(slugLabel, "Gilde", Muted, 9f, FontStyle.Regular);
+            StyleLabel(tokenLabel, "Sleutel", Muted, 9f, FontStyle.Regular);
+            LoadSite();
+            addressBox.Leave += delegate { SaveSite(); };
+            slugBox.Leave += delegate { SaveSite(); };
+            tokenBox.Leave += delegate { SaveSite(); };
 
             StyleLabel(placeLabel, "Geen lijst", TextMain, 16f, FontStyle.Bold);
             StyleLabel(detailLabel, "", Muted, 9.5f, FontStyle.Regular);
@@ -106,13 +133,14 @@ namespace Ironkeep
             reportBox.Font = MonoFont(10f);
             reportBox.Dock = DockStyle.None;
 
-            StyleLabel(hintLabel, "Er wordt niets naar de site gestuurd.", Muted, 9.5f, FontStyle.Regular);
+            StyleLabel(hintLabel, "Plak de sleutel van de raids-pagina. Het voorbeeld wordt niet verstuurd.", Muted, 9.5f, FontStyle.Regular);
             StyleLabel(statusLabel, "", Muted, 9f, FontStyle.Regular);
 
             browseButton.Click += BrowseClick;
             refreshButton.Click += RefreshClick;
             copyButton.Click += CopyClick;
             sampleButton.Click += SampleClick;
+            sendButton.Click += SendClick;
 
             brand.Controls.Add(logo);
             brand.Controls.Add(titleLabel);
@@ -123,6 +151,13 @@ namespace Ironkeep
             meta.Controls.Add(placeLabel);
             meta.Controls.Add(detailLabel);
             meta.Controls.Add(countLabel);
+            siteRow.Controls.Add(addressLabel);
+            siteRow.Controls.Add(slugLabel);
+            siteRow.Controls.Add(tokenLabel);
+            siteRow.Controls.Add(addressBox);
+            siteRow.Controls.Add(slugBox);
+            siteRow.Controls.Add(tokenBox);
+            siteRow.Controls.Add(sendButton);
             bottom.Controls.Add(copyButton);
             bottom.Controls.Add(sampleButton);
             bottom.Controls.Add(hintLabel);
@@ -143,6 +178,7 @@ namespace Ironkeep
 
             Controls.Add(body);
             Controls.Add(bottom);
+            Controls.Add(siteRow);
             Controls.Add(meta);
             Controls.Add(pathRow);
             Controls.Add(brand);
@@ -150,6 +186,7 @@ namespace Ironkeep
             brand.Resize += delegate { LayoutChrome(); };
             pathRow.Resize += delegate { LayoutChrome(); };
             meta.Resize += delegate { LayoutChrome(); };
+            siteRow.Resize += delegate { LayoutChrome(); };
             bottom.Resize += delegate { LayoutChrome(); };
             LoadLogo();
             LayoutChrome();
@@ -201,6 +238,19 @@ namespace Ironkeep
             placeLabel.SetBounds(20, 4, Math.Max(40, meta.ClientSize.Width - 200), 26);
             detailLabel.SetBounds(20, 30, Math.Max(40, meta.ClientSize.Width - 200), 20);
             countLabel.SetBounds(meta.ClientSize.Width - 180, 8, 160, 36);
+
+            int sendWidth = 168;
+            sendButton.SetBounds(siteRow.ClientSize.Width - 20 - sendWidth, 30, sendWidth, 32);
+            int fields = Math.Max(80, sendButton.Left - 28);
+            int addressWidth = Math.Max(180, (fields * 46) / 100);
+            int slugWidth = Math.Max(110, (fields * 24) / 100);
+            int tokenWidth = Math.Max(80, fields - addressWidth - slugWidth - 16);
+            addressBox.SetBounds(20, 30, addressWidth, 28);
+            slugBox.SetBounds(addressBox.Right + 8, 30, slugWidth, 28);
+            tokenBox.SetBounds(slugBox.Right + 8, 30, tokenWidth, 28);
+            addressLabel.SetBounds(20, 6, addressWidth, 20);
+            slugLabel.SetBounds(slugBox.Left, 6, slugWidth, 20);
+            tokenLabel.SetBounds(tokenBox.Left, 6, tokenWidth, 20);
 
             copyButton.SetBounds(20, 8, 156, 34);
             sampleButton.SetBounds(184, 8, 120, 34);
@@ -258,11 +308,17 @@ namespace Ironkeep
 
         void ApplyFile(string file, Dictionary<object, object> db)
         {
+            sampleShowing = false;
+            loadedFile = file;
+            loadedWrite = File.GetLastWriteTimeUtc(file);
             string root = WowRoot(file);
             pathBox.Text = root.Length > 0 ? root : Path.GetDirectoryName(file);
             Remember(pathBox.Text);
             string when = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
             ShowGroup(Saved.Describe(db), AccountOf(file), "Gelezen uit " + file + "    " + when, Muted);
+            string stamp = file + "|" + loadedWrite.Ticks.ToString();
+            if (stamp == sentKey) return;
+            if (SendCurrent(false)) sentKey = stamp;
         }
 
         void ShowGroup(GroupList group, string account, string status, Color statusColor)
@@ -313,6 +369,8 @@ namespace Ironkeep
         void ClearGroup()
         {
             reportText = "";
+            sampleShowing = false;
+            loadedFile = "";
             copyButton.Enabled = false;
             grid.Rows.Clear();
             reportBox.Visible = false;
@@ -347,6 +405,7 @@ namespace Ironkeep
         {
             try
             {
+                sampleShowing = true;
                 GroupList group = Saved.Describe(Saved.Load(Saved.EmbeddedSample()));
                 ShowGroup(group, "", "Ingebouwd voorbeeld. Dit is niet je eigen meting.", Accent);
             }
@@ -375,6 +434,194 @@ namespace Ironkeep
             if (e.KeyCode != Keys.Enter) return;
             e.SuppressKeyPress = true;
             RefreshFromPath();
+        }
+
+        void SendClick(object sender, EventArgs e)
+        {
+            if (SendCurrent(true) && loadedFile.Length > 0)
+                sentKey = loadedFile + "|" + loadedWrite.Ticks.ToString();
+        }
+
+        bool SendCurrent(bool manual)
+        {
+            SaveSite();
+            if (sampleShowing)
+            {
+                if (manual) SetStatus("Het voorbeeld wordt niet verstuurd.", Warning);
+                return false;
+            }
+            if (reportText.Trim().Length == 0)
+            {
+                if (manual) SetStatus("Er is nog geen lijst om te versturen.", Warning);
+                return false;
+            }
+            string token = tokenBox.Text.Trim();
+            if (token.Length == 0 || token.IndexOf('\n') >= 0 || token.IndexOf('\r') >= 0)
+            {
+                if (manual) SetStatus("Plak de sleutel van de raids-pagina.", Warning);
+                return false;
+            }
+            string problem;
+            Uri url = Target(addressBox.Text, slugBox.Text, out problem);
+            if (url == null)
+            {
+                if (manual) SetStatus(problem, Warning);
+                return false;
+            }
+            try
+            {
+                int status;
+                string response = PostReport(url, token, reportText, out status);
+                if (status >= 200 && status < 300 && response.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0)
+                {
+                    SetStatus("Verstuurd naar de site.", Accent);
+                    return true;
+                }
+                SetStatus(SendStatus(status), Warning);
+                return false;
+            }
+            catch (WebException)
+            {
+                SetStatus("De site is niet bereikbaar.", Warning);
+                return false;
+            }
+        }
+
+        static string SendStatus(int status)
+        {
+            if (status == 401) return "De sleutel klopt niet. Kopieer hem opnieuw van de raids-pagina.";
+            if (status == 404) return "Die gilde staat niet op dit adres.";
+            if (status == 413) return "De lijst is te groot.";
+            return "De site nam de lijst niet aan.";
+        }
+
+        static Uri Target(string address, string slug, out string problem)
+        {
+            problem = "";
+            address = (address ?? "").Trim();
+            slug = (slug ?? "").Trim().ToLowerInvariant();
+            if (!SlugOk(slug))
+            {
+                problem = "Vul de gildenaam in, bijvoorbeeld dutchchaos.";
+                return null;
+            }
+            Uri uri;
+            if (!Uri.TryCreate(address, UriKind.Absolute, out uri))
+            {
+                problem = "Het adres klopt niet. Gebruik https://ironkeep.gg.";
+                return null;
+            }
+            bool local = string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) || uri.Host == "127.0.0.1";
+            if (uri.Scheme != "https" && !(uri.Scheme == "http" && local))
+            {
+                problem = "Het adres moet met https:// beginnen.";
+                return null;
+            }
+            if (uri.UserInfo != null && uri.UserInfo.Length > 0)
+            {
+                problem = "Het adres klopt niet.";
+                return null;
+            }
+            var builder = new UriBuilder(uri.Scheme, uri.Host, uri.IsDefaultPort ? -1 : uri.Port);
+            builder.Path = "/api/" + slug + "/attendance";
+            return builder.Uri;
+        }
+
+        static bool SlugOk(string slug)
+        {
+            if (slug.Length < 1 || slug.Length > 32) return false;
+            for (int i = 0; i < slug.Length; i++)
+            {
+                char c = slug[i];
+                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+                if (!ok) return false;
+                if (c == '-' && (i == 0 || i == slug.Length - 1)) return false;
+            }
+            return true;
+        }
+
+        static string PostReport(Uri url, string token, string body, out int status)
+        {
+            status = 0;
+            var request = (HttpWebRequest)WebRequest.Create(url);
+            request.Method = "POST";
+            request.ContentType = "text/plain; charset=utf-8";
+            request.Headers["Authorization"] = "Bearer " + token;
+            request.Timeout = 20000;
+            request.ReadWriteTimeout = 20000;
+            request.UserAgent = "IronkeepCompanion/1.0";
+            byte[] bytes = Encoding.UTF8.GetBytes(body);
+            request.ContentLength = bytes.Length;
+            using (Stream stream = request.GetRequestStream())
+                stream.Write(bytes, 0, bytes.Length);
+            try
+            {
+                using (var response = (HttpWebResponse)request.GetResponse())
+                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                {
+                    status = (int)response.StatusCode;
+                    return reader.ReadToEnd();
+                }
+            }
+            catch (WebException ex)
+            {
+                var response = ex.Response as HttpWebResponse;
+                if (response == null) throw;
+                status = (int)response.StatusCode;
+                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
+                    return reader.ReadToEnd();
+            }
+        }
+
+        void LoadSite()
+        {
+            addressBox.Text = "https://ironkeep.gg";
+            slugBox.Text = "dutchchaos";
+            tokenBox.Text = "";
+            try
+            {
+                string file = SiteFile();
+                if (!File.Exists(file)) return;
+                string[] lines = File.ReadAllLines(file);
+                if (lines.Length > 0 && lines[0].Trim().Length > 0) addressBox.Text = lines[0].Trim();
+                if (lines.Length > 1 && lines[1].Trim().Length > 0) slugBox.Text = lines[1].Trim();
+                if (lines.Length > 2) tokenBox.Text = lines[2].Trim();
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        void SaveSite()
+        {
+            try
+            {
+                string file = SiteFile();
+                Directory.CreateDirectory(Path.GetDirectoryName(file));
+                File.WriteAllLines(file, new string[] { addressBox.Text.Trim(), slugBox.Text.Trim(), tokenBox.Text.Trim() });
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        static string SiteFile()
+        {
+            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Ironkeep", "companion-site.txt");
+        }
+
+        static void StyleBox(TextBox box)
+        {
+            box.BorderStyle = BorderStyle.FixedSingle;
+            box.BackColor = Panel3;
+            box.ForeColor = TextMain;
+            box.Font = UiFont(10f, FontStyle.Regular);
         }
 
         void SetStatus(string text, Color color)
