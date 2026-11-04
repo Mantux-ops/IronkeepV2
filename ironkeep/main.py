@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, discord_api
+from . import config, db, discord_api, roster, wow
 from . import mock_data as data
 from pathlib import Path
 
@@ -123,7 +123,7 @@ def _holds(session, guild, role_ids):
 
 
 def can_access(session, guild):
-    """Trials, members and settings."""
+    """Raids, members, characters and settings."""
     if _staff(session, guild):
         return True
     return _holds(session, guild, guild["settings"].get("recruitment_roles") or [])
@@ -161,19 +161,19 @@ def can_open_guild(session, guild):
 def home_path(session, guild):
     slug = guild["slug"]
     if can_access(session, guild):
-        return f"/{slug}/trial"
+        return f"/{slug}/raids"
     if can_book_lootsplit(session, guild):
         return f"/{slug}/lootsplit"
     if can_view_payout(session, guild):
         return f"/{slug}/payout"
-    return f"/{slug}/trial"
+    return f"/{slug}/raids"
 
 
 def page_access(request, guild):
     person = viewer(request)
     if not config.live():
         label = "Superadmin" if person["superadmin"] else "Recruiter"
-        return {"trials": True, "payout": True, "lootsplit": True, "label": label}
+        return {"trials": True, "payout": True, "lootsplit": True, "guild": True, "label": label}
     session = _session(request)
     trials = can_access(session, guild)
     payout = can_view_payout(session, guild)
@@ -186,7 +186,7 @@ def page_access(request, guild):
         label = "Lootsplit"
     else:
         label = "Member"
-    return {"trials": trials, "payout": payout, "lootsplit": lootsplit, "label": label}
+    return {"trials": trials, "payout": payout, "lootsplit": lootsplit, "guild": trials, "label": label}
 
 
 def deny_unless(request, guild, area):
@@ -345,7 +345,7 @@ def switch_view(role: str, request: Request, next: str = "/"):
         return RedirectResponse("/", status_code=303)
     target = next if next.startswith("/") else "/"
     if role == "recruiter" and target.startswith("/admin"):
-        target = "/dutchchaos/trial"
+        target = "/dutchchaos/raids"
     response = RedirectResponse(target, status_code=303)
     response.set_cookie(VIEW_COOKIE, "recruiter" if role == "recruiter" else "superadmin", samesite="lax")
     return response
@@ -358,7 +358,7 @@ def trial_redirect(request: Request):
     slugs = [g["slug"] for g in visible_guilds(request)]
     if len(slugs) == 1:
         guild = next(item for item in visible_guilds(request) if item["slug"] == slugs[0])
-        return RedirectResponse(guild.get("home") or f"/{slugs[0]}/trial", status_code=303)
+        return RedirectResponse(guild.get("home") or f"/{slugs[0]}/raids", status_code=303)
     if viewer(request)["superadmin"]:
         return RedirectResponse("/admin", status_code=303)
     return render(request, "forbidden.html", status_code=404, message="Ironkeep isn't in any of your servers yet.", guild=None, nav=None)
@@ -464,7 +464,7 @@ def guild_home(slug: str, request: Request):
     if error:
         return error
     session = _session(request) if config.live() else None
-    return RedirectResponse(home_path(session, guild) if config.live() else f"/{slug}/trial", status_code=303)
+    return RedirectResponse(home_path(session, guild) if config.live() else f"/{slug}/raids", status_code=303)
 
 
 @app.get("/{slug}/trial", response_class=HTMLResponse)
@@ -556,7 +556,125 @@ def members(slug: str, request: Request):
         return blocked
     source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
     prepared = prepare_members(guild, source)
+    attach_characters(guild, prepared["people"])
     return render(request, "members.html", guild=guild, nav="members", **prepared)
+
+
+# Sample mains and alts for the prototype. Live guilds start empty.
+_CHARACTER_SEED = (
+    ("9001", "Sylasvoker", "mage", "frost", "dps", True),
+    ("9001", "Sylasrogue", "rogue", "combat", "dps", False),
+    ("9002", "Bramlight", "priest", "holy", "healer", True),
+    ("9004", "Mirabear", "druid", "feral", "tank", True),
+    ("9004", "Miramoon", "druid", "balance", "dps", False),
+    ("9006", "Noorfrost", "mage", "frost", "dps", True),
+)
+_CHARACTER_MEMORY = {}
+_CHARACTER_SEQ = {}
+
+
+def _seed_characters(guild_id):
+    if guild_id in _CHARACTER_MEMORY:
+        return _CHARACTER_MEMORY[guild_id]
+    rows = []
+    if str(guild_id) == "806607423233327195":
+        for index, (user_id, name, class_id, spec_id, role, is_main) in enumerate(_CHARACTER_SEED, start=1):
+            rows.append(
+                {
+                    "id": index,
+                    "user_id": user_id,
+                    "name": name,
+                    "class_id": class_id,
+                    "spec_id": spec_id,
+                    "role": role,
+                    "is_main": is_main,
+                }
+            )
+    _CHARACTER_MEMORY[guild_id] = rows
+    _CHARACTER_SEQ[guild_id] = len(rows) + 1
+    return rows
+
+
+def _character_rows(guild):
+    if config.live():
+        return db.list_characters(guild["id"])
+    return _seed_characters(guild["id"])
+
+
+def _change_characters(guild, fn):
+    if config.live():
+        return db.change_characters(guild["id"], fn)
+    rows = _seed_characters(guild["id"])
+    result = fn(rows)
+    seq = _CHARACTER_SEQ[guild["id"]]
+    for row in rows:
+        if row.get("id") is None:
+            row["id"] = seq
+            seq += 1
+    _CHARACTER_SEQ[guild["id"]] = seq
+    return result
+
+
+def _presented_characters(guild):
+    presented = []
+    for row in _character_rows(guild):
+        item = wow.present(row)
+        if item:
+            presented.append(item)
+    return presented
+
+
+def attach_characters(guild, people):
+    """Main and alt count for each Discord member on the members page."""
+    grouped = {}
+    for row in _presented_characters(guild):
+        grouped.setdefault(row["user_id"], []).append(row)
+    for person in people:
+        rows = grouped.get(str(person.get("user_id")), [])
+        person["main"] = next((row for row in rows if row["is_main"]), None)
+        person["alt_count"] = sum(1 for row in rows if not row["is_main"])
+        person["character_search"] = " ".join(row["name"] for row in rows)
+
+
+def character_board(guild):
+    """Discord members with their main and alts, plus the class list for the form."""
+    grouped = {}
+    for row in _presented_characters(guild):
+        grouped.setdefault(row["user_id"], []).append(row)
+    for rows in grouped.values():
+        rows.sort(key=lambda item: (not item["is_main"], item["name"].casefold()))
+    people = []
+    known = set()
+    for person in directory_members(guild):
+        known.add(person["id"])
+        people.append({**person, "characters": grouped.get(person["id"], [])})
+    for user_id, rows in grouped.items():
+        if user_id in known:
+            continue
+        people.append(
+            {
+                "id": user_id,
+                "name": "Left the server",
+                "username": "",
+                "label": "Left the server",
+                "color": "#8d95a1",
+                "gone": True,
+                "characters": rows,
+            }
+        )
+    return {"people": people, "classes": wow.catalog()}
+
+
+def _character_fields(body):
+    if not isinstance(body, dict):
+        return None
+    return {
+        "name": body.get("name"),
+        "class_id": body.get("class_id"),
+        "spec_id": body.get("spec_id"),
+        "role": body.get("role"),
+        "is_main": bool(body.get("is_main")),
+    }
 
 
 FOREVER_RAIDS = [
@@ -597,12 +715,30 @@ def raid_signups(guild):
 
 def raid_people(guild):
     source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
+    mains = {row["user_id"]: row for row in _presented_characters(guild) if row["is_main"]}
     people = []
     for person in source:
         user_id = str(person.get("user_id") or "").strip()
         name = str(person.get("name") or "").strip()
         if user_id and name:
-            people.append({"id": user_id, "name": name})
+            main = mains.get(user_id)
+            people.append(
+                {
+                    "id": user_id,
+                    "name": name,
+                    "main": (
+                        {
+                            "name": main["name"],
+                            "class_name": main["class_name"],
+                            "spec_name": main["spec_name"],
+                            "color": main["color"],
+                            "role_name": main["role_name"],
+                        }
+                        if main
+                        else None
+                    ),
+                }
+            )
     people.sort(key=lambda item: item["name"].casefold())
     return people
 
@@ -754,6 +890,80 @@ def lootsplit_names(guild):
     if not named:
         return [], "Nobody with those roles is on the member list yet."
     return named, ""
+
+
+def _roster_result(guild, fn):
+    try:
+        _change_characters(guild, fn)
+    except roster.RosterError as exc:
+        return JSONResponse({"error": exc.message}, status_code=400)
+    return character_board(guild)
+
+
+@app.get("/{slug}/characters", response_class=HTMLResponse)
+def characters(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    board = character_board(guild)
+    return render(request, "characters.html", guild=guild, nav="characters", **board)
+
+
+@app.post("/api/{slug}/characters")
+async def add_character(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    body = await request.json()
+    fields = _character_fields(body)
+    if fields is None:
+        return JSONResponse({"error": "bad body"}, status_code=400)
+    user_id = str((body or {}).get("user_id") or "")
+    if user_id not in {person["id"] for person in directory_members(guild)}:
+        return JSONResponse({"error": "That person is not on the member list."}, status_code=400)
+    return _roster_result(guild, lambda rows: roster.add(rows, user_id, fields))
+
+
+@app.post("/api/{slug}/characters/{character_id}")
+async def edit_character(slug: str, character_id: int, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    fields = _character_fields(await request.json())
+    if fields is None:
+        return JSONResponse({"error": "bad body"}, status_code=400)
+    return _roster_result(guild, lambda rows: roster.update(rows, character_id, fields))
+
+
+@app.post("/api/{slug}/characters/{character_id}/main")
+def make_main(slug: str, character_id: int, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    return _roster_result(guild, lambda rows: roster.set_main(rows, character_id))
+
+
+@app.delete("/api/{slug}/characters/{character_id}")
+def delete_character(slug: str, character_id: int, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    return _roster_result(guild, lambda rows: roster.remove(rows, character_id))
 
 
 @app.get("/{slug}/payout", response_class=HTMLResponse)

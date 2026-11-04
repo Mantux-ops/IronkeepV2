@@ -10,7 +10,7 @@ from copy import deepcopy
 from datetime import date, datetime, timedelta
 from zoneinfo import ZoneInfo
 
-from . import config
+from . import config, roster
 from .mock_data import DEFAULT_MESSAGES
 
 _LOCK = threading.Lock()
@@ -282,6 +282,17 @@ def init():
                 detail TEXT NOT NULL,
                 resolved INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS characters (
+                id INTEGER PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                spec_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                is_main INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE INDEX IF NOT EXISTS characters_guild ON characters (guild_id);
             """
         )
         conn.commit()
@@ -643,6 +654,82 @@ def set_raid_signup(guild_id, raid_id, user_id, name, seat):
             )
         conn.commit()
         conn.close()
+
+
+def _character_from_row(row):
+    return {
+        "id": row["id"],
+        "user_id": row["user_id"],
+        "name": row["name"],
+        "class_id": row["class_id"],
+        "spec_id": row["spec_id"],
+        "role": row["role"],
+        "is_main": bool(row["is_main"]),
+    }
+
+
+def list_characters(guild_id):
+    if not config.DB_PATH:
+        return []
+    conn = connect()
+    rows = conn.execute(
+        "SELECT id, user_id, name, class_id, spec_id, role, is_main FROM characters WHERE guild_id = ? ORDER BY id",
+        (str(guild_id),),
+    ).fetchall()
+    conn.close()
+    return [_character_from_row(row) for row in rows]
+
+
+def change_characters(guild_id, fn):
+    """Load this guild's characters, let fn change the list, then store the result.
+
+    fn may append a row with id None, edit rows, or remove them. It raises roster.RosterError
+    when the change is refused, and then nothing is stored.
+    """
+    if not config.DB_PATH:
+        return fn([])
+    guild_id = str(guild_id)
+    with _LOCK:
+        conn = connect()
+        rows = [_character_from_row(row) for row in conn.execute(
+            "SELECT id, user_id, name, class_id, spec_id, role, is_main FROM characters WHERE guild_id = ? ORDER BY id",
+            (guild_id,),
+        ).fetchall()]
+        before_ids = {row["id"] for row in rows}
+        try:
+            result = fn(rows)
+        except roster.RosterError:
+            conn.close()
+            raise
+        after_ids = {row["id"] for row in rows if row.get("id")}
+        for gone in before_ids - after_ids:
+            conn.execute("DELETE FROM characters WHERE guild_id = ? AND id = ?", (guild_id, gone))
+        for row in rows:
+            values = (
+                row["user_id"],
+                row["name"],
+                row["class_id"],
+                row["spec_id"],
+                row["role"],
+                1 if row.get("is_main") else 0,
+            )
+            if row.get("id") is None:
+                cur = conn.execute(
+                    """INSERT INTO characters (guild_id, user_id, name, class_id, spec_id, role, is_main)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (guild_id, *values),
+                )
+                row["id"] = cur.lastrowid
+            else:
+                conn.execute(
+                    """UPDATE characters
+                       SET user_id = ?, name = ?, class_id = ?, spec_id = ?, role = ?, is_main = ?
+                       WHERE guild_id = ? AND id = ?""",
+                    (*values, guild_id, row["id"]),
+                )
+        conn.commit()
+        conn.close()
+        return result
 
 
 def list_members(guild_id):

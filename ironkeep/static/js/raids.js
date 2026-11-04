@@ -25,13 +25,29 @@
     return a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
   }
 
+  function personOf(userId) {
+    return (data.people || []).find((item) => String(item.id) === String(userId));
+  }
+
+  function identityHtml(name, userId) {
+    const main = (personOf(userId) || {}).main;
+    if (!main) {
+      return `<span class="raid-row__name"><span class="raid-row__title">${Ik.escape(name)}</span><span class="raid-row__sub">No character yet</span></span>`;
+    }
+    const color = Ik.escape(main.color);
+    return `<span class="raid-row__name">
+      <span class="raid-row__title" style="color:${color}"><span class="class-swatch" style="background:${color}"></span>${Ik.escape(main.name)}</span>
+      <span class="raid-row__sub">${Ik.escape(name)} · ${Ik.escape(main.class_name)} · ${Ik.escape(main.role_name)}</span>
+    </span>`;
+  }
+
   function rowHtml(row, seat) {
     const next = seat === "roster" ? "reserve" : "roster";
     const label = seat === "roster" ? "Reserve" : "Raid";
     const user = Ik.escape(row.user_id);
     return `<div class="raid-row">
       ${avatar(row.name, row.user_id)}
-      <span class="raid-row__name">${Ik.escape(row.name)}</span>
+      ${identityHtml(row.name, row.user_id)}
       <button class="button button--ghost button--sm" type="button" data-move="${next}" data-user="${user}">${label}</button>
       <button class="button button--ghost button--sm" type="button" data-move="off" data-user="${user}">Remove</button>
     </div>`;
@@ -41,7 +57,7 @@
     const user = Ik.escape(person.id);
     return `<div class="raid-row">
       ${avatar(person.name, person.id)}
-      <span class="raid-row__name">${Ik.escape(person.name)}</span>
+      ${identityHtml(person.name, person.id)}
       <button class="button button--outline button--sm" type="button" data-move="roster" data-user="${user}">Raid</button>
       <button class="button button--ghost button--sm" type="button" data-move="reserve" data-user="${user}">Reserve</button>
     </div>`;

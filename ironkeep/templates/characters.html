@@ -1,0 +1,37 @@
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Characters · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Characters</h1>
+    <p class="page-subtitle">{{ guild.name }} · one main per person. Alts stay on the same Discord member.</p>
+  </div>
+  <button class="button button--accent" type="button" id="add-character">{{ icon("plus", 16) }} Add character</button>
+</header>
+
+<section class="section">
+  <div class="section-head">
+    <h2 class="section-title" id="character-count">Characters</h2>
+    <label class="search">
+      {{ icon("search", 16) }}
+      <input type="search" id="character-search" placeholder="Search name" autocomplete="off">
+    </label>
+  </div>
+  <div class="chip-group member-filters" role="tablist" aria-label="Filter characters">
+    <button class="chip is-active" type="button" role="tab" data-filter="all" aria-selected="true">All</button>
+    <button class="chip" type="button" role="tab" data-filter="ready" aria-selected="false">Has a character</button>
+    <button class="chip" type="button" role="tab" data-filter="missing" aria-selected="false">No character</button>
+  </div>
+  <div class="character-list" id="character-list"></div>
+</section>
+
+<div class="modal-root" id="modal-root" hidden></div>
+{% endblock %}
+
+{% block scripts %}
+<script id="page-data" type="application/json">{{ {"slug": guild.slug, "people": people, "classes": classes} | tojson }}</script>
+<script src="{{ asset('js/characters.js') }}"></script>
+{% endblock %}
