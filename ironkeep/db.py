@@ -502,13 +502,13 @@ def update_trial_roles(trial_id, content_roles, lost_content_role, timeline_text
         conn.close()
 
 
-def mark_ping_sent(trial_id, settings):
+def mark_ping_sent(trial_id, settings, note="Day reminder sent"):
     stamp = now_stamp(settings)
     with _LOCK:
         conn = connect()
         row = conn.execute("SELECT timeline_json FROM trials WHERE id = ?", (trial_id,)).fetchone()
         timeline = _loads(row["timeline_json"], [])
-        timeline.append({"type": "system", "at": stamp, "text": "Day reminder sent"})
+        timeline.append({"type": "system", "at": stamp, "text": note})
         conn.execute(
             "UPDATE trials SET ping_sent_at = ?, timeline_json = ? WHERE id = ?",
             (stamp, json.dumps(timeline), trial_id),
