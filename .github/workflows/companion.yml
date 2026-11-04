@@ -4,6 +4,8 @@ on:
   push:
     paths:
       - "companion/**"
+      - "ironkeep/**"
+      - "tests/test_attendance.py"
       - ".github/workflows/companion.yml"
   workflow_dispatch:
 
@@ -11,6 +13,18 @@ permissions:
   contents: write
 
 jobs:
+  api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Test the attendance route
+        run: |
+          python -m pip install -r requirements.txt httpx
+          python -m unittest tests.test_attendance
+
   windows:
     runs-on: windows-latest
     defaults:
@@ -19,16 +33,22 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
       - name: Build the window and the tests
         working-directory: companion
         run: |
           $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
           New-Item -ItemType Directory -Force out | Out-Null
-          & $csc /nologo /target:winexe /platform:anycpu /optimize+ /out:out\IronkeepCompanion.exe /main:Ironkeep.App /win32manifest:app.manifest /win32icon:icon.ico /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /resource:logo.png,logo.png /reference:System.Windows.Forms.dll /reference:System.Drawing.dll AssemblyInfo.cs Saved.cs Window.cs
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ /out:out\IronkeepCompanion.exe /main:Ironkeep.App /win32manifest:app.manifest /win32icon:icon.ico /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /resource:logo.png,logo.png /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs Window.cs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
           & $csc /nologo /target:exe /platform:anycpu /optimize+ /out:out\CompanionConsole.exe /main:Ironkeep.Program /resource:sample-Ironkeep.lua,sample-Ironkeep.lua AssemblyInfo.cs Saved.cs Program.cs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          & $csc /nologo /target:exe /out:out\CompanionTests.exe /main:Ironkeep.SavedTests /resource:sample-Ironkeep.lua,sample-Ironkeep.lua AssemblyInfo.cs Saved.cs Program.cs SavedTests.cs
+          & $csc /nologo /target:exe /out:out\CompanionTests.exe /main:Ironkeep.SavedTests /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs Program.cs SavedTests.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $csc /nologo /target:exe /out:out\SendCheck.exe /main:Ironkeep.SendCheck /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs SendCheck.cs
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
 
       - name: Test
@@ -42,6 +62,33 @@ jobs:
           $ps = (powershell.exe -NoProfile -ExecutionPolicy Bypass -File IronkeepCompanion.ps1 --sample 2>$null) -join "`n"
           Write-Output $exe
           if ($exe -ne $ps) { Write-Error 'The reader and the script print different lists.'; exit 1 }
+
+          python -m pip install -r ..\requirements.txt httpx
+          python -m unittest discover -s ..\tests -p test_attendance.py
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          $server = Start-Process python -ArgumentList '-m','uvicorn','ironkeep.main:app','--host','127.0.0.1','--port','8765' -WorkingDirectory .. -PassThru -WindowStyle Hidden
+          try {
+            $page = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $page = Invoke-WebRequest http://127.0.0.1:8765/dutchchaos/raids -UseBasicParsing
+                if ($page.StatusCode -eq 200) { break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $page -or $page.StatusCode -ne 200) { Write-Error 'The site did not start.'; exit 1 }
+            if ($page.Content -notmatch 'id="companion-key"[^>]*value="([^"]+)"') { Write-Error 'The raids page has no companion key.'; exit 1 }
+            $key = $Matches[1]
+            & .\out\SendCheck.exe http://127.0.0.1:8765 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $again = & .\out\SendCheck.exe http://127.0.0.1:8765 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            if (($again -join "`n") -notmatch '"duplicate":true') { Write-Error "A second send was stored again.`n$($again -join "`n")"; exit 1 }
+            $shown = Invoke-WebRequest http://127.0.0.1:8765/dutchchaos/raids -UseBasicParsing
+            if ($shown.Content -notmatch 'Hall of Thanes' -or $shown.Content -notmatch 'Ada Smith') { Write-Error 'The raids page did not show the list the companion posted.'; exit 1 }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
 
       - name: Build the installer
         working-directory: companion
@@ -86,14 +133,14 @@ jobs:
             companion/IronkeepCompanion.exe.config
 
       - name: Publish the download
-        if: github.ref == 'refs/heads/cursor/forever-companion-f675'
+        if: github.ref == 'refs/heads/cursor/forever-companion-f675' || github.ref == 'refs/heads/cursor/companion-attendance-f675'
         working-directory: companion
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           $setup = (Get-FileHash out\IronkeepCompanionSetup.exe -Algorithm SHA256).Hash
           $window = (Get-FileHash out\IronkeepCompanion.exe -Algorithm SHA256).Hash
-          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst. Vul zelf de Forever-gilde in en plak de sleutel van de raids-pagina. Daarna stuurt het de lijst.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
+          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst. Vul zelf de Forever-gilde in en plak de sleutel van de raids-pagina. Daarna stuurt het de lijst. De sleutel blijft alleen voor deze Windows-gebruiker bewaard.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
           gh release delete companion-latest --yes --cleanup-tag 2>$null
           gh release create companion-latest out\IronkeepCompanionSetup.exe out\IronkeepCompanion.exe IronkeepCompanion.exe.config --prerelease --target $env:GITHUB_SHA --title 'Ironkeep Companion' --notes $notes
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

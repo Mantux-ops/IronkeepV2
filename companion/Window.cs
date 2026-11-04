@@ -64,11 +64,19 @@ namespace Ironkeep
         readonly Label hintLabel = new Label();
         readonly Label statusLabel = new Label();
         MemoryStream logoStream;
+        readonly SiteStore sites = SiteStore.ForUser();
+        readonly SendLedger ledger = SendLedger.ForUser();
+        readonly SettleWatch settle = new SettleWatch();
+        readonly List<string> retryQueue = new List<string>();
+        Timer settleTimer;
+        Timer retryTimer;
+        FileSystemWatcher watcher;
         string reportText = "";
         bool sampleShowing;
         string loadedFile = "";
-        DateTime loadedWrite;
-        string sentKey = "";
+        string settlePath = "";
+        int cutoffTries;
+        int retryAttempt;
 
         public MainWindow()
         {
@@ -193,6 +201,11 @@ namespace Ironkeep
             bottom.Resize += delegate { LayoutChrome(); };
             LoadLogo();
             LayoutChrome();
+            settleTimer = new Timer();
+            settleTimer.Interval = 400;
+            settleTimer.Tick += SettleTick;
+            retryTimer = new Timer();
+            retryTimer.Tick += RetryTick;
         }
 
         protected override void OnHandleCreated(EventArgs e)
@@ -225,6 +238,9 @@ namespace Ironkeep
 
         protected override void OnFormClosed(FormClosedEventArgs e)
         {
+            if (watcher != null) watcher.Dispose();
+            if (settleTimer != null) settleTimer.Dispose();
+            if (retryTimer != null) retryTimer.Dispose();
             if (logoStream != null) logoStream.Dispose();
             base.OnFormClosed(e);
         }
@@ -269,7 +285,11 @@ namespace Ironkeep
         void LoadInitial()
         {
             string saved = ReadSetting();
-            if (saved.Length > 0 && TryFolder(saved)) return;
+            if (saved.Length > 0)
+            {
+                Watch(saved);
+                if (TryFolder(saved)) return;
+            }
             foreach (string folder in Saved.DefaultWowFolders())
             {
                 if (TryFolder(folder)) return;
@@ -295,34 +315,74 @@ namespace Ironkeep
 
         bool TryFolder(string folder)
         {
+            Watch(folder);
+            List<string> files = Saved.AllSaved(folder);
+            if (files.Count == 0)
+            {
+                try
+                {
+                    Saved.FindSaved(folder);
+                }
+                catch (SavedException ex)
+                {
+                    if (ex.Message.StartsWith("No Ironkeep.lua")) return false;
+                    ClearGroup();
+                    SetStatus(Dutch(ex.Message), Warning);
+                    return true;
+                }
+                return false;
+            }
+            string show = Saved.Newest(files);
+            bool offline = false;
+            foreach (string file in files)
+            {
+                if (file == show) continue;
+                if (Publish(file, false, false) == SendOutcome.Offline) offline = true;
+            }
+            if (Publish(show, false, true) == SendOutcome.Offline) offline = true;
+            if (offline) NoteSend(SendOutcome.Offline);
+            return true;
+        }
+
+        void NoteSend(SendOutcome outcome)
+        {
+            if (outcome != SendOutcome.Offline) return;
+            int seconds = ScheduleBackoff();
+            if (seconds == 0)
+                SetStatus("De site is niet bereikbaar. Klik op Vernieuwen om het opnieuw te proberen.", Warning);
+            else
+                SetStatus("De site is niet bereikbaar. Nieuwe poging over " + seconds.ToString() + " seconden.", Warning);
+        }
+
+        SendOutcome Publish(string file, bool manual, bool show)
+        {
+            Dictionary<object, object> db;
             try
             {
-                string file = Saved.FindSaved(folder);
-                ApplyFile(file, Saved.LoadPath(file));
-                return true;
+                db = Saved.LoadPath(file);
             }
             catch (SavedException ex)
             {
-                if (ex.Message.StartsWith("No Ironkeep.lua")) return false;
-                ClearGroup();
-                SetStatus(Dutch(ex.Message), Warning);
-                return true;
+                if (show)
+                {
+                    ClearGroup();
+                    SetStatus(Dutch(ex.Message), Warning);
+                }
+                if (ex.Message == "This saved file is cut off.") NoteCutoff(file);
+                return SendOutcome.Rejected;
             }
-        }
-
-        void ApplyFile(string file, Dictionary<object, object> db)
-        {
-            sampleShowing = false;
-            loadedFile = file;
-            loadedWrite = File.GetLastWriteTimeUtc(file);
-            string root = WowRoot(file);
-            pathBox.Text = root.Length > 0 ? root : Path.GetDirectoryName(file);
-            Remember(pathBox.Text);
-            string when = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
-            ShowGroup(Saved.Describe(db), AccountOf(file), "Gelezen uit " + file + "    " + when, Muted);
-            string stamp = file + "|" + loadedWrite.Ticks.ToString();
-            if (stamp == sentKey) return;
-            if (SendCurrent(false)) sentKey = stamp;
+            GroupList group = Saved.Describe(db);
+            if (show)
+            {
+                sampleShowing = false;
+                loadedFile = file;
+                string root = WowRoot(file);
+                pathBox.Text = root.Length > 0 ? root : Path.GetDirectoryName(file);
+                Remember(pathBox.Text);
+                string when = File.GetLastWriteTime(file).ToString("yyyy-MM-dd HH:mm");
+                ShowGroup(group, AccountOf(file), "Gelezen uit " + file + "    " + when, Muted);
+            }
+            return SendReport(group.Text, file, manual, show);
         }
 
         void ShowGroup(GroupList group, string account, string status, Color statusColor)
@@ -442,52 +502,67 @@ namespace Ironkeep
 
         void SendClick(object sender, EventArgs e)
         {
-            if (SendCurrent(true) && loadedFile.Length > 0)
-                sentKey = loadedFile + "|" + loadedWrite.Ticks.ToString();
-        }
-
-        bool SendCurrent(bool manual)
-        {
-            SaveSite();
             if (sampleShowing)
             {
-                if (manual) SetStatus("Het voorbeeld wordt niet verstuurd.", Warning);
-                return false;
+                SetStatus("Het voorbeeld wordt niet verstuurd.", Warning);
+                return;
             }
-            if (reportText.Trim().Length == 0)
+            NoteSend(SendReport(reportText, loadedFile, true, true));
+        }
+
+        SendOutcome SendReport(string text, string path, bool manual, bool show)
+        {
+            SaveSite();
+            if (text == null) text = "";
+            if (text.Trim().Length == 0)
             {
                 if (manual) SetStatus("Er is nog geen lijst om te versturen.", Warning);
-                return false;
+                return SendOutcome.Rejected;
             }
+            string hash = ReportHash.Of(text);
+            if (!manual && path != null && path.Length > 0 && ledger.Has(path, hash))
+                return SendOutcome.Skipped;
             string token = tokenBox.Text.Trim();
             if (token.Length == 0 || token.IndexOf('\n') >= 0 || token.IndexOf('\r') >= 0)
             {
-                if (manual) SetStatus("Plak de sleutel van de raids-pagina.", Warning);
-                return false;
+                if (manual || show) SetStatus("Plak de sleutel van de raids-pagina.", Warning);
+                return SendOutcome.Auth;
             }
             string problem;
-            Uri url = Target(addressBox.Text, slugBox.Text, out problem);
+            Uri url = SiteClient.Target(addressBox.Text, slugBox.Text, out problem);
             if (url == null)
             {
-                if (manual) SetStatus(problem, Warning);
-                return false;
+                if (manual || show) SetStatus(problem, Warning);
+                return SendOutcome.Auth;
             }
             try
             {
                 int status;
-                string response = PostReport(url, token, reportText, out status);
-                if (status >= 200 && status < 300 && response.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0)
+                string response = SiteClient.Post(url, token, text, out status);
+                if (status >= 200 && status < 300 && SiteClient.Accepted(response))
                 {
-                    SetStatus("Verstuurd naar de site.", Accent);
-                    return true;
+                    if (path != null && path.Length > 0) ledger.Remember(path, hash);
+                    retryQueue.Remove(path);
+                    if (show || manual)
+                    {
+                        if (SiteClient.Duplicate(response)) SetStatus("Die lijst stond al op de site.", Accent);
+                        else SetStatus("Verstuurd naar de site.", Accent);
+                    }
+                    return SendOutcome.Sent;
                 }
-                SetStatus(SendStatus(status), Warning);
-                return false;
+                if (show || manual) SetStatus(SendStatus(status), Warning);
+                if (SiteClient.Retryable(status))
+                {
+                    RememberRetry(path);
+                    return SendOutcome.Offline;
+                }
+                return status == 401 ? SendOutcome.Auth : SendOutcome.Rejected;
             }
             catch (WebException)
             {
-                SetStatus("De site is niet bereikbaar.", Warning);
-                return false;
+                RememberRetry(path);
+                if (show || manual) SetStatus("De site is niet bereikbaar.", Warning);
+                return SendOutcome.Offline;
             }
         }
 
@@ -499,125 +574,131 @@ namespace Ironkeep
             return "De site nam de lijst niet aan.";
         }
 
-        static Uri Target(string address, string slug, out string problem)
-        {
-            problem = "";
-            address = (address ?? "").Trim();
-            slug = (slug ?? "").Trim().ToLowerInvariant();
-            if (!SlugOk(slug))
-            {
-                problem = "Vul de gildenaam in. Die staat in het adres van jullie raids-pagina.";
-                return null;
-            }
-            Uri uri;
-            if (!Uri.TryCreate(address, UriKind.Absolute, out uri))
-            {
-                problem = "Het adres klopt niet. Gebruik https://ironkeep.gg.";
-                return null;
-            }
-            bool local = string.Equals(uri.Host, "localhost", StringComparison.OrdinalIgnoreCase) || uri.Host == "127.0.0.1";
-            if (uri.Scheme != "https" && !(uri.Scheme == "http" && local))
-            {
-                problem = "Het adres moet met https:// beginnen.";
-                return null;
-            }
-            if (uri.UserInfo != null && uri.UserInfo.Length > 0)
-            {
-                problem = "Het adres klopt niet.";
-                return null;
-            }
-            var builder = new UriBuilder(uri.Scheme, uri.Host, uri.IsDefaultPort ? -1 : uri.Port);
-            builder.Path = "/api/" + slug + "/attendance";
-            return builder.Uri;
-        }
-
-        static bool SlugOk(string slug)
-        {
-            if (slug.Length < 1 || slug.Length > 32) return false;
-            for (int i = 0; i < slug.Length; i++)
-            {
-                char c = slug[i];
-                bool ok = (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
-                if (!ok) return false;
-                if (c == '-' && (i == 0 || i == slug.Length - 1)) return false;
-            }
-            return true;
-        }
-
-        static string PostReport(Uri url, string token, string body, out int status)
-        {
-            status = 0;
-            var request = (HttpWebRequest)WebRequest.Create(url);
-            request.Method = "POST";
-            request.ContentType = "text/plain; charset=utf-8";
-            request.Headers["Authorization"] = "Bearer " + token;
-            request.Timeout = 20000;
-            request.ReadWriteTimeout = 20000;
-            request.UserAgent = "IronkeepCompanion/1.0";
-            byte[] bytes = Encoding.UTF8.GetBytes(body);
-            request.ContentLength = bytes.Length;
-            using (Stream stream = request.GetRequestStream())
-                stream.Write(bytes, 0, bytes.Length);
-            try
-            {
-                using (var response = (HttpWebResponse)request.GetResponse())
-                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
-                {
-                    status = (int)response.StatusCode;
-                    return reader.ReadToEnd();
-                }
-            }
-            catch (WebException ex)
-            {
-                var response = ex.Response as HttpWebResponse;
-                if (response == null) throw;
-                status = (int)response.StatusCode;
-                using (var reader = new StreamReader(response.GetResponseStream(), Encoding.UTF8))
-                    return reader.ReadToEnd();
-            }
-        }
-
         void LoadSite()
         {
             addressBox.Text = "https://ironkeep.gg";
             slugBox.Text = "";
             tokenBox.Text = "";
-            try
-            {
-                string file = SiteFile();
-                if (!File.Exists(file)) return;
-                string[] lines = File.ReadAllLines(file);
-                if (lines.Length > 0 && lines[0].Trim().Length > 0) addressBox.Text = lines[0].Trim();
-                if (lines.Length > 1 && lines[1].Trim().Length > 0) slugBox.Text = lines[1].Trim();
-                if (lines.Length > 2) tokenBox.Text = lines[2].Trim();
-            }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
-            {
-            }
+            SiteSettings site = sites.Load();
+            if (site.Address.Length > 0) addressBox.Text = site.Address;
+            if (site.Slug.Length > 0) slugBox.Text = site.Slug;
+            tokenBox.Text = site.Token;
+            if (site.Unreadable)
+                SetStatus("De sleutel op deze pc kon niet gelezen worden. Plak hem opnieuw.", Warning);
         }
 
         void SaveSite()
         {
+            sites.Save(addressBox.Text, slugBox.Text, tokenBox.Text);
+        }
+
+        void Watch(string start)
+        {
+            if (watcher != null)
+            {
+                watcher.EnableRaisingEvents = false;
+                watcher.Dispose();
+                watcher = null;
+            }
+            if (start == null) return;
+            string dir = start.Trim();
+            if (dir.Length == 0) return;
+            if (File.Exists(dir)) dir = Path.GetDirectoryName(dir);
+            if (dir == null || !Directory.Exists(dir)) return;
+            watcher = new FileSystemWatcher(dir);
+            watcher.Filter = "Ironkeep.lua";
+            watcher.IncludeSubdirectories = true;
+            watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size;
+            watcher.Changed += OnSaved;
+            watcher.Created += OnSaved;
+            watcher.Renamed += OnSaved;
+            watcher.EnableRaisingEvents = true;
+        }
+
+        void OnSaved(object sender, FileSystemEventArgs e)
+        {
+            string path = e.FullPath;
+            if (path == null || path.IndexOf("Ironkeep.lua", StringComparison.OrdinalIgnoreCase) < 0) return;
             try
             {
-                string file = SiteFile();
-                Directory.CreateDirectory(Path.GetDirectoryName(file));
-                File.WriteAllLines(file, new string[] { addressBox.Text.Trim(), slugBox.Text.Trim(), tokenBox.Text.Trim() });
+                BeginInvoke((MethodInvoker)delegate { Arm(path); });
             }
-            catch (IOException)
-            {
-            }
-            catch (UnauthorizedAccessException)
+            catch (InvalidOperationException)
             {
             }
         }
 
-        static string SiteFile()
+        void Arm(string path)
         {
-            return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "Ironkeep", "companion-site.txt");
+            settlePath = path;
+            cutoffTries = 0;
+            settle.Reset();
+            settleTimer.Stop();
+            settleTimer.Start();
+        }
+
+        void SettleTick(object sender, EventArgs e)
+        {
+            settleTimer.Stop();
+            if (settlePath.Length == 0 || !File.Exists(settlePath)) return;
+            long length = new FileInfo(settlePath).Length;
+            if (!settle.Due(length))
+            {
+                settleTimer.Start();
+                return;
+            }
+            NoteSend(Publish(settlePath, false, true));
+        }
+
+        void NoteCutoff(string file)
+        {
+            if (file != settlePath) return;
+            cutoffTries++;
+            if (cutoffTries >= 4) return;
+            settle.Reset();
+            settleTimer.Start();
+        }
+
+        void RememberRetry(string path)
+        {
+            if (path == null || path.Length == 0) return;
+            if (!retryQueue.Contains(path)) retryQueue.Add(path);
+        }
+
+        int ScheduleBackoff()
+        {
+            retryAttempt++;
+            int seconds = SendRetry.Seconds(retryAttempt);
+            if (seconds == 0)
+            {
+                retryQueue.Clear();
+                retryAttempt = 0;
+                return 0;
+            }
+            retryTimer.Stop();
+            retryTimer.Interval = seconds * 1000;
+            retryTimer.Start();
+            return seconds;
+        }
+
+        void RetryTick(object sender, EventArgs e)
+        {
+            retryTimer.Stop();
+            if (retryQueue.Count == 0)
+            {
+                retryAttempt = 0;
+                return;
+            }
+            var pending = new List<string>(retryQueue);
+            retryQueue.Clear();
+            SendOutcome worst = SendOutcome.Sent;
+            for (int i = 0; i < pending.Count; i++)
+            {
+                SendOutcome outcome = Publish(pending[i], false, i == pending.Count - 1);
+                if (outcome == SendOutcome.Offline) worst = SendOutcome.Offline;
+            }
+            if (worst == SendOutcome.Offline) NoteSend(worst);
+            else retryAttempt = 0;
         }
 
         static void StyleBox(TextBox box)

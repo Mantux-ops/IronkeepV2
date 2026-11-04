@@ -2877,6 +2877,85 @@ a.albion-name:hover {
     font-size: 32px;
   }
 
+  .measure-key {
+    flex-wrap: wrap;
+  }
+}
+
+.measure-card {
+  margin-bottom: 18px;
+}
+
+.measure-key {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.measure-key__label {
+  color: var(--muted);
+  font-size: 13px;
+  flex: none;
+}
+
+.measure-key .input {
+  flex: 1;
+  min-width: 180px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.measure-when,
+.raid-count__label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.raid-count-wrap {
+  text-align: right;
+  flex: none;
+}
+
+.raid-count {
+  display: block;
+  font-weight: 600;
+}
+
+.raid-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.raid-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.class-swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.raid-row__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.raid-row__title {
+  font-weight: 600;
+}
+
+.raid-row__sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
   .panel__actions {
     flex-wrap: wrap;
   }
