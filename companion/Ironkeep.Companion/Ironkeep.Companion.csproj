@@ -17,6 +17,9 @@
     <FileVersion>2.0.0.0</FileVersion>
     <StartupObject>Ironkeep.Companion.Program</StartupObject>
     <DefineConstants>$(DefineConstants);DISABLE_XAML_GENERATED_MAIN</DefineConstants>
+    <!-- WPF native libraries stay beside a single-file exe unless they are bundled.
+         Running the exe alone then dies inside the first window procedure. -->
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
     <NoWarn>CA1416</NoWarn>
   </PropertyGroup>
   <ItemGroup>

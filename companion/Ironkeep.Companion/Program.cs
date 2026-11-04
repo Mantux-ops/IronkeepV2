@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Threading;
 using System.Windows;
 using Ironkeep;
 using System.Windows.Media;
@@ -10,61 +11,133 @@ namespace Ironkeep.Companion
 {
     public static class Program
     {
+        static int _reported;
+
         [STAThread]
         public static int Main(string[] args)
         {
+            string mode = args != null && args.Length > 0 ? args[0] : "window";
             try
             {
-                File.WriteAllText(Path.Combine(Path.GetTempPath(), "ironkeep-wpf-start.txt"),
-                    "args=" + (args == null ? "" : string.Join(" ", args)) + Environment.NewLine);
+                File.WriteAllText(Path.Combine(Path.GetTempPath(), "ironkeep-wpf-start.txt"), "mode=" + mode + Environment.NewLine);
             }
             catch (Exception)
             {
             }
+            StartupLog.Write("starting " + mode);
+            AppDomain.CurrentDomain.UnhandledException += delegate(object sender, UnhandledExceptionEventArgs e)
+            {
+                Report(e.ExceptionObject as Exception ?? new Exception("The companion stopped."), false);
+            };
             if (args != null && args.Length > 0 && args[0] == "--send-check") return SendCheck(args);
             if (args != null && args.Length > 0 && args[0] == "--capture") return Capture(args);
-            var app = new App();
-            app.InitializeComponent();
-            app.Startup += Start;
-            app.Run();
-            return 0;
+            try
+            {
+                PrepareDesktop();
+                var app = new App();
+                app.DispatcherUnhandledException += delegate(object sender, DispatcherUnhandledExceptionEventArgs e)
+                {
+                    Report(e.Exception, true);
+                    e.Handled = true;
+                    app.Shutdown(1);
+                };
+                app.InitializeComponent();
+                app.Startup += Start;
+                return app.Run();
+            }
+            catch (Exception ex)
+            {
+                Report(ex, true);
+                return 1;
+            }
+        }
+
+        static void PrepareDesktop()
+        {
+            try { System.Windows.Forms.Application.SetHighDpiMode(System.Windows.Forms.HighDpiMode.PerMonitorV2); }
+            catch (InvalidOperationException) { }
+            try { System.Windows.Forms.Application.EnableVisualStyles(); }
+            catch (InvalidOperationException) { }
         }
 
         static void Start(object sender, StartupEventArgs e)
         {
             var app = (App)sender;
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
-            var instance = SingleInstance.Acquire("IronkeepCompanion");
-            if (!instance.IsOwner)
+            try
             {
-                instance.Signal();
-                instance.Dispose();
-                app.Shutdown();
+                var instance = SingleInstance.Acquire("IronkeepCompanion");
+                if (!instance.IsOwner)
+                {
+                    StartupLog.Write("already-running");
+                    instance.Signal();
+                    instance.Dispose();
+                    app.Shutdown();
+                    return;
+                }
+                StartupLog.Write("session");
+                var session = CompanionSession.ForCurrentUser();
+                session.Start();
+                StartupLog.Write("window");
+                var window = new MainWindow(session);
+                NotifyIconHost host = null;
+                try
+                {
+                    var tray = TrayIcon.Create(window, session, delegate
+                    {
+                        window.AllowExit = true;
+                        if (host != null) host.Dispose();
+                        window.Close();
+                        session.Dispose();
+                        instance.Dispose();
+                        app.Shutdown();
+                    });
+                    host = new NotifyIconHost(tray);
+                    StartupLog.Write("tray");
+                }
+                catch (Exception ex)
+                {
+                    StartupLog.WriteException("tray", ex);
+                }
+                window.Show();
+                var timer = new DispatcherTimer();
+                timer.Interval = TimeSpan.FromMilliseconds(500);
+                timer.Tick += delegate
+                {
+                    if (instance.Consume()) window.BringForward();
+                    if (window.IsVisible) window.Refresh();
+                };
+                timer.Start();
+                StartupLog.Write("ready");
+            }
+            catch (Exception ex)
+            {
+                Report(ex, true);
+                app.Shutdown(1);
+            }
+        }
+
+        static void Report(Exception ex, bool show)
+        {
+            if (Interlocked.Exchange(ref _reported, 1) != 0)
+            {
+                StartupLog.WriteException("fatal", ex);
                 return;
             }
-            var session = CompanionSession.ForCurrentUser();
-            session.Start();
-            var window = new MainWindow(session);
-            NotifyIconHost host = null;
-            var tray = TrayIcon.Create(window, session, delegate
+            StartupLog.WriteException("fatal", ex);
+            if (!show || ex == null) return;
+            string text = StartupLog.Redact(ex.GetType().Name + ": " + ex.Message);
+            if (text.Length > 500) text = text.Substring(0, 500);
+            text += Environment.NewLine + Environment.NewLine + StartupLog.FilePath();
+            try
             {
-                window.AllowExit = true;
-                if (host != null) host.Dispose();
-                window.Close();
-                session.Dispose();
-                instance.Dispose();
-                app.Shutdown();
-            });
-            host = new NotifyIconHost(tray);
-            window.Show();
-            var timer = new DispatcherTimer();
-            timer.Interval = TimeSpan.FromMilliseconds(500);
-            timer.Tick += delegate
+                MessageBox.Show(text, "Ironkeep Companion", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            catch (Exception)
             {
-                if (instance.Consume()) window.BringForward();
-                if (window.IsVisible) window.Refresh();
-            };
-            timer.Start();
+                try { System.Windows.Forms.MessageBox.Show(text, "Ironkeep Companion"); }
+                catch (Exception) { }
+            }
         }
 
         static int SendCheck(string[] args)
