@@ -93,7 +93,7 @@ jobs:
         run: |
           $setup = (Get-FileHash out\IronkeepCompanionSetup.exe -Algorithm SHA256).Hash
           $window = (Get-FileHash out\IronkeepCompanion.exe -Algorithm SHA256).Hash
-          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst en stuurt die naar de raids-pagina zodra de sleutel is ingevuld.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
+          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst. Vul zelf de Forever-gilde in en plak de sleutel van de raids-pagina. Daarna stuurt het de lijst.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
           gh release delete companion-latest --yes --cleanup-tag 2>$null
           gh release create companion-latest out\IronkeepCompanionSetup.exe out\IronkeepCompanion.exe IronkeepCompanion.exe.config --prerelease --target $env:GITHUB_SHA --title 'Ironkeep Companion' --notes $notes
           if ($LASTEXITCODE) { exit $LASTEXITCODE }

@@ -57,6 +57,7 @@ namespace Ironkeep
         readonly Label addressLabel = new Label();
         readonly Label slugLabel = new Label();
         readonly Label tokenLabel = new Label();
+        readonly Label siteNote = new Label();
         readonly Button copyButton;
         readonly Button sampleButton;
         readonly Button sendButton;
@@ -76,8 +77,8 @@ namespace Ironkeep
             BackColor = Bg;
             ForeColor = TextMain;
             StartPosition = FormStartPosition.CenterScreen;
-            MinimumSize = new Size(760, 600);
-            ClientSize = new Size(880, 660);
+            MinimumSize = new Size(760, 620);
+            ClientSize = new Size(880, 680);
             DoubleBuffered = true;
             KeyPreview = true;
 
@@ -91,7 +92,7 @@ namespace Ironkeep
             StylePanel(brand, 72, DockStyle.Top);
             StylePanel(pathRow, 48, DockStyle.Top);
             StylePanel(meta, 58, DockStyle.Top);
-            StylePanel(siteRow, 72, DockStyle.Top);
+            StylePanel(siteRow, 96, DockStyle.Top);
             StylePanel(bottom, 78, DockStyle.Bottom);
 
             logo.BackColor = Bg;
@@ -111,6 +112,7 @@ namespace Ironkeep
             StyleLabel(addressLabel, "Adres", Muted, 9f, FontStyle.Regular);
             StyleLabel(slugLabel, "Gilde", Muted, 9f, FontStyle.Regular);
             StyleLabel(tokenLabel, "Sleutel", Muted, 9f, FontStyle.Regular);
+            StyleLabel(siteNote, "Vul jullie Forever-gilde zelf in. Dutch Chaos hoort hier niet.", Muted, 9f, FontStyle.Regular);
             LoadSite();
             addressBox.Leave += delegate { SaveSite(); };
             slugBox.Leave += delegate { SaveSite(); };
@@ -158,6 +160,7 @@ namespace Ironkeep
             siteRow.Controls.Add(slugBox);
             siteRow.Controls.Add(tokenBox);
             siteRow.Controls.Add(sendButton);
+            siteRow.Controls.Add(siteNote);
             bottom.Controls.Add(copyButton);
             bottom.Controls.Add(sampleButton);
             bottom.Controls.Add(hintLabel);
@@ -240,17 +243,18 @@ namespace Ironkeep
             countLabel.SetBounds(meta.ClientSize.Width - 180, 8, 160, 36);
 
             int sendWidth = 168;
-            sendButton.SetBounds(siteRow.ClientSize.Width - 20 - sendWidth, 30, sendWidth, 32);
+            sendButton.SetBounds(siteRow.ClientSize.Width - 20 - sendWidth, 26, sendWidth, 32);
             int fields = Math.Max(80, sendButton.Left - 28);
             int addressWidth = Math.Max(180, (fields * 46) / 100);
             int slugWidth = Math.Max(110, (fields * 24) / 100);
             int tokenWidth = Math.Max(80, fields - addressWidth - slugWidth - 16);
-            addressBox.SetBounds(20, 30, addressWidth, 28);
-            slugBox.SetBounds(addressBox.Right + 8, 30, slugWidth, 28);
-            tokenBox.SetBounds(slugBox.Right + 8, 30, tokenWidth, 28);
-            addressLabel.SetBounds(20, 6, addressWidth, 20);
-            slugLabel.SetBounds(slugBox.Left, 6, slugWidth, 20);
-            tokenLabel.SetBounds(tokenBox.Left, 6, tokenWidth, 20);
+            addressBox.SetBounds(20, 26, addressWidth, 28);
+            slugBox.SetBounds(addressBox.Right + 8, 26, slugWidth, 28);
+            tokenBox.SetBounds(slugBox.Right + 8, 26, tokenWidth, 28);
+            addressLabel.SetBounds(20, 4, addressWidth, 20);
+            slugLabel.SetBounds(slugBox.Left, 4, slugWidth, 20);
+            tokenLabel.SetBounds(tokenBox.Left, 4, tokenWidth, 20);
+            siteNote.SetBounds(20, 62, Math.Max(40, siteRow.ClientSize.Width - 40), 24);
 
             copyButton.SetBounds(20, 8, 156, 34);
             sampleButton.SetBounds(184, 8, 120, 34);
@@ -502,7 +506,7 @@ namespace Ironkeep
             slug = (slug ?? "").Trim().ToLowerInvariant();
             if (!SlugOk(slug))
             {
-                problem = "Vul de gildenaam in, bijvoorbeeld dutchchaos.";
+                problem = "Vul de gildenaam in. Die staat in het adres van jullie raids-pagina.";
                 return null;
             }
             Uri uri;
@@ -576,7 +580,7 @@ namespace Ironkeep
         void LoadSite()
         {
             addressBox.Text = "https://ironkeep.gg";
-            slugBox.Text = "dutchchaos";
+            slugBox.Text = "";
             tokenBox.Text = "";
             try
             {
