@@ -5,6 +5,7 @@ on:
     paths:
       - "companion/**"
       - "ironkeep/**"
+      - "requirements.txt"
       - "tests/test_attendance.py"
       - ".github/workflows/companion.yml"
   workflow_dispatch:
