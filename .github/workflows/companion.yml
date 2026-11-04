@@ -135,6 +135,43 @@ jobs:
           Set-Content -Path companion/out/wpf/SIZE.txt -Encoding ascii -Value $exe.Length
           Write-Output "WPF published size $($exe.Length) bytes"
 
+      - name: Launch the published WPF companion by itself
+        working-directory: companion
+        run: |
+          $source = Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe'
+          if (-not (Test-Path $source)) { Write-Error 'The published companion is missing.'; exit 1 }
+          $isolated = Join-Path (Get-Location) 'out\wpf-alone'
+          New-Item -ItemType Directory -Force $isolated | Out-Null
+          Copy-Item $source (Join-Path $isolated 'IronkeepCompanion.exe')
+          $extra = @(Get-ChildItem $isolated -File | Where-Object { $_.Name -ne 'IronkeepCompanion.exe' })
+          if ($extra.Count -gt 0) { Write-Error 'The launch folder must contain only the executable.'; exit 1 }
+          $log = Join-Path $env:LOCALAPPDATA 'Ironkeep\Logs\startup.log'
+          $queue = Join-Path $env:APPDATA 'Ironkeep\companion-queue.sqlite'
+          if (Test-Path $log) { Remove-Item $log -Force }
+          $hadQueue = Test-Path $queue
+          $proc = Start-Process -FilePath (Join-Path $isolated 'IronkeepCompanion.exe') -WorkingDirectory $isolated -PassThru
+          $ready = $false
+          $deadline = (Get-Date).AddSeconds(45)
+          try {
+            while ((Get-Date) -lt $deadline) {
+              if ($proc.HasExited) { break }
+              if (Test-Path $log) {
+                $text = Get-Content $log -Raw
+                if ($text -match '(?m) ready$') { $ready = $true; break }
+              }
+              Start-Sleep -Milliseconds 400
+            }
+            $shown = ''
+            if (Test-Path $log) { $shown = Get-Content $log -Raw; Write-Output $shown }
+            if ($proc.HasExited) { Write-Error "The companion exited with $($proc.ExitCode) before it was ready."; exit 1 }
+            if (-not $ready) { Write-Error 'The companion did not finish startup.'; exit 1 }
+            if ($shown -match '(?m) fatal( |$)') { Write-Error 'Startup recorded a fatal exception.'; exit 1 }
+            if (-not (Test-Path $queue)) { Write-Error 'A first launch did not create the queue.'; exit 1 }
+            if ($hadQueue) { Write-Output 'The queue file was already present.' } else { Write-Output 'First launch created the queue.' }
+          } finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
       - name: Capture the WPF dashboard
         working-directory: companion
         run: |
