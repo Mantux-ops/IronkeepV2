@@ -3,11 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Ironkeep Companion"
         Icon="/Assets/logo.png"
-        Width="460" Height="560"
-        MinWidth="420" MinHeight="520"
+        Width="460" Height="620"
+        MinWidth="420" MinHeight="560"
+        Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize">
-  <DockPanel Margin="20">
+  <Border Background="{StaticResource BgBrush}" Padding="20">
+  <DockPanel>
     <Grid DockPanel.Dock="Top">
       <Grid.ColumnDefinitions>
         <ColumnDefinition Width="Auto"/>
@@ -125,4 +127,5 @@
       </StackPanel>
     </ScrollViewer>
   </DockPanel>
+  </Border>
 </Window>

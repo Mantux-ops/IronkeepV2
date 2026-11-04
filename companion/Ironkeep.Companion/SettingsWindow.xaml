@@ -3,11 +3,13 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Ironkeep settings"
         Icon="/Assets/logo.png"
-        Width="500" Height="720"
+        Width="500" Height="760"
         MinWidth="440" MinHeight="560"
+        Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterOwner"
         ResizeMode="CanResize">
-  <DockPanel Margin="20">
+  <Border Background="{StaticResource BgBrush}" Padding="20">
+  <DockPanel>
     <StackPanel DockPanel.Dock="Bottom" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
       <Button Content="Retry failed" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="RetryClick" AutomationProperties.Name="Retry failed reports"/>
       <Button Content="Save" Style="{StaticResource AccentButton}" Click="SaveClick" AutomationProperties.Name="Save settings"/>
@@ -80,4 +82,5 @@
       </StackPanel>
     </ScrollViewer>
   </DockPanel>
+  </Border>
 </Window>
