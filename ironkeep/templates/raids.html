@@ -16,6 +16,46 @@
   </div>
 </header>
 
+<article class="card measure-card">
+  <div class="card__head">
+    <div>
+      <h2 class="card__title">Who was in the raid</h2>
+      <p class="card__desc">The companion sends this list when you log out or /reload. Paste the key into the program once.</p>
+    </div>
+    {% if report %}
+    <div class="raid-count-wrap">
+      <span class="raid-count">{{ report.here }} here</span>
+      <span class="raid-count__label">{{ report.away }} left</span>
+    </div>
+    {% endif %}
+  </div>
+  <div class="measure-key">
+    <label class="measure-key__label" for="companion-key">Companion key</label>
+    <input class="input" id="companion-key" readonly value="{{ companion_key }}" spellcheck="false">
+    <button class="button button--sm button--accent" type="button" id="companion-copy">Copy key</button>
+    <button class="button button--sm button--ghost" type="button" id="companion-rotate">New key</button>
+  </div>
+  {% if report %}
+  <p class="measure-when">{{ report.place }} · started {{ report.started or "unknown" }} · received {{ report.received_label }}</p>
+  <div class="raid-list">
+    {% for person in report.people %}
+    <div class="raid-row">
+      <span class="class-swatch" style="--class-color: {{ person.color }}"></span>
+      <span class="raid-row__name">
+        <span class="raid-row__title" style="color: {{ person.color }}">{{ person.name }}</span>
+        <span class="raid-row__sub">{% if person.member_name %}{{ person.member_name }}{% else %}No character on the site{% endif %} · {{ person.class_name }} · {{ person.role }} · {{ person.time }} · {{ "here" if person.here else "left" }}</span>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% if report.missing %}
+  <p class="measure-missing">On the signup, not in this raid: {{ report.missing | join(", ") }}.</p>
+  {% endif %}
+  {% else %}
+  <p class="muted">No measurement yet. Log out of the game, or type /reload, and the companion sends the group here.</p>
+  {% endif %}
+</article>
+
 <div class="raid-grid" id="raid-grid">
   {% for raid in raids %}
   <article class="card raid-card" data-raid="{{ raid.id }}">
@@ -49,6 +89,8 @@
   </article>
   {% endfor %}
 </div>
+
+<div class="modal-root" id="modal-root" hidden></div>
 {% endblock %}
 
 {% block scripts %}

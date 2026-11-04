@@ -150,4 +150,35 @@
   });
 
   data.raids.forEach((raid) => render(raid.id));
+
+  const keyField = document.getElementById("companion-key");
+  const copyKey = document.getElementById("companion-copy");
+  if (copyKey && keyField) {
+    copyKey.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(keyField.value);
+        Ik.toast("Key copied");
+      } catch (error) {
+        keyField.select();
+        Ik.toast("Select the key and copy it");
+      }
+    });
+  }
+  const rotateKey = document.getElementById("companion-rotate");
+  if (rotateKey) {
+    rotateKey.addEventListener("click", () => {
+      Ik.confirm({
+        title: "New companion key",
+        body: "The program keeps the old key until you paste this new one.",
+        confirmLabel: "Make a new key",
+        onConfirm() {
+          const form = document.createElement("form");
+          form.method = "post";
+          form.action = `/api/${data.slug}/attendance/token`;
+          document.body.appendChild(form);
+          form.submit();
+        },
+      });
+    });
+  }
 })();
