@@ -304,9 +304,23 @@ namespace Ironkeep.Companion.Core.Tests
             var model = new DashboardViewModel();
             model.Apply(new SyncSnapshot(), new CompanionConfig(), 0);
             Assert.Equal("Not signed in", model.Connection);
+            Assert.Equal("Not signed in", model.Headline);
             Assert.Equal("No legacy key", model.Auth);
             Assert.Equal("Waiting for a guild", model.SyncState);
+            Assert.NotEqual("Ok", model.Level);
             Assert.Contains("No folder selected", model.FolderStatus);
+            var stored = new SyncSnapshot();
+            stored.LastConfirmedAt = "2026-01-01T00:00:00.0000000Z";
+            var signedOut = new CompanionConfig();
+            signedOut.Slug = "dutchchaos";
+            model.Apply(stored, signedOut, 0);
+            Assert.Equal("Up to date", model.SyncState);
+            Assert.Equal("Not signed in", model.Headline);
+            Assert.NotEqual("Ok", model.Level);
+            signedOut.Token = "guild-secret-key";
+            model.Apply(stored, signedOut, 0);
+            Assert.Equal("Up to date", model.Headline);
+            Assert.Equal("Ok", model.Level);
         }
 
         [Fact]

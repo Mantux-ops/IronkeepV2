@@ -13,13 +13,20 @@ namespace Ironkeep.Companion
         {
             _session = session;
             InitializeComponent();
+            WindowTheme.UseDarkCaption(this);
             _model.Load(session.Config, session.History());
             AddressBox.Text = _model.Address;
             SlugBox.Text = _model.Slug;
             FolderBox.Text = _model.WowFolder;
             StartupBox.IsChecked = _model.StartWithWindows;
             KeyNote.Text = _model.KeyNote;
+            ShowError(session.Snapshot().LastError);
             HistoryList.ItemsSource = _model.History;
+        }
+
+        void ShowError(string error)
+        {
+            LastErrorText.Text = error == null || error.Length == 0 ? "None" : error;
         }
 
         void BrowseClick(object sender, RoutedEventArgs e)
@@ -50,6 +57,7 @@ namespace Ironkeep.Companion
                     Dispatcher.BeginInvoke(new Action(delegate
                     {
                         _model.Load(_session.Config, _session.History());
+                        ShowError(_session.Snapshot().LastError);
                         HistoryList.ItemsSource = null;
                         HistoryList.ItemsSource = _model.History;
                         IsEnabled = true;

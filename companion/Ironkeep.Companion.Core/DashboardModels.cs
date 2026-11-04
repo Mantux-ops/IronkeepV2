@@ -9,6 +9,8 @@ namespace Ironkeep.Companion
     public sealed class DashboardViewModel : INotifyPropertyChanged
     {
         string _connection = "Idle";
+        string _headline = "Idle";
+        string _detail = "";
         string _level = "Idle";
         string _auth = "No legacy key";
         string _guild = "Not set";
@@ -26,6 +28,8 @@ namespace Ironkeep.Companion
 
         public string Version { get { return CompanionSession.Version; } }
         public string Connection { get { return _connection; } }
+        public string Headline { get { return _headline; } }
+        public string Detail { get { return _detail; } }
         public string Level { get { return _level; } }
         public string Auth { get { return _auth; } }
         public string Guild { get { return _guild; } }
@@ -69,12 +73,17 @@ namespace Ironkeep.Companion
             else if (snap.FailedPermanent > 0) { state = "A report was rejected"; level = "Bad"; }
             else if (snap.LastConfirmedAt != null && snap.LastConfirmedAt.Length > 0) { state = "Up to date"; level = "Ok"; }
             else { state = "Idle"; level = "Idle"; }
+            bool authenticated = !config.TokenUnreadable && (config.Token ?? "").Length > 0;
+            if (config.TokenUnreadable) level = "Bad";
+            else if (!authenticated && level == "Ok") level = "Idle";
             Set(ref _syncState, state, "SyncState");
             string connection;
             if (config.TokenUnreadable) connection = "Key unreadable";
-            else if ((config.Token ?? "").Length > 0) connection = "Legacy channel";
+            else if (authenticated) connection = "Legacy channel";
             else connection = "Not signed in";
             Set(ref _connection, connection, "Connection");
+            Set(ref _headline, authenticated ? state : connection, "Headline");
+            Set(ref _detail, authenticated ? connection : state, "Detail");
             Set(ref _level, level, "Level");
         }
 

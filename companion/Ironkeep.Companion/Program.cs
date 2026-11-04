@@ -133,6 +133,8 @@ namespace Ironkeep.Companion
                 "",
                 new LegacyUploader(delegate { return memory; }));
             int code = 0;
+            string scaleLog = Path.Combine(directory, "scales.txt");
+            _scaleLog = scaleLog;
             var app = new App();
             app.InitializeComponent();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -145,9 +147,14 @@ namespace Ironkeep.Companion
                         session.UseMemory(memory);
                         session.Discover();
                         var dashboard = new MainWindow(session);
-                        Save(dashboard, Path.Combine(directory, "dashboard.png"));
+                        Save(dashboard, Path.Combine(directory, "dashboard.png"), 1);
+                        Save(dashboard, Path.Combine(directory, "pending.png"), 1);
+                        Save(dashboard, Path.Combine(directory, "dashboard-125.png"), 1.25);
+                        Save(dashboard, Path.Combine(directory, "dashboard-150.png"), 1.5);
                         var settings = new SettingsWindow(session);
-                        Save(settings, Path.Combine(directory, "settings.png"));
+                        Save(settings, Path.Combine(directory, "settings.png"), 1);
+                        Save(settings, Path.Combine(directory, "settings-125.png"), 1.25);
+                        Save(settings, Path.Combine(directory, "settings-150.png"), 1.5);
                         dashboard.AllowExit = true;
                         if (settings.IsVisible) settings.Close();
                         if (dashboard.IsVisible) dashboard.Close();
@@ -168,20 +175,24 @@ namespace Ironkeep.Companion
             return code != 0 ? code : run;
         }
 
-        static void Save(Window window, string path)
+        static string _scaleLog;
+
+        static void Save(Window window, string path, double scale)
         {
+            if (scale < 1) scale = 1;
             try
             {
-                window.Show();
+                if (!window.IsVisible) window.Show();
+                VisualTreeHelper.SetRootDpi(window, new DpiScale(scale, scale));
                 window.UpdateLayout();
             }
             catch (Exception)
             {
             }
             Visual visual = window;
-            int width = (int)Math.Ceiling(window.ActualWidth);
-            int height = (int)Math.Ceiling(window.ActualHeight);
-            if (width < 50 || height < 50)
+            double dipWidth = window.ActualWidth;
+            double dipHeight = window.ActualHeight;
+            if (dipWidth < 50 || dipHeight < 50)
             {
                 var root = window.Content as FrameworkElement;
                 if (root == null) throw new InvalidOperationException("The window has no content.");
@@ -190,13 +201,20 @@ namespace Ironkeep.Companion
                 root.Measure(new Size(layoutWidth, layoutHeight));
                 root.Arrange(new Rect(0, 0, layoutWidth, layoutHeight));
                 root.UpdateLayout();
-                width = (int)Math.Ceiling(root.RenderSize.Width);
-                height = (int)Math.Ceiling(root.RenderSize.Height);
-                if (width < 50) width = (int)layoutWidth;
-                if (height < 50) height = (int)layoutHeight;
+                dipWidth = root.RenderSize.Width;
+                dipHeight = root.RenderSize.Height;
+                if (dipWidth < 50) dipWidth = layoutWidth;
+                if (dipHeight < 50) dipHeight = layoutHeight;
                 visual = root;
             }
-            var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
+            if (_scaleLog != null)
+            {
+                File.AppendAllText(_scaleLog, path + " scale " + scale.ToString("0.00") + " dip " + dipWidth.ToString("0") + "x" + dipHeight.ToString("0") + Environment.NewLine);
+            }
+            if (dipWidth > 0 && dipWidth < 400) throw new InvalidOperationException("The window became too narrow at scale " + scale.ToString("0.00") + ".");
+            int width = Math.Max(1, (int)Math.Ceiling(dipWidth * scale));
+            int height = Math.Max(1, (int)Math.Ceiling(dipHeight * scale));
+            var bitmap = new RenderTargetBitmap(width, height, 96 * scale, 96 * scale, PixelFormats.Pbgra32);
             bitmap.Render(visual);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(bitmap));

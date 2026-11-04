@@ -145,8 +145,9 @@ jobs:
           $errorLog = Join-Path $preview 'capture-error.txt'
           if (Test-Path $errorLog) { Get-Content $errorLog | Write-Output }
           if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
-          if (-not (Test-Path (Join-Path $preview 'dashboard.png'))) { Write-Error 'The dashboard capture is missing.'; exit 1 }
-          if (-not (Test-Path (Join-Path $preview 'settings.png'))) { Write-Error 'The settings capture is missing.'; exit 1 }
+          foreach ($name in @('dashboard.png', 'settings.png', 'pending.png', 'dashboard-125.png', 'dashboard-150.png', 'settings-125.png', 'settings-150.png')) {
+            if (-not (Test-Path (Join-Path $preview $name))) { Write-Error "The capture is missing: $name"; exit 1 }
+          }
 
       - name: Exercise the published WPF companion
         working-directory: companion
@@ -217,6 +218,11 @@ jobs:
             companion/out/wpf/SIZE.txt
             companion/out/wpf/preview/dashboard.png
             companion/out/wpf/preview/settings.png
+            companion/out/wpf/preview/pending.png
+            companion/out/wpf/preview/dashboard-125.png
+            companion/out/wpf/preview/dashboard-150.png
+            companion/out/wpf/preview/settings-125.png
+            companion/out/wpf/preview/settings-150.png
 
       - name: Publish the download
         if: github.ref == 'refs/heads/cursor/forever-companion-f675' || github.ref == 'refs/heads/cursor/companion-attendance-f675' || github.ref == 'refs/heads/cursor/forever-addon-f675' || github.ref == 'refs/heads/cursor/companion-windows-ci-f675'

@@ -15,6 +15,7 @@ namespace Ironkeep.Companion
         {
             _session = session;
             InitializeComponent();
+            WindowTheme.UseDarkCaption(this);
             DataContext = _model;
             Refresh();
         }
