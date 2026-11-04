@@ -6,7 +6,7 @@
         MinWidth="420" MinHeight="560"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize">
-  <DockPanel Margin="18">
+  <DockPanel Margin="18" Background="{StaticResource Ink}">
     <StackPanel DockPanel.Dock="Top" Margin="0,0,0,14">
       <DockPanel>
         <TextBlock Text="Ironkeep Companion" FontSize="20" FontWeight="SemiBold"/>

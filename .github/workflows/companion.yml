@@ -137,10 +137,16 @@ jobs:
         working-directory: companion
         run: |
           New-Item -ItemType Directory -Force out\wpf\preview | Out-Null
-          & .\out\wpf\IronkeepCompanion.exe --capture (Join-Path (Get-Location) 'out\wpf\preview')
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          if (-not (Test-Path out\wpf\preview\dashboard.png)) { Write-Error 'The dashboard capture is missing.'; exit 1 }
-          if (-not (Test-Path out\wpf\preview\settings.png)) { Write-Error 'The settings capture is missing.'; exit 1 }
+          $preview = Join-Path (Get-Location) 'out\wpf\preview'
+          $proc = Start-Process -FilePath (Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe') -ArgumentList @('--capture', $preview) -Wait -PassThru
+          Write-Output "capture exit $($proc.ExitCode)"
+          $trace = Join-Path $env:TEMP 'ironkeep-wpf-start.txt'
+          if (Test-Path $trace) { Get-Content $trace | Write-Output }
+          $errorLog = Join-Path $preview 'capture-error.txt'
+          if (Test-Path $errorLog) { Get-Content $errorLog | Write-Output }
+          if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
+          if (-not (Test-Path (Join-Path $preview 'dashboard.png'))) { Write-Error 'The dashboard capture is missing.'; exit 1 }
+          if (-not (Test-Path (Join-Path $preview 'settings.png'))) { Write-Error 'The settings capture is missing.'; exit 1 }
 
       - name: Exercise the published WPF companion
         working-directory: companion
@@ -160,10 +166,19 @@ jobs:
             if (-not $page -or $page.StatusCode -ne 200) { Write-Error 'The site did not start for the WPF companion.'; exit 1 }
             if ($page.Content -notmatch 'id="companion-key"[^>]*value="([^"]+)"') { Write-Error 'The raids page has no companion key.'; exit 1 }
             $key = $Matches[1]
-            & .\out\wpf\IronkeepCompanion.exe --send-check http://127.0.0.1:8766 dutchchaos $key sample-Ironkeep.lua
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
-            $again = & .\out\wpf\IronkeepCompanion.exe --send-check http://127.0.0.1:8766 dutchchaos $key sample-Ironkeep.lua
-            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $exe = Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe'
+            $lua = (Resolve-Path .\sample-Ironkeep.lua).Path
+            $firstOut = Join-Path (Get-Location) 'out\wpf\send-1.txt'
+            $firstErr = Join-Path (Get-Location) 'out\wpf\send-1.err'
+            $first = Start-Process -FilePath $exe -ArgumentList @('--send-check', 'http://127.0.0.1:8766', 'dutchchaos', $key, $lua) -Wait -PassThru -RedirectStandardOutput $firstOut -RedirectStandardError $firstErr
+            Get-Content $firstOut, $firstErr | Write-Output
+            if ($first.ExitCode -ne 0) { exit $first.ExitCode }
+            $secondOut = Join-Path (Get-Location) 'out\wpf\send-2.txt'
+            $secondErr = Join-Path (Get-Location) 'out\wpf\send-2.err'
+            $second = Start-Process -FilePath $exe -ArgumentList @('--send-check', 'http://127.0.0.1:8766', 'dutchchaos', $key, $lua) -Wait -PassThru -RedirectStandardOutput $secondOut -RedirectStandardError $secondErr
+            $again = Get-Content $secondOut, $secondErr
+            $again | Write-Output
+            if ($second.ExitCode -ne 0) { exit $second.ExitCode }
             if (($again -join "`n") -notmatch '"duplicate":true') { Write-Error "The WPF companion did not recognize a duplicate.`n$($again -join "`n")"; exit 1 }
           } finally {
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }

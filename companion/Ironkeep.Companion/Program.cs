@@ -13,6 +13,14 @@ namespace Ironkeep.Companion
         [STAThread]
         public static int Main(string[] args)
         {
+            try
+            {
+                File.WriteAllText(Path.Combine(Path.GetTempPath(), "ironkeep-wpf-start.txt"),
+                    "args=" + (args == null ? "" : string.Join(" ", args)) + Environment.NewLine);
+            }
+            catch (Exception)
+            {
+            }
             if (args != null && args.Length > 0 && args[0] == "--send-check") return SendCheck(args);
             if (args != null && args.Length > 0 && args[0] == "--capture") return Capture(args);
             var app = new App();
@@ -124,6 +132,7 @@ namespace Ironkeep.Companion
                 new MemoryStartup(),
                 "",
                 new LegacyUploader(delegate { return memory; }));
+            int code = 0;
             var app = new App();
             app.InitializeComponent();
             app.ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -136,35 +145,59 @@ namespace Ironkeep.Companion
                         session.UseMemory(memory);
                         session.Discover();
                         var dashboard = new MainWindow(session);
-                        dashboard.Show();
-                        dashboard.UpdateLayout();
                         Save(dashboard, Path.Combine(directory, "dashboard.png"));
                         var settings = new SettingsWindow(session);
-                        settings.Show();
-                        settings.UpdateLayout();
                         Save(settings, Path.Combine(directory, "settings.png"));
                         dashboard.AllowExit = true;
-                        settings.Close();
-                        dashboard.Close();
+                        if (settings.IsVisible) settings.Close();
+                        if (dashboard.IsVisible) dashboard.Close();
+                    }
+                    catch (Exception ex)
+                    {
+                        code = 1;
+                        File.WriteAllText(Path.Combine(directory, "capture-error.txt"), ex.ToString());
                     }
                     finally
                     {
                         session.Dispose();
-                        app.Shutdown();
+                        app.Shutdown(code);
                     }
-                }), DispatcherPriority.ApplicationIdle);
+                }));
             };
-            app.Run();
-            return 0;
+            int run = app.Run();
+            return code != 0 ? code : run;
         }
 
         static void Save(Window window, string path)
         {
-            int width = (int)window.ActualWidth;
-            int height = (int)window.ActualHeight;
-            if (width < 50 || height < 50) throw new InvalidOperationException("The window did not lay out.");
+            try
+            {
+                window.Show();
+                window.UpdateLayout();
+            }
+            catch (Exception)
+            {
+            }
+            Visual visual = window;
+            int width = (int)Math.Ceiling(window.ActualWidth);
+            int height = (int)Math.Ceiling(window.ActualHeight);
+            if (width < 50 || height < 50)
+            {
+                var root = window.Content as FrameworkElement;
+                if (root == null) throw new InvalidOperationException("The window has no content.");
+                double layoutWidth = window.Width > 50 ? window.Width : 460;
+                double layoutHeight = window.Height > 50 ? window.Height : 640;
+                root.Measure(new Size(layoutWidth, layoutHeight));
+                root.Arrange(new Rect(0, 0, layoutWidth, layoutHeight));
+                root.UpdateLayout();
+                width = (int)Math.Ceiling(root.RenderSize.Width);
+                height = (int)Math.Ceiling(root.RenderSize.Height);
+                if (width < 50) width = (int)layoutWidth;
+                if (height < 50) height = (int)layoutHeight;
+                visual = root;
+            }
             var bitmap = new RenderTargetBitmap(width, height, 96, 96, PixelFormats.Pbgra32);
-            bitmap.Render(window);
+            bitmap.Render(visual);
             var encoder = new PngBitmapEncoder();
             encoder.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(path)) encoder.Save(stream);
