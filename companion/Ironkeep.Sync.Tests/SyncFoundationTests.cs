@@ -568,6 +568,25 @@ namespace Ironkeep.Tests
             Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, mode);
         }
 
+        static byte[] ReadShared(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            {
+                var bytes = new byte[stream.Length];
+                int read = 0;
+                while (read < bytes.Length)
+                {
+                    int n = stream.Read(bytes, read, bytes.Length - read);
+                    if (n <= 0) break;
+                    read += n;
+                }
+                if (read == bytes.Length) return bytes;
+                var exact = new byte[read];
+                Buffer.BlockCopy(bytes, 0, exact, 0, read);
+                return exact;
+            }
+        }
+
         byte[] CommittedWal(out byte[] main)
         {
             string dir = Path.Combine(_root, "wal-" + Guid.NewGuid().ToString("N"));
@@ -588,8 +607,8 @@ namespace Ironkeep.Tests
                     cmd.CommandText = "INSERT INTO report(body) VALUES ('secret-report-body');";
                     cmd.ExecuteNonQuery();
                 }
-                main = File.ReadAllBytes(src);
-                return File.ReadAllBytes(src + "-wal");
+                main = ReadShared(src);
+                return ReadShared(src + "-wal");
             }
             finally
             {
