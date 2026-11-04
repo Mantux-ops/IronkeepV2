@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Security.AccessControl;
+using System.Text;
 using System.Threading;
 using Microsoft.Data.Sqlite;
 using Xunit;
@@ -197,11 +198,15 @@ namespace Ironkeep.Tests
                 Assert.Equal("this is not a sqlite database", File.ReadAllText(reopened.PreservedCorruptPath));
                 QueueItem item = reopened.Enqueue("guild-a", "a.lua", "Ironkeep group\nformat: ironkeep-group 1\n");
                 Assert.Equal(SyncState.Pending, item.State);
+                string kept = reopened.PreservedCorruptPath;
+                reopened.Dispose();
+                reopened = null;
                 QueueStore third = QueueStore.Open(_queuePath);
                 try
                 {
                     Assert.True(third.CorruptionDetected);
                     Assert.False(third.UnsentReportsRecovered);
+                    Assert.Equal(kept, third.PreservedCorruptPath);
                     Assert.NotNull(third.Get(item.Id));
                 }
                 finally
@@ -211,7 +216,7 @@ namespace Ironkeep.Tests
             }
             finally
             {
-                reopened.Dispose();
+                if (reopened != null) reopened.Dispose();
             }
         }
 
@@ -287,15 +292,309 @@ namespace Ironkeep.Tests
         [Fact]
         public void TheQueueFileIsReadableOnlyByThisUser()
         {
+            Assert.True(File.Exists(_queuePath + "-wal"));
+            Assert.True(File.Exists(_queuePath + "-shm"));
+            string directory = Path.GetDirectoryName(_queuePath);
             if (OperatingSystem.IsWindows())
             {
-                var security = new FileInfo(_queuePath).GetAccessControl();
-                Assert.True(security.AreAccessRulesProtected);
+                Assert.True(new FileInfo(_queuePath).GetAccessControl().AreAccessRulesProtected);
+                Assert.True(new FileInfo(_queuePath + "-wal").GetAccessControl().AreAccessRulesProtected);
+                Assert.True(new FileInfo(_queuePath + "-shm").GetAccessControl().AreAccessRulesProtected);
+                Assert.True(new DirectoryInfo(directory).GetAccessControl().AreAccessRulesProtected);
                 return;
             }
-            var mode = File.GetUnixFileMode(_queuePath);
-            Assert.Equal(UnixFileMode.None, mode & (UnixFileMode.GroupRead | UnixFileMode.GroupWrite | UnixFileMode.OtherRead | UnixFileMode.OtherWrite));
-            Assert.True((mode & UnixFileMode.UserRead) != 0);
+            AssertPrivateFile(_queuePath);
+            AssertPrivateFile(_queuePath + "-wal");
+            AssertPrivateFile(_queuePath + "-shm");
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute, File.GetUnixFileMode(directory));
+        }
+
+        [Fact]
+        public void AZeroByteMainFileDoesNotDiscardTheWal()
+        {
+            byte[] main;
+            byte[] wal = CommittedWal(out main);
+            Assert.Contains("secret-report-body", Encoding.Latin1.GetString(wal));
+            string path = Path.Combine(_root, "zero-main.sqlite");
+            File.WriteAllBytes(path, new byte[0]);
+            File.WriteAllBytes(path + "-wal", wal);
+            QueueStore store = QueueStore.Open(path);
+            try
+            {
+                Assert.True(store.CorruptionDetected);
+                Assert.False(store.UnsentReportsRecovered);
+                Assert.Equal(wal, File.ReadAllBytes(store.PreservedCorruptPath + "-wal"));
+                Assert.Equal(0, new FileInfo(store.PreservedCorruptPath).Length);
+                Assert.NotEqual(wal, File.ReadAllBytes(path + "-wal"));
+                Assert.Contains("preserved", File.ReadAllText(path + ".corruption"));
+                if (!OperatingSystem.IsWindows())
+                {
+                    AssertPrivateFile(store.PreservedCorruptPath + "-wal");
+                    AssertPrivateFile(path + ".corruption");
+                }
+            }
+            finally
+            {
+                store.Dispose();
+            }
+        }
+
+        [Fact]
+        public void AValidHeaderStillReplaysTheWal()
+        {
+            byte[] main;
+            byte[] wal = CommittedWal(out main);
+            string path = Path.Combine(_root, "replay.sqlite");
+            File.WriteAllBytes(path, main);
+            File.WriteAllBytes(path + "-wal", wal);
+            QueueStore store = QueueStore.Open(path);
+            try
+            {
+                Assert.False(store.CorruptionDetected);
+                Assert.Equal("", store.PreservedCorruptPath);
+            }
+            finally
+            {
+                store.Dispose();
+            }
+            SqliteConnection.ClearAllPools();
+            using (var check = new SqliteConnection("Data Source=" + path + ";Pooling=False"))
+            {
+                check.Open();
+                using (var cmd = check.CreateCommand())
+                {
+                    cmd.CommandText = "SELECT body FROM report";
+                    Assert.Equal("secret-report-body", cmd.ExecuteScalar());
+                }
+            }
+        }
+
+        [Fact]
+        public void AMissingMainFileKeepsTheWal()
+        {
+            byte[] main;
+            byte[] wal = CommittedWal(out main);
+            string path = Path.Combine(_root, "missing-main.sqlite");
+            File.WriteAllBytes(path + "-wal", wal);
+            QueueStore store = QueueStore.Open(path);
+            try
+            {
+                Assert.True(store.CorruptionDetected);
+                Assert.False(store.UnsentReportsRecovered);
+                Assert.Equal(wal, File.ReadAllBytes(store.PreservedCorruptPath + "-wal"));
+                Assert.NotEqual(wal, File.ReadAllBytes(path + "-wal"));
+            }
+            finally
+            {
+                store.Dispose();
+            }
+        }
+
+        [Fact]
+        public void InterruptedPreservationIsResumed()
+        {
+            byte[] main;
+            byte[] wal = CommittedWal(out main);
+            string path = Path.Combine(_root, "interrupted.sqlite");
+            string dest = Path.Combine(_root, "held-recovery.sqlite");
+            File.WriteAllBytes(path, new byte[0]);
+            File.WriteAllBytes(path + "-wal", wal);
+            QueueStore.WritePendingRecoveryMarker(path, dest);
+            Assert.Contains("\npending\n", File.ReadAllText(path + ".corruption"));
+            QueueStore store = QueueStore.Open(path);
+            try
+            {
+                Assert.True(store.CorruptionDetected);
+                Assert.False(store.UnsentReportsRecovered);
+                Assert.Equal(dest, store.PreservedCorruptPath);
+                Assert.Equal(wal, File.ReadAllBytes(dest + "-wal"));
+                Assert.Contains("\npreserved\n", File.ReadAllText(path + ".corruption"));
+            }
+            finally
+            {
+                store.Dispose();
+            }
+            QueueStore again = QueueStore.Open(path);
+            try
+            {
+                Assert.True(again.CorruptionDetected);
+                Assert.False(again.UnsentReportsRecovered);
+                Assert.Equal(wal, File.ReadAllBytes(dest + "-wal"));
+            }
+            finally
+            {
+                again.Dispose();
+            }
+        }
+
+        [Fact]
+        public void PreservationAlreadyInProgressIsReported()
+        {
+            byte[] main;
+            byte[] wal = CommittedWal(out main);
+            string path = Path.Combine(_root, "partial.sqlite");
+            string dest = Path.Combine(_root, "partial-recovery.sqlite");
+            File.WriteAllBytes(dest, new byte[0]);
+            File.WriteAllBytes(dest + "-wal", wal);
+            QueueStore.WritePendingRecoveryMarker(path, dest);
+            QueueStore store = QueueStore.Open(path);
+            try
+            {
+                Assert.True(store.CorruptionDetected);
+                Assert.False(store.UnsentReportsRecovered);
+                Assert.Equal(dest, store.PreservedCorruptPath);
+                Assert.Equal(wal, File.ReadAllBytes(dest + "-wal"));
+                Assert.Contains("\npreserved\n", File.ReadAllText(path + ".corruption"));
+            }
+            finally
+            {
+                store.Dispose();
+            }
+        }
+
+        [Fact]
+        public void AnOpenQueueIsNotRenamed()
+        {
+            InvalidOperationException ex = Assert.Throws<InvalidOperationException>(delegate { QueueStore.Open(_queuePath); });
+            Assert.Contains("not moved", ex.Message);
+            Assert.True(File.Exists(_queuePath));
+            QueueItem item = _queue.Enqueue("guild-a", "live.lua", "Ironkeep group\nformat: ironkeep-group 1\nstill-here");
+            Assert.Equal(SyncState.Pending, item.State);
+        }
+
+        [Fact]
+        public void AcknowledgmentsAreClassifiedBeforeTheBodyIsRemoved()
+        {
+            Deliver(200, "{\"ok\":true}", SyncState.Confirmed, false, null);
+            Deliver(200, "{\"ok\":true,\"duplicate\":true}", SyncState.Confirmed, false, null);
+            Deliver(200, "{\"ok\": true, \"duplicate\": false, \"place\": \"Hall of Thanes\", \"people\": 3}", SyncState.Confirmed, false, null);
+            Deliver(200, "{\"ok\":false}", SyncState.FailedPermanent, true, "rejected");
+            Deliver(200, "{", SyncState.RetryScheduled, true, "malformed");
+            Deliver(200, "{\"ok\":true", SyncState.RetryScheduled, true, "malformed");
+            Deliver(200, "\"{\\\"ok\\\":true}\"", SyncState.RetryScheduled, true, "malformed");
+            Deliver(200, "see \"ok\":true", SyncState.RetryScheduled, true, "malformed");
+            Deliver(200, "", SyncState.RetryScheduled, true, "malformed");
+            Deliver(202, "{\"ok\":", SyncState.RetryScheduled, true, "malformed");
+            Deliver(408, "", SyncState.RetryScheduled, true, "HTTP 408");
+            Deliver(429, "", SyncState.RetryScheduled, true, "HTTP 429");
+            Deliver(500, "", SyncState.RetryScheduled, true, "HTTP 500");
+            Deliver(401, "{\"ok\":false}", SyncState.FailedPermanent, true, "reauthentication HTTP 401");
+            Deliver(403, "{\"ok\":false}", SyncState.FailedPermanent, true, "reauthentication HTTP 403");
+        }
+
+        [Fact]
+        public void OverlappingPumpsClaimEachItemOnce()
+        {
+            _queue.Enqueue("guild-a", "a.lua", "Ironkeep group\nformat: ironkeep-group 1\none");
+            _queue.Enqueue("guild-a", "b.lua", "Ironkeep group\nformat: ironkeep-group 1\ntwo");
+            int active = 0;
+            int max = 0;
+            _uploader.Handler = delegate
+            {
+                int now = Interlocked.Increment(ref active);
+                int seen;
+                do
+                {
+                    seen = max;
+                }
+                while (now > seen && Interlocked.CompareExchange(ref max, now, seen) != seen);
+                Thread.Sleep(200);
+                Interlocked.Decrement(ref active);
+                return Ok(false);
+            };
+            Exception failed = null;
+            var threads = new Thread[2];
+            for (int i = 0; i < threads.Length; i++)
+            {
+                threads[i] = new Thread(new ThreadStart(delegate
+                {
+                    try
+                    {
+                        _sync.Pump(DateTime.UtcNow);
+                    }
+                    catch (Exception ex)
+                    {
+                        failed = ex;
+                    }
+                }));
+            }
+            threads[0].Start();
+            threads[1].Start();
+            threads[0].Join();
+            threads[1].Join();
+            Assert.Null(failed);
+            Assert.Equal(1, max);
+            Assert.Equal(2, _uploader.Sent.Count);
+            Assert.Equal(2, ConfirmedCount());
+        }
+
+        [Fact]
+        public void ASecondClaimDoesNotThrow()
+        {
+            QueueItem item = _queue.Enqueue("guild-a", "a.lua", "Ironkeep group\nformat: ironkeep-group 1\nclaim");
+            Assert.True(_queue.MarkSending(item.Id, DateTime.UtcNow));
+            Assert.False(_queue.MarkSending(item.Id, DateTime.UtcNow));
+            Assert.Equal(SyncState.Sending, _queue.Get(item.Id).State);
+        }
+
+        [Fact]
+        public void ATimerFaultDoesNotEscape()
+        {
+            SyncCoordinator.GuardTimer(delegate { throw new InvalidOperationException("timer"); });
+        }
+
+        void Deliver(int status, string httpBody, string state, bool keepBody, string errorPart)
+        {
+            string report = "Ironkeep group\nformat: ironkeep-group 1\n" + Guid.NewGuid().ToString("N");
+            QueueItem item = _queue.Enqueue("guild-a", "case.lua", report);
+            _uploader.Handler = delegate { return new UploadResult { Status = status, Body = httpBody }; };
+            DateTime now = DateTime.UtcNow;
+            int before = _uploader.Sent.Count;
+            _sync.Pump(now);
+            Assert.Equal(before + 1, _uploader.Sent.Count);
+            _sync.Pump(now);
+            Assert.Equal(before + 1, _uploader.Sent.Count);
+            QueueItem got = _queue.Get(item.Id);
+            Assert.Equal(state, got.State);
+            if (keepBody) Assert.Equal(report, got.Body);
+            else Assert.Null(got.Body);
+            if (errorPart != null) Assert.Contains(errorPart, got.LastError);
+        }
+
+        static void AssertPrivateFile(string path)
+        {
+            if (OperatingSystem.IsWindows()) return;
+            UnixFileMode mode = File.GetUnixFileMode(path);
+            Assert.Equal(UnixFileMode.UserRead | UnixFileMode.UserWrite, mode);
+        }
+
+        byte[] CommittedWal(out byte[] main)
+        {
+            string dir = Path.Combine(_root, "wal-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+            string src = Path.Combine(dir, "src.sqlite");
+            var connection = new SqliteConnection("Data Source=" + src + ";Pooling=False");
+            connection.Open();
+            try
+            {
+                using (var cmd = connection.CreateCommand())
+                {
+                    cmd.CommandText = "PRAGMA journal_mode=WAL;";
+                    cmd.ExecuteNonQuery();
+                    cmd.CommandText = "PRAGMA wal_autocheckpoint=0;";
+                    cmd.ExecuteNonQuery();
+                    cmd.CommandText = "CREATE TABLE report(body TEXT);";
+                    cmd.ExecuteNonQuery();
+                    cmd.CommandText = "INSERT INTO report(body) VALUES ('secret-report-body');";
+                    cmd.ExecuteNonQuery();
+                }
+                main = File.ReadAllBytes(src);
+                return File.ReadAllBytes(src + "-wal");
+            }
+            finally
+            {
+                connection.Dispose();
+            }
         }
 
         static UploadResult Ok(bool duplicate)

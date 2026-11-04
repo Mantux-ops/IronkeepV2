@@ -243,9 +243,21 @@ namespace Ironkeep
 
         public static bool Accepted(string body)
         {
-            if (body == null) return false;
-            return body.IndexOf("\"ok\":true", StringComparison.Ordinal) >= 0
-                || body.IndexOf("\"ok\": true", StringComparison.Ordinal) >= 0;
+            return ReadAck(body) == AckKind.Accepted;
+        }
+
+        /// <summary>
+        /// Accepted: one JSON object with a boolean ok property set to true.
+        /// Rejected: one JSON object with boolean ok set to false.
+        /// Unparseable: anything else, including truncated JSON and text that only contains the characters "ok":true.
+        /// </summary>
+        public static AckKind ReadAck(string body)
+        {
+            JsonValue value;
+            if (!AckJson.TryParse(body, out value) || value == null || value.Object == null) return AckKind.Unparseable;
+            JsonValue ok;
+            if (!value.Object.TryGetValue("ok", out ok) || ok == null || !ok.IsBool) return AckKind.Unparseable;
+            return ok.Bool ? AckKind.Accepted : AckKind.Rejected;
         }
 
         public static bool Duplicate(string body)
@@ -259,6 +271,271 @@ namespace Ironkeep
         {
             if (status == 0 || status == 408 || status == 429) return true;
             return status >= 500 && status <= 599;
+        }
+    }
+
+    public enum AckKind
+    {
+        Accepted,
+        Rejected,
+        Unparseable
+    }
+
+    static class AckJson
+    {
+        public static bool TryParse(string body, out JsonValue value)
+        {
+            value = null;
+            var cursor = new JsonCursor(body);
+            if (!cursor.ParseValue(0, out value)) return false;
+            cursor.SkipWs();
+            return cursor.Ended;
+        }
+
+        sealed class JsonCursor
+        {
+            readonly string _text;
+            int _index;
+
+            public JsonCursor(string text)
+            {
+                _text = text ?? "";
+                if (_text.Length > 0 && _text[0] == '\uFEFF') _index = 1;
+            }
+
+            public bool Ended { get { return _index >= _text.Length; } }
+
+            public void SkipWs()
+            {
+                while (_index < _text.Length && char.IsWhiteSpace(_text[_index])) _index++;
+            }
+
+            public bool ParseValue(int depth, out JsonValue value)
+            {
+                value = null;
+                if (depth > 32) return false;
+                SkipWs();
+                if (_index >= _text.Length) return false;
+                char ch = _text[_index];
+                if (ch == '{') return ParseObject(depth, out value);
+                if (ch == '[') return ParseArray(depth, out value);
+                if (ch == '"')
+                {
+                    string text;
+                    if (!ParseString(out text)) return false;
+                    value = JsonValue.Text(text);
+                    return true;
+                }
+                if (ch == 't') return Literal("true", JsonValue.FromBool(true), out value);
+                if (ch == 'f') return Literal("false", JsonValue.FromBool(false), out value);
+                if (ch == 'n') return Literal("null", JsonValue.Null(), out value);
+                if (ch == '-' || (ch >= '0' && ch <= '9')) return ParseNumber(out value);
+                return false;
+            }
+
+            bool ParseObject(int depth, out JsonValue value)
+            {
+                value = null;
+                _index++;
+                var map = new Dictionary<string, JsonValue>();
+                SkipWs();
+                if (Eat('}'))
+                {
+                    value = JsonValue.Obj(map);
+                    return true;
+                }
+                while (true)
+                {
+                    SkipWs();
+                    string key;
+                    if (!ParseString(out key)) return false;
+                    if (map.ContainsKey(key)) return false;
+                    SkipWs();
+                    if (!Eat(':')) return false;
+                    JsonValue child;
+                    if (!ParseValue(depth + 1, out child)) return false;
+                    map[key] = child;
+                    SkipWs();
+                    if (Eat('}'))
+                    {
+                        value = JsonValue.Obj(map);
+                        return true;
+                    }
+                    if (!Eat(',')) return false;
+                }
+            }
+
+            bool ParseArray(int depth, out JsonValue value)
+            {
+                value = null;
+                _index++;
+                SkipWs();
+                if (Eat(']'))
+                {
+                    value = JsonValue.Other();
+                    return true;
+                }
+                while (true)
+                {
+                    JsonValue child;
+                    if (!ParseValue(depth + 1, out child)) return false;
+                    SkipWs();
+                    if (Eat(']'))
+                    {
+                        value = JsonValue.Other();
+                        return true;
+                    }
+                    if (!Eat(',')) return false;
+                }
+            }
+
+            bool ParseString(out string text)
+            {
+                text = null;
+                if (!Eat('"')) return false;
+                var built = new StringBuilder();
+                while (_index < _text.Length)
+                {
+                    char ch = _text[_index++];
+                    if (ch == '"')
+                    {
+                        text = built.ToString();
+                        return true;
+                    }
+                    if (ch == '\\')
+                    {
+                        if (_index >= _text.Length) return false;
+                        char escaped = _text[_index++];
+                        if (escaped == '"' || escaped == '\\' || escaped == '/') built.Append(escaped);
+                        else if (escaped == 'b') built.Append('\b');
+                        else if (escaped == 'f') built.Append('\f');
+                        else if (escaped == 'n') built.Append('\n');
+                        else if (escaped == 'r') built.Append('\r');
+                        else if (escaped == 't') built.Append('\t');
+                        else if (escaped == 'u')
+                        {
+                            int code;
+                            if (!Hex4(out code)) return false;
+                            built.Append((char)code);
+                        }
+                        else return false;
+                    }
+                    else if (ch < ' ') return false;
+                    else built.Append(ch);
+                }
+                return false;
+            }
+
+            bool ParseNumber(out JsonValue value)
+            {
+                value = null;
+                int start = _index;
+                if (_text[_index] == '-') _index++;
+                if (_index >= _text.Length || _text[_index] < '0' || _text[_index] > '9') return false;
+                if (_text[_index] == '0')
+                {
+                    _index++;
+                    if (_index < _text.Length && _text[_index] >= '0' && _text[_index] <= '9') return false;
+                }
+                else while (_index < _text.Length && _text[_index] >= '0' && _text[_index] <= '9') _index++;
+                if (_index < _text.Length && _text[_index] == '.')
+                {
+                    _index++;
+                    int digits = 0;
+                    while (_index < _text.Length && _text[_index] >= '0' && _text[_index] <= '9')
+                    {
+                        _index++;
+                        digits++;
+                    }
+                    if (digits == 0) return false;
+                }
+                if (_index < _text.Length && (_text[_index] == 'e' || _text[_index] == 'E'))
+                {
+                    _index++;
+                    if (_index < _text.Length && (_text[_index] == '+' || _text[_index] == '-')) _index++;
+                    int digits = 0;
+                    while (_index < _text.Length && _text[_index] >= '0' && _text[_index] <= '9')
+                    {
+                        _index++;
+                        digits++;
+                    }
+                    if (digits == 0) return false;
+                }
+                if (_index == start) return false;
+                value = JsonValue.Other();
+                return true;
+            }
+
+            bool Literal(string word, JsonValue made, out JsonValue value)
+            {
+                value = null;
+                if (_index + word.Length > _text.Length) return false;
+                if (string.CompareOrdinal(_text, _index, word, 0, word.Length) != 0) return false;
+                _index += word.Length;
+                value = made;
+                return true;
+            }
+
+            bool Hex4(out int code)
+            {
+                code = 0;
+                if (_index + 4 > _text.Length) return false;
+                for (int i = 0; i < 4; i++)
+                {
+                    char ch = _text[_index++];
+                    int digit;
+                    if (ch >= '0' && ch <= '9') digit = ch - '0';
+                    else if (ch >= 'a' && ch <= 'f') digit = ch - 'a' + 10;
+                    else if (ch >= 'A' && ch <= 'F') digit = ch - 'A' + 10;
+                    else return false;
+                    code = (code << 4) + digit;
+                }
+                return true;
+            }
+
+            bool Eat(char expected)
+            {
+                if (_index >= _text.Length || _text[_index] != expected) return false;
+                _index++;
+                return true;
+            }
+        }
+    }
+
+    sealed class JsonValue
+    {
+        public Dictionary<string, JsonValue> Object;
+        public bool IsBool;
+        public bool Bool;
+
+        public static JsonValue Obj(Dictionary<string, JsonValue> map)
+        {
+            var value = new JsonValue();
+            value.Object = map;
+            return value;
+        }
+
+        public static JsonValue FromBool(bool bit)
+        {
+            var value = new JsonValue();
+            value.IsBool = true;
+            value.Bool = bit;
+            return value;
+        }
+
+        public static JsonValue Text(string text)
+        {
+            return new JsonValue();
+        }
+
+        public static JsonValue Null()
+        {
+            return new JsonValue();
+        }
+
+        public static JsonValue Other()
+        {
+            return new JsonValue();
         }
     }
 

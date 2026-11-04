@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Globalization;
 using System.IO;
+using System.Security;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.Text;
 using Microsoft.Data.Sqlite;
 
 namespace Ironkeep
@@ -50,11 +52,13 @@ namespace Ironkeep
     public sealed class QueueStore : IDisposable
     {
         readonly SqliteConnection _connection;
+        readonly FileStream _lock;
         readonly object _gate = new object();
 
-        QueueStore(SqliteConnection connection, bool corruptionDetected, string preservedCorruptPath)
+        QueueStore(SqliteConnection connection, FileStream gate, bool corruptionDetected, string preservedCorruptPath)
         {
             _connection = connection;
+            _lock = gate;
             CorruptionDetected = corruptionDetected;
             PreservedCorruptPath = preservedCorruptPath ?? "";
         }
@@ -66,41 +70,51 @@ namespace Ironkeep
         public static QueueStore Open(string path)
         {
             if (path == null || path.Trim().Length == 0) throw new ArgumentException("Queue path is required.");
-            string directory = Path.GetDirectoryName(Path.GetFullPath(path));
+            string full = Path.GetFullPath(path);
+            string directory = Path.GetDirectoryName(full);
             if (directory == null || directory.Length == 0) throw new ArgumentException("Queue path is required.");
             Directory.CreateDirectory(directory);
-            string sidecar = path + ".corruption";
-            bool corrupt = false;
-            string preserved = "";
-            if (File.Exists(sidecar))
+            SecureDirectory(directory);
+            FileStream gate = null;
+            SqliteConnection connection = null;
+            try
             {
-                corrupt = true;
-                preserved = ReadSidecar(sidecar);
+                gate = Acquire(full + ".lock");
+                SecureFile(full + ".lock");
+                bool corrupt;
+                string preserved;
+                RecoverIfNeeded(full, out corrupt, out preserved);
+                connection = OpenDatabase(full);
+                var store = new QueueStore(connection, gate, corrupt, preserved);
+                store.EnsureSchema();
+                store.ResetSendingToPending();
+                SecureFile(full);
+                SecureIfExists(full + "-wal");
+                SecureIfExists(full + "-shm");
+                SecureIfExists(full + ".corruption");
+                connection = null;
+                gate = null;
+                return store;
             }
-            if (File.Exists(path) && !DatabaseReadable(path))
+            catch
             {
-                preserved = Preserve(path);
-                File.WriteAllText(sidecar, preserved + Environment.NewLine);
-                Restrict(sidecar);
-                corrupt = true;
+                if (connection != null) connection.Dispose();
+                if (gate != null) gate.Dispose();
+                throw;
             }
-            var connection = new SqliteConnection(ConnectionString(path));
-            connection.Open();
-            using (var pragma = connection.CreateCommand())
-            {
-                pragma.CommandText = "PRAGMA journal_mode=WAL;";
-                pragma.ExecuteNonQuery();
-            }
-            var store = new QueueStore(connection, corrupt, preserved);
-            store.EnsureSchema();
-            store.ResetSendingToPending();
-            Restrict(path);
-            return store;
+        }
+
+        public static void WritePendingRecoveryMarker(string queuePath, string destinationPath)
+        {
+            if (queuePath == null || queuePath.Trim().Length == 0) throw new ArgumentException("Queue path is required.");
+            if (destinationPath == null || destinationPath.Trim().Length == 0) throw new ArgumentException("Recovery path is required.");
+            WriteMarker(queuePath + ".corruption", "pending", destinationPath);
         }
 
         public void Dispose()
         {
             _connection.Dispose();
+            if (_lock != null) _lock.Dispose();
         }
 
         public QueueItem Enqueue(string guildId, string sourcePath, string body)
@@ -206,7 +220,7 @@ namespace Ironkeep
             return items;
         }
 
-        public void MarkSending(string id, DateTime utcNow)
+        public bool MarkSending(string id, DateTime utcNow)
         {
             lock (_gate)
             {
@@ -222,8 +236,13 @@ namespace Ironkeep
                     cmd.Parameters.AddWithValue("$id", id);
                     cmd.Parameters.AddWithValue("$pending", SyncState.Pending);
                     cmd.Parameters.AddWithValue("$retry", SyncState.RetryScheduled);
-                    if (cmd.ExecuteNonQuery() != 1) throw new InvalidOperationException("Item is not waiting to send.");
+                    if (cmd.ExecuteNonQuery() != 1)
+                    {
+                        tx.Rollback();
+                        return false;
+                    }
                     tx.Commit();
+                    return true;
                 }
             }
         }
@@ -410,70 +429,167 @@ namespace Ironkeep
             return "Data Source=" + path + ";Pooling=False";
         }
 
-        static bool DatabaseReadable(string path)
+        static FileStream Acquire(string path)
         {
-            SqliteConnection connection = null;
             try
             {
-                connection = new SqliteConnection(ConnectionString(path));
-                connection.Open();
-                using (var cmd = connection.CreateCommand())
-                {
-                    cmd.CommandText = "PRAGMA integrity_check;";
-                    object result = cmd.ExecuteScalar();
-                    return result != null && string.Equals(result.ToString(), "ok", StringComparison.OrdinalIgnoreCase);
-                }
-            }
-            catch (SqliteException)
-            {
-                return false;
+                return new FileStream(path, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
             }
             catch (IOException)
             {
-                return false;
+                throw new InvalidOperationException("The queue is already open. Live database files were not moved.");
             }
-            finally
+            catch (UnauthorizedAccessException)
             {
-                if (connection != null) connection.Dispose();
+                throw new InvalidOperationException("The queue is already open. Live database files were not moved.");
             }
         }
 
-        static string Preserve(string path)
+        static SqliteConnection OpenDatabase(string path)
+        {
+            var connection = new SqliteConnection(ConnectionString(path));
+            connection.Open();
+            using (var pragma = connection.CreateCommand())
+            {
+                pragma.CommandText = "PRAGMA journal_mode=WAL;";
+                pragma.ExecuteNonQuery();
+            }
+            return connection;
+        }
+
+        static void RecoverIfNeeded(string path, out bool corrupt, out string preserved)
+        {
+            corrupt = false;
+            preserved = "";
+            string marker = path + ".corruption";
+            string kind;
+            string destination;
+            bool markerPresent = ReadMarker(marker, out kind, out destination);
+            if (markerPresent && kind == "pending")
+            {
+                if (destination == null || destination.Length == 0) destination = UniqueDestination(path);
+                FinishPreserve(path, destination);
+                WriteMarker(marker, "preserved", destination);
+                corrupt = true;
+                preserved = destination;
+                return;
+            }
+            if (markerPresent) corrupt = true;
+            if (destination != null && destination.Length > 0) preserved = destination;
+            if (!FileSetSuspicious(path)) return;
+            string dest = UniqueDestination(path);
+            WriteMarker(marker, "pending", dest);
+            FinishPreserve(path, dest);
+            WriteMarker(marker, "preserved", dest);
+            corrupt = true;
+            preserved = dest;
+        }
+
+        static bool FileSetSuspicious(string path)
+        {
+            bool wal = File.Exists(path + "-wal");
+            bool shm = File.Exists(path + "-shm");
+            if (!File.Exists(path)) return wal || shm;
+            long length;
+            try
+            {
+                length = new FileInfo(path).Length;
+            }
+            catch (IOException)
+            {
+                return true;
+            }
+            if (length < 100) return true;
+            byte[] header = new byte[100];
+            try
+            {
+                using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+                {
+                    int read = 0;
+                    while (read < header.Length)
+                    {
+                        int n = stream.Read(header, read, header.Length - read);
+                        if (n <= 0) return true;
+                        read += n;
+                    }
+                }
+            }
+            catch (IOException)
+            {
+                return true;
+            }
+            if (Encoding.ASCII.GetString(header, 0, 15) != "SQLite format 3" || header[15] != 0) return true;
+            int page = (header[16] << 8) | header[17];
+            if (page == 1) page = 65536;
+            if (page < 512 || page > 65536 || (page & (page - 1)) != 0) return true;
+            return length < page;
+        }
+
+        static string UniqueDestination(string path)
         {
             string directory = Path.GetDirectoryName(path);
             string stamp = DateTime.UtcNow.ToString("yyyyMMdd'T'HHmmss'Z'", CultureInfo.InvariantCulture);
             string dest = Path.Combine(directory, "queue-corrupt-" + stamp + ".sqlite");
             int n = 0;
-            while (File.Exists(dest))
+            while (File.Exists(dest) || File.Exists(dest + "-wal") || File.Exists(dest + "-shm"))
             {
                 n++;
                 dest = Path.Combine(directory, "queue-corrupt-" + stamp + "-" + n + ".sqlite");
             }
-            File.Move(path, dest);
-            MoveIfExists(path + "-wal", dest + "-wal");
-            MoveIfExists(path + "-shm", dest + "-shm");
-            Restrict(dest);
             return dest;
         }
 
-        static void MoveIfExists(string source, string dest)
+        static void FinishPreserve(string path, string dest)
         {
-            if (!File.Exists(source)) return;
-            File.Move(source, dest);
-            Restrict(dest);
+            MoveAside(path, dest);
+            MoveAside(path + "-wal", dest + "-wal");
+            MoveAside(path + "-shm", dest + "-shm");
+            SecureIfExists(dest);
+            SecureIfExists(dest + "-wal");
+            SecureIfExists(dest + "-shm");
         }
 
-        static string ReadSidecar(string sidecar)
+        static void MoveAside(string source, string dest)
         {
+            if (!File.Exists(source) || File.Exists(dest)) return;
+            string directory = Path.GetDirectoryName(dest);
+            if (directory != null && directory.Length > 0) Directory.CreateDirectory(directory);
+            File.Move(source, dest);
+        }
+
+        static bool ReadMarker(string marker, out string kind, out string destination)
+        {
+            kind = "";
+            destination = "";
+            if (!File.Exists(marker)) return false;
+            string[] lines;
             try
             {
-                string text = File.ReadAllText(sidecar).Trim();
-                return text;
+                lines = File.ReadAllLines(marker);
             }
             catch (IOException)
             {
-                return "";
+                kind = "pending";
+                return true;
             }
+            if (lines.Length < 4 || lines[0] != "ironkeep-queue-corruption 1" || (lines[1] != "pending" && lines[1] != "preserved"))
+            {
+                kind = "pending";
+                return true;
+            }
+            kind = lines[1];
+            destination = lines[3];
+            return true;
+        }
+
+        static void WriteMarker(string marker, string kind, string destination)
+        {
+            string text = "ironkeep-queue-corruption 1\n" + kind + "\n" + Stamp(DateTime.UtcNow) + "\n" + destination + "\n";
+            string tmp = marker + ".tmp";
+            File.WriteAllText(tmp, text, new UTF8Encoding(false));
+            SecureFile(tmp);
+            File.Move(tmp, marker, true);
+            SecureFile(marker);
         }
 
         static string Stamp(DateTime utc)
@@ -483,31 +599,87 @@ namespace Ironkeep
 
         public static void Restrict(string path)
         {
+            if (path == null || path.Length == 0) return;
+            if (Directory.Exists(path)) SecureDirectory(path);
+            else SecureFile(path);
+        }
+
+        static void SecureDirectory(string path)
+        {
             try
             {
-                if (!File.Exists(path)) return;
+                if (OperatingSystem.IsWindows())
+                {
+                    var info = new DirectoryInfo(path);
+                    DirectorySecurity security = info.GetAccessControl();
+                    GrantOnlyCurrentUser(security, true);
+                    info.SetAccessControl(security);
+                    return;
+                }
+                File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
+            }
+            catch (SecurityException)
+            {
+                throw;
+            }
+            catch (Exception ex)
+            {
+                throw new SecurityException("The queue folder could not be limited to the current user.", ex);
+            }
+        }
+
+        static void SecureIfExists(string path)
+        {
+            if (File.Exists(path)) SecureFile(path);
+        }
+
+        static void SecureFile(string path)
+        {
+            if (!File.Exists(path)) return;
+            try
+            {
                 if (OperatingSystem.IsWindows())
                 {
                     var info = new FileInfo(path);
                     FileSecurity security = info.GetAccessControl();
-                    security.SetAccessRuleProtection(true, false);
-                    security.AddAccessRule(new FileSystemAccessRule(
-                        WindowsIdentity.GetCurrent().User,
-                        FileSystemRights.FullControl,
-                        AccessControlType.Allow));
+                    GrantOnlyCurrentUser(security, false);
                     info.SetAccessControl(security);
                     return;
                 }
                 File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite);
             }
-            catch (UnauthorizedAccessException)
+            catch (SecurityException)
             {
+                throw;
             }
-            catch (IOException)
+            catch (Exception ex)
             {
+                throw new SecurityException("The queue file could not be limited to the current user: " + path, ex);
             }
-            catch (PlatformNotSupportedException)
+        }
+
+        static void GrantOnlyCurrentUser(FileSystemSecurity security, bool directory)
+        {
+            SecurityIdentifier user = WindowsIdentity.GetCurrent().User;
+            if (user == null) throw new SecurityException("The current user has no Windows identity.");
+            security.SetAccessRuleProtection(true, false);
+            var rules = new List<FileSystemAccessRule>();
+            foreach (AuthorizationRule rule in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
             {
+                var access = rule as FileSystemAccessRule;
+                if (access != null) rules.Add(access);
+            }
+            foreach (FileSystemAccessRule rule in rules)
+                security.RemoveAccessRuleSpecific(rule);
+            security.AddAccessRule(new FileSystemAccessRule(user, FileSystemRights.FullControl, AccessControlType.Allow));
+            if (directory)
+            {
+                security.AddAccessRule(new FileSystemAccessRule(
+                    user,
+                    FileSystemRights.FullControl,
+                    InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit,
+                    PropagationFlags.None,
+                    AccessControlType.Allow));
             }
         }
     }
