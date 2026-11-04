@@ -1,17 +1,24 @@
-"""Companion authorization stays off, and cannot pass for a website session."""
+"""Security coverage for the Companion connection. Website login is covered separately."""
 
+import http.cookies
 import os
 import shutil
 import sqlite3
 import tempfile
 import threading
 import unittest
+import urllib.parse
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from ironkeep import attendance, config, db, main
-from ironkeep.companion_auth import SESSION_SECONDS
+from ironkeep import attendance, config, db, discord_api, main
+from ironkeep.companion_auth import (
+    ACCESS_SECONDS,
+    CODE_SECONDS,
+    REFRESH_SECONDS,
+    pkce_s256,
+)
 
 REPORT = "\n".join(
     [
@@ -25,6 +32,20 @@ REPORT = "\n".join(
         "format: ironkeep-group 1",
     ]
 )
+VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
+CHALLENGE = "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"
+LOOPBACK = "http://127.0.0.1:43123/callback"
+STATE = "state-value-0123456789"
+
+
+def cookie_headers(response, name):
+    return [header for header in response.headers.get_list("set-cookie") if header.lower().startswith(name.lower() + "=")]
+
+
+def cookie_value(response, name):
+    jar = http.cookies.SimpleCookie()
+    jar.load(cookie_headers(response, name)[0])
+    return jar[name].value
 
 
 class CompanionAuthTests(unittest.TestCase):
@@ -46,8 +67,21 @@ class CompanionAuthTests(unittest.TestCase):
         config.DB_PATH = os.path.join(self.tmp, "ik.db")
         db.init()
         self.client = TestClient(main.app)
+        self.member_roles = {}
+        self.member_calls = []
+
+        def bot_member(guild_id, user_id):
+            self.member_calls.append((str(guild_id), str(user_id)))
+            found = self.member_roles.get((str(user_id), str(guild_id)))
+            if found is None:
+                raise discord_api.DiscordError(404, {})
+            return {"roles": list(found)}
+
+        self._member = patch("ironkeep.discord_api.bot_member", side_effect=bot_member)
+        self._member.start()
 
     def tearDown(self):
+        self._member.stop()
         self.client.close()
         config.BOT_TOKEN, config.CLIENT_ID, config.CLIENT_SECRET, config.DB_PATH, config.PUBLIC_URL = self.old_config
         if self.old_flag is None:
@@ -56,248 +90,266 @@ class CompanionAuthTests(unittest.TestCase):
             os.environ["IRONKEEP_COMPANION_AUTH"] = self.old_flag
         shutil.rmtree(self.tmp)
 
-    def test_companion_routes_are_missing_until_the_flag_is_set(self):
+    def enable(self):
+        os.environ["IRONKEEP_COMPANION_AUTH"] = "1"
+
+    def guild(self, discord_id="4242", name="Forever Guild", roles=None, added_by_id="1001"):
+        db.upsert_guild(discord_id, name, [], [], added_by="Founder", added_by_id=added_by_id)
+        guild = db.guild_by_slug(name.lower().replace(" ", ""))
+        settings = guild["settings"]
+        settings["companion_roles"] = list(roles or [])
+        settings["recruitment_roles"] = ["1103"]
+        db.save_settings(guild["slug"], settings)
+        return db.guild_by_slug(guild["slug"])
+
+    def session(self, user_id, name="Ada", username="ada"):
+        return db.create_session(user_id, name, username, "discord-access-SHOULD-NOT-LEAK", "discord-refresh-SHOULD-NOT-LEAK", 3600)
+
+    def start(self, token, redirect_uri=LOOPBACK, state=STATE, challenge=CHALLENGE, method="S256", client_id="ironkeep-companion"):
+        return self.client.get(
+            "/companion/connect",
+            params={
+                "response_type": "code",
+                "client_id": client_id,
+                "redirect_uri": redirect_uri,
+                "state": state,
+                "code_challenge": challenge,
+                "code_challenge_method": method,
+            },
+            cookies={"ik_session": token} if token else None,
+            follow_redirects=False,
+        )
+
+    def hidden(self, page, name):
+        marker = 'name="%s" value="' % name
+        start = page.text.index(marker) + len(marker)
+        return page.text[start:page.text.index('"', start)]
+
+    def approve(self, token, page, slug, decision="allow", csrf=None, state=None):
+        return self.client.post(
+            "/companion/connect",
+            data={
+                "state": STATE if state is None else state,
+                "csrf": self.hidden(page, "csrf") if csrf is None else csrf,
+                "guild": slug,
+                "decision": decision,
+            },
+            cookies={
+                "ik_session": token,
+                "ik_companion_csrf": cookie_value(page, "ik_companion_csrf") if csrf is None else csrf or "",
+            },
+            follow_redirects=False,
+        )
+
+    def exchange(self, code, verifier=VERIFIER, redirect_uri=LOOPBACK):
+        return self.client.post(
+            "/api/companion/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": verifier,
+                "redirect_uri": redirect_uri,
+            },
+        )
+
+    def connect(self, user_id=config.SUPERADMIN_ID, roles=None, state=STATE):
+        self.enable()
+        guild = self.guild(roles=roles)
+        if user_id != config.SUPERADMIN_ID:
+            self.member_roles[(str(user_id), guild["id"])] = list(roles or [])
+        token = self.session(user_id)
+        page = self.start(token, state=state)
+        self.assertEqual(page.status_code, 200, page.text)
+        approved = self.approve(token, page, guild["slug"], state=state)
+        self.assertEqual(approved.status_code, 303, approved.text)
+        parsed = urllib.parse.urlparse(approved.headers["location"])
+        query = urllib.parse.parse_qs(parsed.query)
+        exchanged = self.exchange(query["code"][0])
+        self.assertEqual(exchanged.status_code, 200, exchanged.text)
+        return guild, token, exchanged.json(), approved.headers["location"]
+
+    def test_pkce_s256_matches_the_published_vector(self):
+        self.assertEqual(pkce_s256(VERIFIER), CHALLENGE)
+
+    def test_routes_stay_missing_until_the_flag_is_set(self):
         self.assertFalse(config.companion_auth_enabled())
-        website = db.create_session(config.SUPERADMIN_ID, "Ada", "ada", "discord-access", "discord-refresh", 3600)
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Ada", added_by_id=config.SUPERADMIN_ID)
-        for method, path in (
-            ("GET", "/api/companion/session"),
-            ("POST", "/api/companion/session"),
-            ("DELETE", "/api/companion/session"),
-            ("POST", "/api/companion/exchange"),
+        website = self.session(config.SUPERADMIN_ID)
+        paths = (
+            ("GET", "/companion/connect"),
+            ("POST", "/companion/connect"),
+            ("POST", "/api/companion/token"),
+            ("POST", "/api/companion/revoke"),
             ("POST", "/api/companion/logout"),
-            ("POST", "/api/foreverguild/companion-link"),
-            ("GET", "/api/foreverguild/companion-link"),
-            ("POST", "/api/no-such-guild/companion-link"),
-        ):
-            response = self.client.request(
-                method,
-                path,
-                cookies={"ik_session": website},
-                headers={"Authorization": "Bearer " + website},
-            )
+            ("GET", "/api/companion/guilds"),
+            ("POST", "/api/companion/guilds/foreverguild/attendance"),
+            ("POST", "/api/companion/exchange"),
+            ("GET", "/api/companion/session"),
+        )
+        for method, path in paths:
+            response = self.client.request(method, path, cookies={"ik_session": website})
             self.assertEqual(response.status_code, 404, path)
             self.assertEqual(response.json(), {"detail": "Not Found"})
-        self.assertNotIn("companion_sessions", self._tables())
-        self.assertNotIn("companion_pairings", self._tables())
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "false"
-        self.assertFalse(config.companion_auth_enabled())
-        self.assertEqual(self.client.post("/api/companion/exchange", json={"code": "x"}).status_code, 404)
-
-    def test_the_flag_does_nothing_while_the_site_is_on_sample_data(self):
+        self.assertNotIn("companion_connect", self.tables())
+        self.assertNotIn("companion_credentials", self.tables())
         config.BOT_TOKEN = ""
         config.CLIENT_ID = ""
         config.CLIENT_SECRET = ""
         os.environ["IRONKEEP_COMPANION_AUTH"] = "yes"
-        self.assertFalse(config.live())
-        response = self.client.post("/api/companion/exchange", json={"code": "x"})
-        self.assertEqual(response.status_code, 404)
-        self.assertNotIn("companion_sessions", self._tables())
+        self.assertEqual(self.client.post("/api/companion/token", json={}).status_code, 404)
 
-    def test_a_website_session_and_a_companion_session_do_not_cross(self):
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "true"
-        self.assertTrue(config.companion_auth_enabled())
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Ada", added_by_id="founder")
-        guild = db.guild_by_slug("foreverguild")
-        settings = guild["settings"]
-        settings["recruitment_roles"] = ["role-recruit"]
-        db.save_settings(guild["slug"], settings)
-        website = db.create_session(
-            config.SUPERADMIN_ID,
-            "Ada",
-            "ada",
-            "discord-access-SHOULD-NOT-LEAK",
-            "discord-refresh-SHOULD-NOT-LEAK",
-            3600,
-        )
-        stranger = db.create_session("2002", "Stranger", "stranger", "other-access", "other-refresh", 3600)
-        with patch("ironkeep.discord_api.exchange_code", side_effect=AssertionError("no Discord grant")), patch(
-            "ironkeep.discord_api.identify", side_effect=AssertionError("no Discord identify")
-        ), patch(
-            "ironkeep.discord_api.refresh_access_token", side_effect=AssertionError("no Discord refresh")
-        ), patch(
-            "ironkeep.discord_api.guild_member", side_effect=AssertionError("superadmin does not need a role lookup")
-        ):
-            denied = self.client.post(
-                "/api/foreverguild/companion-link",
-                headers={"Authorization": "Bearer ikc.not-a-website-session"},
-            )
-            linked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": website})
-        self.assertEqual(denied.status_code, 403)
-        self.assertEqual(linked.status_code, 200)
-        self.assertEqual(set(linked.json()), {"code", "expires_in", "guild"})
-        self.assertEqual(linked.json()["expires_in"], 300)
-        self.assertEqual(linked.json()["guild"], "foreverguild")
-        self.assertNotIn(website, linked.text)
-        self.assertNotIn("discord-access-SHOULD-NOT-LEAK", linked.text)
-        self.assertEqual(linked.headers.get_list("set-cookie"), [])
+    def test_a_bad_redirect_or_pkce_method_is_refused_before_a_row_is_stored(self):
+        self.enable()
+        token = self.session(config.SUPERADMIN_ID)
+        samples = [
+            "https://evil.example/callback",
+            "http://evil.example/callback",
+            "http://127.0.0.1/callback",
+            "http://127.0.0.1:43123/callback?next=https://evil.example",
+            "http://127.0.0.1:43123/callback#fragment",
+            "http://127.0.0.1.evil.com:43123/callback",
+            "http://127.0.0.1:43123@evil.com/callback",
+            "http://localhost:43123/callback/../steal",
+            "http://127.0.0.1:43123",
+            LOOPBACK + " ",
+        ]
+        for redirect_uri in samples:
+            response = self.start(token, redirect_uri=redirect_uri)
+            self.assertEqual(response.status_code, 400, redirect_uri)
+            self.assertNotIn("location", {key.lower() for key in response.headers})
+            self.assertNotIn(redirect_uri, response.headers.get("location", ""))
+        plain = self.start(token, method="plain")
+        self.assertEqual(plain.status_code, 400)
+        self.assertNotIn("companion_connect", self.tables())
+        self.assertEqual(self.start(token, client_id=config.CLIENT_ID).status_code, 400)
 
-        with patch("ironkeep.discord_api.guild_member", return_value={"roles": []}):
-            blocked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": stranger})
-        self.assertEqual(blocked.status_code, 403)
-        self.assertEqual(self._count("companion_pairings", "used = 0"), 1)
+    def test_get_does_not_approve_and_login_stays_on_the_website(self):
+        self.enable()
+        anonymous = self.start(None)
+        self.assertEqual(anonymous.status_code, 303)
+        parsed = urllib.parse.urlparse(anonymous.headers["location"])
+        self.assertEqual(parsed.path, "/login")
+        nxt = urllib.parse.parse_qs(parsed.query)["next"][0]
+        self.assertTrue(nxt.startswith("/companion/connect?"))
+        self.assertNotIn("discord.com", anonymous.headers["location"])
+        self.assertEqual(cookie_headers(anonymous, "ik_session"), [])
+        token = self.session(config.SUPERADMIN_ID)
+        self.guild()
+        page = self.start(token)
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("Connect the Companion", page.text)
+        self.assertIn('type="submit"', page.text)
+        self.assertNotIn("location", {key.lower() for key in page.headers})
+        header = cookie_headers(page, "ik_companion_csrf")[0].lower()
+        self.assertIn("httponly", header)
+        self.assertIn("samesite=lax", header)
+        self.assertIn("secure", header)
+        self.assertIn("path=/companion/connect", header)
 
-        exchanged = self.client.post(
-            "/api/companion/exchange",
-            json={"code": linked.json()["code"]},
-            cookies={"ik_session": stranger},
+    def test_csrf_and_state_are_required(self):
+        self.enable()
+        guild = self.guild()
+        token = self.session(config.SUPERADMIN_ID)
+        page = self.start(token)
+        missing = self.client.post(
+            "/companion/connect",
+            data={"state": STATE, "csrf": self.hidden(page, "csrf"), "guild": guild["slug"], "decision": "allow"},
+            cookies={"ik_session": token},
+            follow_redirects=False,
         )
-        self.assertEqual(exchanged.status_code, 200)
-        self.assertEqual(exchanged.headers.get_list("set-cookie"), [])
-        body = exchanged.json()
-        self.assertEqual(
-            set(body),
-            {"ok", "token", "expires_in", "user_id", "name", "username", "guild_id", "guild_slug"},
+        self.assertEqual(missing.status_code, 403)
+        mismatched = self.approve(token, page, guild["slug"], csrf="different-csrf-value")
+        self.assertEqual(mismatched.status_code, 403)
+        other = self.start(token, state="other-state-0123456789")
+        crossed = self.client.post(
+            "/companion/connect",
+            data={
+                "state": "other-state-0123456789",
+                "csrf": self.hidden(page, "csrf"),
+                "guild": guild["slug"],
+                "decision": "allow",
+            },
+            cookies={"ik_session": token, "ik_companion_csrf": cookie_value(page, "ik_companion_csrf")},
+            follow_redirects=False,
         )
-        self.assertTrue(body["token"].startswith("ikc."))
-        self.assertNotIn(".", body["token"][4:])
-        self.assertEqual(body["expires_in"], SESSION_SECONDS)
-        self.assertEqual(body["user_id"], config.SUPERADMIN_ID)
-        self.assertEqual(body["name"], "Ada")
-        self.assertEqual(body["guild_slug"], "foreverguild")
-        self.assertNotIn("discord-access-SHOULD-NOT-LEAK", exchanged.text)
-        self.assertNotIn("refresh", exchanged.text)
-        again = self.client.post("/api/companion/exchange", json={"code": linked.json()["code"]})
-        self.assertEqual(again.status_code, 401)
-        self.assertEqual(self._count("companion_sessions"), 1)
+        self.assertNotEqual(self.hidden(page, "csrf"), self.hidden(other, "csrf"))
+        self.assertEqual(crossed.status_code, 403)
+        self.assertEqual(self.count("companion_credentials"), 0)
 
-        companion = body["token"]
-        who = self.client.get(
-            "/api/companion/session",
-            headers={"Authorization": "Bearer " + companion},
-            cookies={"ik_session": stranger},
-        )
-        self.assertEqual(who.status_code, 200)
-        self.assertEqual(who.json()["user_id"], config.SUPERADMIN_ID)
-        self.assertEqual(who.json()["name"], "Ada")
-        self.assertNotEqual(who.json()["name"], "Stranger")
-        self.assertEqual(
-            set(who.json()),
-            {"ok", "user_id", "name", "username", "guild_id", "guild_slug"},
-        )
+    def test_cancel_returns_to_loopback_without_a_code(self):
+        self.enable()
+        guild = self.guild()
+        token = self.session(config.SUPERADMIN_ID)
+        page = self.start(token)
+        denied = self.approve(token, page, guild["slug"], decision="deny")
+        self.assertEqual(denied.status_code, 303)
+        parsed = urllib.parse.urlparse(denied.headers["location"])
+        self.assertEqual(parsed.scheme, "http")
+        self.assertEqual(parsed.netloc, "127.0.0.1:43123")
+        self.assertEqual(parsed.path, "/callback")
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(query["error"], ["access_denied"])
+        self.assertEqual(query["state"], [STATE])
+        self.assertNotIn("code", query)
+        self.assertEqual(self.count("companion_credentials"), 0)
 
-        stolen = self.client.get(
-            "/api/companion/session",
-            headers={"Authorization": "Bearer " + website},
-            cookies={"ik_session": website},
-        )
-        self.assertEqual(stolen.status_code, 401)
-        self.assertEqual(stolen.json()["error"], "Companion login is required.")
-        self.assertEqual(self.client.get("/api/companion/session").status_code, 401)
-
-        as_website = self.client.get("/admin", cookies={"ik_session": companion}, follow_redirects=False)
-        self.assertEqual(as_website.status_code, 303)
-        self.assertTrue(as_website.headers["location"].startswith("/login"))
-        self.assertIsNone(db.get_session(companion))
-        self.assertIsNotNone(db.get_session(website))
-        columns = self._columns("sessions")
+    def test_the_connection_issues_hashed_rotating_tokens(self):
+        guild, website, body, location = self.connect()
+        parsed = urllib.parse.urlparse(location)
+        query = urllib.parse.parse_qs(parsed.query)
+        self.assertEqual(query["state"], [STATE])
+        self.assertTrue(body["access_token"].startswith("ika."))
+        self.assertTrue(body["refresh_token"].startswith("ikr."))
+        self.assertTrue(query["code"][0].startswith("ikn."))
+        self.assertEqual(body["expires_in"], ACCESS_SECONDS)
+        self.assertEqual(body["refresh_expires_in"], REFRESH_SECONDS)
+        self.assertLessEqual(ACCESS_SECONDS, CODE_SECONDS * 20)
+        self.assertEqual(body["guild_slug"], guild["slug"])
+        self.assertNotIn("discord-access-SHOULD-NOT-LEAK", str(body))
+        stored = self.database_bytes()
+        self.assertNotIn(body["access_token"].encode(), stored)
+        self.assertNotIn(body["refresh_token"].encode(), stored)
+        self.assertNotIn(query["code"][0].encode(), stored)
+        self.assertIsNone(db.get_session(body["access_token"]))
+        columns = self.columns("sessions")
         self.assertEqual(
             columns,
             ["token", "user_id", "name", "username", "access_token", "refresh_token", "expires_at"],
         )
-        self.assertNotIn("access_token", self._columns("companion_sessions"))
-        self.assertNotIn("refresh_token", self._columns("companion_sessions"))
-        self.assertEqual(self._count("sessions", "token = ?", (companion,)), 0)
-        self.assertEqual(self._count("companion_sessions", "token = ?", (website,)), 0)
+        self.assertNotIn("access_token", self.columns("companion_credentials"))
 
-        key = attendance.token_for(db.guild_by_slug("foreverguild"))
-        posted = self.client.post(
-            "/api/foreverguild/attendance",
-            content=REPORT,
-            headers={"Authorization": "Bearer " + key},
-        )
-        self.assertEqual(posted.status_code, 200)
-        for presented in (companion, website):
-            rejected = self.client.post(
-                "/api/foreverguild/attendance",
-                content=REPORT,
-                headers={"Authorization": "Bearer " + presented},
-            )
-            self.assertEqual(rejected.status_code, 401)
-            self.assertEqual(rejected.json()["error"], "Unknown companion key.")
-        cookie_only = self.client.post(
-            "/api/foreverguild/attendance",
-            content=REPORT,
-            cookies={"ik_session": website},
-        )
-        self.assertEqual(cookie_only.status_code, 401)
+    def test_pkce_replay_and_concurrent_exchange(self):
+        self.enable()
+        guild = self.guild()
+        token = self.session(config.SUPERADMIN_ID)
+        page = self.start(token)
+        approved = self.approve(token, page, guild["slug"])
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
+        wrong = self.exchange(code, verifier="x" * 50)
+        self.assertEqual(wrong.status_code, 401)
+        retried = self.exchange(code)
+        self.assertEqual(retried.status_code, 401)
+        self.assertEqual(self.count("companion_credentials"), 0)
 
-        logged_out = self.client.post(
-            "/api/companion/logout",
-            headers={"Authorization": "Bearer " + companion},
-            cookies={"ik_session": website},
-        )
-        self.assertEqual(logged_out.status_code, 200)
-        self.assertEqual(logged_out.headers.get_list("set-cookie"), [])
+        page = self.start(token, state="second-state-012345678")
+        approved = self.approve(token, page, guild["slug"], state="second-state-012345678")
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
+        first = self.exchange(code)
+        self.assertEqual(first.status_code, 200)
+        access = first.json()["access_token"]
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.execute("UPDATE companion_connect SET used_at = ? WHERE code_hash IS NOT NULL", ("2000-01-01T00:00:00",))
+        conn.commit()
+        conn.close()
+        replay = self.exchange(code)
+        self.assertEqual(replay.status_code, 401)
         self.assertEqual(
-            self.client.get("/api/companion/session", headers={"Authorization": "Bearer " + companion}).status_code,
+            self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + access}).status_code,
             401,
         )
-        self.assertIsNotNone(db.get_session(website))
-        self.assertEqual(self.client.get("/admin", cookies={"ik_session": website}, follow_redirects=False).status_code, 200)
 
-        website_logout = self.client.get("/logout", cookies={"ik_session": website}, follow_redirects=False)
-        self.assertEqual(website_logout.status_code, 303)
-        self.assertIsNone(db.get_session(website))
-
-    def test_logout_of_the_website_leaves_the_companion_session(self):
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "1"
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Ada", added_by_id=config.SUPERADMIN_ID)
-        website = db.create_session(config.SUPERADMIN_ID, "Ada", "ada", "access", "refresh", 3600)
-        linked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": website})
-        exchanged = self.client.post("/api/companion/exchange", json={"code": linked.json()["code"]})
-        companion = exchanged.json()["token"]
-        self.client.get("/logout", cookies={"ik_session": website}, follow_redirects=False)
-        self.assertIsNone(db.get_session(website))
-        who = self.client.get("/api/companion/session", headers={"Authorization": "Bearer " + companion})
-        self.assertEqual(who.status_code, 200)
-        self.assertEqual(who.json()["user_id"], config.SUPERADMIN_ID)
-
-    def test_a_recruitment_role_can_mint_a_link_and_a_stale_one_cannot_be_used(self):
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "1"
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Founder", added_by_id="founder")
-        guild = db.guild_by_slug("foreverguild")
-        settings = guild["settings"]
-        settings["recruitment_roles"] = ["role-recruit"]
-        db.save_settings(guild["slug"], settings)
-        recruiter = db.create_session("3003", "Recruiter", "recruiter", "access", "refresh", 3600)
-        with patch("ironkeep.discord_api.guild_member", return_value={"roles": ["role-recruit"]}):
-            linked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": recruiter})
-        self.assertEqual(linked.status_code, 200)
-        conn = sqlite3.connect(config.DB_PATH)
-        conn.execute(
-            "UPDATE companion_pairings SET expires_at = ? WHERE code = ?",
-            ("2000-01-01T00:00:00", linked.json()["code"]),
-        )
-        conn.commit()
-        conn.close()
-        expired = self.client.post("/api/companion/exchange", json={"code": linked.json()["code"]})
-        self.assertEqual(expired.status_code, 401)
-        self.assertEqual(self._count("companion_sessions"), 0)
-        self.assertEqual(self.client.post("/api/companion/exchange", json={}).status_code, 400)
-        self.assertEqual(self.client.post("/api/companion/exchange", content=b"nope").status_code, 400)
-
-    def test_an_expired_companion_session_is_rejected(self):
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "1"
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Ada", added_by_id=config.SUPERADMIN_ID)
-        website = db.create_session(config.SUPERADMIN_ID, "Ada", "ada", "access", "refresh", 3600)
-        linked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": website})
-        exchanged = self.client.post("/api/companion/exchange", json={"code": linked.json()["code"]})
-        companion = exchanged.json()["token"]
-        conn = sqlite3.connect(config.DB_PATH)
-        conn.execute("UPDATE companion_sessions SET expires_at = ? WHERE token = ?", ("2000-01-01T00:00:00", companion))
-        conn.commit()
-        conn.close()
-        rejected = self.client.get("/api/companion/session", headers={"Authorization": "Bearer " + companion})
-        self.assertEqual(rejected.status_code, 401)
-        self.assertEqual(self._count("companion_sessions"), 0)
-
-    def test_one_link_can_be_exchanged_once(self):
-        os.environ["IRONKEEP_COMPANION_AUTH"] = "1"
-        db.upsert_guild("4242", "Forever Guild", [], [], added_by="Ada", added_by_id=config.SUPERADMIN_ID)
-        website = db.create_session(config.SUPERADMIN_ID, "Ada", "ada", "access", "refresh", 3600)
-        linked = self.client.post("/api/foreverguild/companion-link", cookies={"ik_session": website})
-        code = linked.json()["code"]
+        page = self.start(token, state="third-state-0123456789")
+        approved = self.approve(token, page, guild["slug"], state="third-state-0123456789")
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
         barrier = threading.Barrier(4)
         raced = []
 
@@ -305,7 +357,15 @@ class CompanionAuthTests(unittest.TestCase):
             barrier.wait()
             client = TestClient(main.app)
             try:
-                raced.append(client.post("/api/companion/exchange", json={"code": code}).status_code)
+                raced.append(client.post(
+                    "/api/companion/token",
+                    json={
+                        "grant_type": "authorization_code",
+                        "code": code,
+                        "code_verifier": VERIFIER,
+                        "redirect_uri": LOOPBACK,
+                    },
+                ).status_code)
             finally:
                 client.close()
 
@@ -314,32 +374,300 @@ class CompanionAuthTests(unittest.TestCase):
             thread.start()
         for thread in threads:
             thread.join()
-        self.assertEqual(sorted(raced), [200, 401, 401, 401])
-        self.assertEqual(self._count("companion_sessions"), 1)
+        self.assertEqual(sorted(raced).count(200), 1)
+        self.assertEqual(sorted(raced).count(401), 3)
 
-    def _tables(self):
+    def test_refresh_rotates_and_reuse_revokes_the_family(self):
+        _guild, _website, body, _location = self.connect()
+        refreshed = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(refreshed.status_code, 200)
+        new_body = refreshed.json()
+        self.assertNotEqual(new_body["refresh_token"], body["refresh_token"])
+        self.assertNotEqual(new_body["access_token"], body["access_token"])
+        old_refresh = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(old_refresh.status_code, 401)
+        current = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + new_body["access_token"]})
+        self.assertEqual(current.status_code, 200)
+        previous = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]})
+        self.assertEqual(previous.status_code, 200)
+
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.execute(
+            "UPDATE companion_credentials SET rotated_at = ? WHERE rotated_at IS NOT NULL",
+            ("2000-01-01T00:00:00",),
+        )
+        conn.commit()
+        conn.close()
+        reused = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(reused.status_code, 401)
+        killed = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + new_body["access_token"]})
+        self.assertEqual(killed.status_code, 401)
+        again = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": new_body["refresh_token"]},
+        )
+        self.assertEqual(again.status_code, 401)
+
+    def test_concurrent_refresh_keeps_one_family(self):
+        _guild, _website, body, _location = self.connect()
+        barrier = threading.Barrier(2)
+        raced = []
+
+        def once():
+            barrier.wait()
+            client = TestClient(main.app)
+            try:
+                response = client.post(
+                    "/api/companion/token",
+                    json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+                )
+                raced.append((response.status_code, response.json()))
+            finally:
+                client.close()
+
+        threads = [threading.Thread(target=once) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+        self.assertEqual(sorted(item[0] for item in raced), [200, 401])
+        winner = next(item[1] for item in raced if item[0] == 200)
+        found = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + winner["access_token"]})
+        self.assertEqual(found.status_code, 200)
+
+    def test_expiry_revoke_and_website_logout_are_separate(self):
+        _guild, website, body, _location = self.connect()
+        conn = sqlite3.connect(config.DB_PATH)
+        conn.execute(
+            "UPDATE companion_credentials SET expires_at = ? WHERE kind = 'access'",
+            ("2000-01-01T00:00:00",),
+        )
+        conn.commit()
+        conn.close()
+        self.assertEqual(
+            self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]}).status_code,
+            401,
+        )
+        refreshed = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(refreshed.status_code, 200)
+        access = refreshed.json()["access_token"]
+        refresh = refreshed.json()["refresh_token"]
+        self.client.get("/logout", cookies={"ik_session": website}, follow_redirects=False)
+        self.assertIsNone(db.get_session(website))
+        self.assertEqual(
+            self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + access}).status_code,
+            200,
+        )
+        revoked = self.client.post("/api/companion/revoke", json={"token": refresh})
+        self.assertEqual(revoked.status_code, 200)
+        self.assertEqual(revoked.headers.get("cache-control"), "no-store")
+        self.assertEqual(
+            self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + access}).status_code,
+            401,
+        )
+        self.assertEqual(
+            self.client.post("/api/companion/token", json={"grant_type": "refresh_token", "refresh_token": refresh}).status_code,
+            401,
+        )
+
+    def test_upload_rechecks_companion_roles_and_preserves_the_report(self):
+        self.enable()
+        guild = self.guild(roles=["501"])
+        other = self.guild(discord_id="5252", name="Other Guild", roles=["501"])
+        user = "3003"
+        self.member_roles[(user, guild["id"])] = ["501"]
+        self.member_roles[(user, other["id"])] = ["501"]
+        token = self.session(user, name="Recruiter", username="recruiter")
+        page = self.start(token)
+        self.assertIn(guild["name"], page.text)
+        self.assertIn(other["name"], page.text)
+        approved = self.approve(token, page, guild["slug"])
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
+        exchanged = self.exchange(code)
+        access = exchanged.json()["access_token"]
+        headers = {"Authorization": "Bearer " + access}
+        posted = self.client.post("/api/companion/guilds/%s/attendance" % guild["slug"], content=REPORT, headers=headers)
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(posted.json(), {"ok": True, "duplicate": False, "place": "Hall of Thanes", "people": 1})
+        again = self.client.post("/api/companion/guilds/%s/attendance" % guild["slug"], content=REPORT, headers=headers)
+        self.assertEqual(again.status_code, 200)
+        self.assertTrue(again.json()["duplicate"])
+        self.assertEqual(db.count_attendance(guild["id"]), 1)
+
+        self.member_roles[(user, guild["id"])] = ["1103"]
+        lost = self.client.post("/api/companion/guilds/%s/attendance" % guild["slug"], content=REPORT, headers=headers)
+        self.assertEqual(lost.status_code, 403)
+        discovered = self.client.get("/api/companion/guilds", headers=headers)
+        self.assertEqual(discovered.status_code, 200)
+        self.assertEqual(discovered.json()["guilds"], [])
+        self.member_roles[(user, guild["id"])] = ["501"]
+        restored = self.client.get("/api/companion/guilds", headers=headers)
+        self.assertEqual(restored.json()["guilds"], [{"id": guild["id"], "slug": guild["slug"], "name": guild["name"]}])
+        cross = self.client.post("/api/companion/guilds/%s/attendance" % other["slug"], content=REPORT, headers=headers)
+        self.assertEqual(cross.status_code, 403)
+        self.assertEqual(db.count_attendance(other["id"]), 0)
+
+    def test_recruitment_and_the_bot_adder_cannot_upload(self):
+        self.enable()
+        guild = self.guild(roles=["501"], added_by_id="3003")
+        self.member_roles[("3003", guild["id"])] = ["1103"]
+        token = self.session("3003", name="Founder", username="founder")
+        page = self.start(token)
+        self.assertNotIn('name="guild"', page.text)
+        csrf = cookie_value(page, "ik_companion_csrf")
+        forced = self.client.post(
+            "/companion/connect",
+            data={"state": STATE, "csrf": csrf, "guild": guild["slug"], "decision": "allow"},
+            cookies={"ik_session": token, "ik_companion_csrf": csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(forced.status_code, 403)
+        self.assertNotIn("location", {key.lower() for key in forced.headers})
+
+    def test_the_superadmin_is_the_only_role_exception(self):
+        self.enable()
+        guild = self.guild(roles=[])
+        token = self.session(config.SUPERADMIN_ID)
+        self.member_calls.clear()
+        page = self.start(token)
+        approved = self.approve(token, page, guild["slug"])
+        self.assertEqual(approved.status_code, 303)
+        self.assertEqual(self.member_calls, [])
+        code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
+        exchanged = self.exchange(code)
+        access = exchanged.json()["access_token"]
+        posted = self.client.post(
+            "/api/companion/guilds/%s/attendance" % guild["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + access},
+        )
+        self.assertEqual(posted.status_code, 200)
+        self.assertEqual(self.member_calls, [])
+
+    def test_credentials_do_not_cross_and_the_legacy_key_still_works(self):
+        guild, website, body, _location = self.connect(roles=["501"])
+        access = body["access_token"]
+        key = attendance.token_for(guild)
+        legacy = self.client.post(
+            "/api/%s/attendance" % guild["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + key},
+        )
+        self.assertEqual(legacy.status_code, 200)
+        self.assertEqual(legacy.json()["duplicate"], False)
+        for presented in (access, body["refresh_token"], website):
+            rejected = self.client.post(
+                "/api/%s/attendance" % guild["slug"],
+                content=REPORT,
+                headers={"Authorization": "Bearer " + presented},
+            )
+            self.assertEqual(rejected.status_code, 401)
+            self.assertEqual(rejected.json()["error"], "Unknown companion key.")
+        cookie_only = self.client.post(
+            "/api/%s/attendance" % guild["slug"],
+            content=REPORT,
+            cookies={"ik_session": website},
+        )
+        self.assertEqual(cookie_only.status_code, 401)
+        companion = self.client.post(
+            "/api/companion/guilds/%s/attendance" % guild["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + key},
+        )
+        self.assertEqual(companion.status_code, 401)
+        website_bearer = self.client.post(
+            "/api/companion/guilds/%s/attendance" % guild["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + website},
+            cookies={"ik_session": website},
+        )
+        self.assertEqual(website_bearer.status_code, 401)
+        as_website = self.client.get("/admin", cookies={"ik_session": access}, follow_redirects=False)
+        self.assertEqual(as_website.status_code, 303)
+        self.assertTrue(as_website.headers["location"].startswith("/login"))
+        logged_out = self.client.post("/api/companion/logout", headers={"Authorization": "Bearer " + access})
+        self.assertEqual(logged_out.status_code, 200)
+        self.assertIsNotNone(db.get_session(website))
+        self.assertEqual(
+            self.client.get("/admin", cookies={"ik_session": website}, follow_redirects=False).status_code,
+            200,
+        )
+
+    def test_companion_roles_survive_a_settings_save_and_start_empty(self):
+        self.enable()
+        guild = self.guild(roles=["501"])
+        self.assertEqual(db.guild_by_slug(guild["slug"])["settings"]["companion_roles"], ["501"])
+        fresh = db.guild_by_slug(self.guild(discord_id="6262", name="Empty Guild", roles=None)["slug"])
+        self.assertEqual(fresh["settings"]["companion_roles"], [])
+        token = self.session(config.SUPERADMIN_ID)
+        kept = dict(db.guild_by_slug(guild["slug"])["settings"])
+        kept.pop("companion_roles")
+        saved = self.client.post(
+            "/api/%s/settings" % guild["slug"],
+            json=kept,
+            cookies={"ik_session": token},
+        )
+        self.assertEqual(saved.status_code, 200)
+        self.assertEqual(db.guild_by_slug(guild["slug"])["settings"]["companion_roles"], ["501"])
+        updated = dict(db.guild_by_slug(guild["slug"])["settings"])
+        updated["companion_roles"] = ["777"]
+        changed = self.client.post(
+            "/api/%s/settings" % guild["slug"],
+            json=updated,
+            cookies={"ik_session": token},
+        )
+        self.assertEqual(changed.status_code, 200)
+        self.assertEqual(db.guild_by_slug(guild["slug"])["settings"]["companion_roles"], ["777"])
+        rejected = self.client.post(
+            "/api/%s/settings" % guild["slug"],
+            json={"companion_roles": "777"},
+            cookies={"ik_session": token},
+        )
+        self.assertEqual(rejected.status_code, 400)
+        page = self.client.get("/%s/settings" % guild["slug"], cookies={"ik_session": token})
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('data-picker="companion_roles"', page.text)
+        self.assertIn("recruitment role does not include this", page.text)
+
+    def tables(self):
         conn = sqlite3.connect(config.DB_PATH)
         names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         conn.close()
         return names
 
-    def _columns(self, table):
+    def columns(self, table):
         conn = sqlite3.connect(config.DB_PATH)
-        columns = [row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)]
+        found = [row[1] for row in conn.execute("PRAGMA table_info(%s)" % table)]
         conn.close()
-        return columns
+        return found
 
-    def _count(self, table, where="", params=()):
+    def count(self, table):
         conn = sqlite3.connect(config.DB_PATH)
-        sql = "SELECT COUNT(*) FROM " + table
-        if where:
-            sql += " WHERE " + where
         try:
-            count = conn.execute(sql, params).fetchone()[0]
+            found = conn.execute("SELECT COUNT(*) FROM " + table).fetchone()[0]
         except sqlite3.OperationalError:
-            count = 0
+            found = 0
         conn.close()
-        return count
+        return found
+
+    def database_bytes(self):
+        blob = b""
+        for name in os.listdir(self.tmp):
+            with open(os.path.join(self.tmp, name), "rb") as handle:
+                blob += handle.read()
+        return blob
 
 
 if __name__ == "__main__":

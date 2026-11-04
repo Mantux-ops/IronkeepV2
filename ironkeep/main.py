@@ -476,6 +476,15 @@ async def save_settings(slug: str, request: Request):
     saved.pop("slug", None)
     saved["trial_roles"] = db.trial_role_ids(saved)
     saved.pop("trial_role", None)
+    if "companion_roles" not in body:
+        saved["companion_roles"] = db.companion_role_ids(guild.get("settings"))
+    else:
+        chosen = body.get("companion_roles")
+        if chosen is None:
+            chosen = []
+        if not isinstance(chosen, list) or any(not isinstance(item, str) or not item.strip() for item in chosen):
+            return JSONResponse({"error": "bad companion roles"}, status_code=400)
+        saved["companion_roles"] = [item.strip() for item in chosen]
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
