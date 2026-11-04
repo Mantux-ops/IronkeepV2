@@ -293,6 +293,15 @@ def init():
                 is_main INTEGER NOT NULL DEFAULT 0
             );
             CREATE INDEX IF NOT EXISTS characters_guild ON characters (guild_id);
+            CREATE TABLE IF NOT EXISTS attendance_reports (
+                id INTEGER PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                place TEXT NOT NULL,
+                started TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                people_json TEXT NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS attendance_guild ON attendance_reports (guild_id, id);
             """
         )
         conn.commit()
@@ -654,6 +663,47 @@ def set_raid_signup(guild_id, raid_id, user_id, name, seat):
             )
         conn.commit()
         conn.close()
+
+
+def add_attendance(guild_id, item):
+    if not config.DB_PATH:
+        return
+    guild_id = str(guild_id)
+    with _LOCK:
+        conn = connect()
+        conn.execute(
+            """INSERT INTO attendance_reports (guild_id, place, started, received_at, people_json)
+               VALUES (?, ?, ?, ?, ?)""",
+            (guild_id, item["place"], item["started"], item["received_at"], json.dumps(item["people"])),
+        )
+        conn.execute(
+            """DELETE FROM attendance_reports WHERE guild_id = ? AND id NOT IN (
+                   SELECT id FROM attendance_reports WHERE guild_id = ? ORDER BY id DESC LIMIT 20
+               )""",
+            (guild_id, guild_id),
+        )
+        conn.commit()
+        conn.close()
+
+
+def latest_attendance(guild_id):
+    if not config.DB_PATH:
+        return None
+    conn = connect()
+    row = conn.execute(
+        """SELECT place, started, received_at, people_json FROM attendance_reports
+           WHERE guild_id = ? ORDER BY id DESC LIMIT 1""",
+        (str(guild_id),),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return {
+        "place": row["place"],
+        "started": row["started"],
+        "received_at": row["received_at"],
+        "people": json.loads(row["people_json"]),
+    }
 
 
 def _character_from_row(row):

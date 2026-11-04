@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, discord_api, roster, wow
+from . import attendance, config, db, discord_api, roster, wow
 from . import mock_data as data
 from pathlib import Path
 
@@ -767,15 +767,66 @@ def raids(slug: str, request: Request):
     blocked = deny_unless(request, guild, "trials")
     if blocked:
         return blocked
+    people = raid_people(guild)
+    signups = raid_signups(guild)
+    stored = attendance.latest(guild)
+    report = (
+        attendance.present(stored, _presented_characters(guild), people, FOREVER_RAIDS, signups, guild.get("settings"))
+        if stored
+        else None
+    )
     return render(
         request,
         "raids.html",
         guild=guild,
         nav="raids",
         raids=FOREVER_RAIDS,
-        signups=raid_signups(guild),
-        people=raid_people(guild),
+        signups=signups,
+        people=people,
+        report=report,
+        companion_key=attendance.token_for(guild),
     )
+
+
+def _guild_by_slug(slug):
+    if config.live():
+        return db.guild_by_slug(slug)
+    return data.guild_by_slug(slug)
+
+
+@app.post("/api/{slug}/attendance")
+async def receive_attendance(slug: str, request: Request):
+    """The companion posts the Copy list here. The key is the only login it has."""
+    guild = _guild_by_slug(slug)
+    if guild is None:
+        return JSONResponse({"error": "Unknown guild."}, status_code=404)
+    header = request.headers.get("authorization", "")
+    if len(header) < 7 or header[:7].lower() != "bearer ":
+        return JSONResponse({"error": "Unknown companion key."}, status_code=401)
+    if not attendance.token_matches(guild, header[7:].strip()):
+        return JSONResponse({"error": "Unknown companion key."}, status_code=401)
+    raw = await request.body()
+    if len(raw) > attendance.MAX_BYTES:
+        return JSONResponse({"error": "This report is too large."}, status_code=413)
+    try:
+        report = attendance.parse_text(raw.decode("utf-8"))
+    except (UnicodeDecodeError, attendance.ReportError) as error:
+        message = error.args[0] if isinstance(error, attendance.ReportError) else "This report could not be read."
+        return JSONResponse({"error": message}, status_code=400)
+    stored = attendance.store(guild, report)
+    return {"ok": True, "place": stored["place"], "people": len(stored["people"])}
+
+
+@app.post("/api/{slug}/attendance/token")
+def rotate_attendance_token(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    blocked = deny_unless(request, guild, "trials")
+    if blocked:
+        return blocked
+    attendance.token_for(guild, rotate=True)
+    return RedirectResponse(f"/{slug}/raids", status_code=303)
 
 
 @app.post("/api/{slug}/raids/{raid_id}")
