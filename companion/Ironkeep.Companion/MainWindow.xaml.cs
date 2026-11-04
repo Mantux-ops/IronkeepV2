@@ -46,6 +46,11 @@ namespace Ironkeep.Companion
             RetryButton.Visibility = _model.ShowRetry ? Visibility.Visible : Visibility.Collapsed;
             bool showGuilds = !_session.LoginBusy && _session.Config.AuthMode == CompanionConfig.ModeDiscord && GuildBox.Items.Count > 0;
             GuildBox.Visibility = showGuilds ? Visibility.Visible : Visibility.Collapsed;
+            bool pair = DisconnectButton.Visibility == Visibility.Visible && RetryButton.Visibility == Visibility.Visible;
+            System.Windows.Controls.Grid.SetColumn(DisconnectButton, 0);
+            System.Windows.Controls.Grid.SetColumnSpan(DisconnectButton, pair ? 1 : 3);
+            System.Windows.Controls.Grid.SetColumn(RetryButton, pair ? 2 : 0);
+            System.Windows.Controls.Grid.SetColumnSpan(RetryButton, pair ? 1 : 3);
         }
 
         void FillGuilds()

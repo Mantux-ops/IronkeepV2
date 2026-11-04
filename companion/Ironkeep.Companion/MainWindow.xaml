@@ -3,12 +3,12 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Ironkeep Companion"
         Icon="/Assets/logo.png"
-        Width="460" Height="760"
+        Width="460" Height="800"
         MinWidth="420" MinHeight="640"
         Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize">
-  <Border Background="{StaticResource BgBrush}" Padding="20">
+  <Border Background="{StaticResource BgBrush}" Padding="16,14">
   <DockPanel>
     <Grid DockPanel.Dock="Top">
       <Grid.ColumnDefinitions>
@@ -27,7 +27,7 @@
       </StackPanel>
     </Grid>
 
-    <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+    <StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0">
       <Button Content="Sync now" Style="{StaticResource AccentButton}" HorizontalAlignment="Stretch" Click="SyncClick" AutomationProperties.Name="Sync now"/>
       <UniformGrid Columns="3" Margin="0,8,0,0">
         <Button Content="Website" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="WebClick" AutomationProperties.Name="Open website"/>
@@ -38,7 +38,7 @@
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
-        <Border Style="{StaticResource Card}">
+        <Border Style="{StaticResource Card}" Margin="0,0,0,10">
           <StackPanel>
             <TextBlock Text="Discord" Style="{StaticResource CardTitle}"/>
             <TextBlock Text="{Binding CardDetail}" Style="{StaticResource CardDesc}"/>
@@ -57,7 +57,7 @@
           </StackPanel>
         </Border>
 
-        <Border Style="{StaticResource StatusBanner}">
+        <Border Style="{StaticResource StatusBanner}" Margin="0,8,0,10">
           <StackPanel>
             <StackPanel Orientation="Horizontal">
               <Ellipse Style="{StaticResource StatusDot}"/>
