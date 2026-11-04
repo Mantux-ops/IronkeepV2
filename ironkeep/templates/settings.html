@@ -66,7 +66,7 @@
       </select>
       {% endcall %}
 
-      {% call setting("Trial length", "Counted from the moment the trial role is given. Changing it only affects new trials.") %}
+      {% call setting("Trial length", "Counted from the moment a trial role is given. Changing it only affects new trials.") %}
       <span class="number-input"><input class="input" type="number" name="trial_days" min="1" max="120" value="{{ guild.settings.trial_days }}"> days</span>
       {% endcall %}
 
@@ -105,7 +105,7 @@
         <span><strong>Recruiters fill it in</strong><span class="muted small">Every trial starts without a name until a recruiter links one.</span></span></label>
       {% endcall %}
 
-      {% call setting("Guild check", "What happens when someone has the trial role but isn't in the guild in-game. Ironkeep waits one day after the trial starts, because Albion updates guild lists about once a day. It never removes roles by itself.") %}
+      {% call setting("Guild check", "What happens when someone has a trial role but isn't in the guild in-game. Ironkeep waits one day after the trial starts, because Albion updates guild lists about once a day. It never removes roles by itself.") %}
       <select class="input select" name="albion.guild_check">
         <option value="dashboard" {% if albion.guild_check == "dashboard" %}selected{% endif %}>Label on the dashboard</option>
         <option value="dashboard_and_channel" {% if albion.guild_check == "dashboard_and_channel" %}selected{% endif %}>Label on the dashboard and a note in the recruiter channel</option>
@@ -130,8 +130,8 @@
       <div class="picker" data-picker="recruitment_roles" data-kind="role" data-multi></div>
       {% endcall %}
 
-      {% call setting("Trial role", "Ironkeep starts a trial the moment this role is given.") %}
-      <div class="picker" data-picker="trial_role" data-kind="role"></div>
+      {% call setting("Trial roles", "Ironkeep starts a trial the moment any of these roles is given. Someone who already has one trial role does not start a second trial when they receive another.") %}
+      <div class="picker" data-picker="trial_roles" data-kind="role" data-multi></div>
       {% endcall %}
 
       {% call setting("Content roles", "Having at least one of these counts as having a content role, e.g. ZvZ, Gathering or Roads.") %}

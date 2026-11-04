@@ -71,7 +71,7 @@ def default_settings():
         "trial_days": 14,
         "reminder_day": 7,
         "recruitment_roles": [],
-        "trial_role": None,
+        "trial_roles": [],
         "content_roles": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
@@ -89,10 +89,19 @@ def default_settings():
     }
 
 
+def trial_role_ids(settings):
+    settings = settings or {}
+    chosen = settings.get("trial_roles")
+    if not isinstance(chosen, list) or not chosen:
+        legacy = settings.get("trial_role")
+        chosen = legacy if isinstance(legacy, list) else ([legacy] if legacy else [])
+    return [str(role_id) for role_id in chosen if role_id]
+
+
 def setup_complete(settings):
     channels = settings.get("channels") or {}
     return bool(
-        settings.get("trial_role")
+        trial_role_ids(settings)
         and settings.get("recruitment_roles")
         and channels.get("perms")
         and channels.get("trial_info")
@@ -196,6 +205,8 @@ def _loads(value, fallback):
 
 def _guild_from_row(row, trials=None):
     settings = _loads(row["settings_json"], default_settings())
+    settings["trial_roles"] = trial_role_ids(settings)
+    settings.pop("trial_role", None)
     return {
         "id": row["id"],
         "slug": row["slug"],

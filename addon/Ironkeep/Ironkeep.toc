@@ -1,0 +1,11 @@
+## Interface: 16001
+## Title: Ironkeep
+## Notes: Raid and party list for Ironkeep. WoW: Forever only.
+## Author: Ironkeep
+## Version: 0.1.0
+## SavedVariables: IronkeepDB
+
+Bindings.xml
+Core.lua
+Group.lua
+Window.lua
