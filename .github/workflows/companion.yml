@@ -156,16 +156,16 @@ jobs:
             while ((Get-Date) -lt $deadline) {
               if ($proc.HasExited) { break }
               if (Test-Path $log) {
-                $text = Get-Content $log -Raw
-                if ($text -match '(?m) ready$') { $ready = $true; break }
+                $lines = @(Get-Content $log)
+                if ($lines | Where-Object { $_ -match ' ready$' }) { $ready = $true; break }
               }
               Start-Sleep -Milliseconds 400
             }
-            $shown = ''
-            if (Test-Path $log) { $shown = Get-Content $log -Raw; Write-Output $shown }
+            $lines = @()
+            if (Test-Path $log) { $lines = @(Get-Content $log); Write-Output $lines }
             if ($proc.HasExited) { Write-Error "The companion exited with $($proc.ExitCode) before it was ready."; exit 1 }
             if (-not $ready) { Write-Error 'The companion did not finish startup.'; exit 1 }
-            if ($shown -match '(?m) fatal( |$)') { Write-Error 'Startup recorded a fatal exception.'; exit 1 }
+            if ($lines | Where-Object { $_ -match ' fatal( |$)' }) { Write-Error 'Startup recorded a fatal exception.'; exit 1 }
             if (-not (Test-Path $queue)) { Write-Error 'A first launch did not create the queue.'; exit 1 }
             if ($hadQueue) { Write-Output 'The queue file was already present.' } else { Write-Output 'First launch created the queue.' }
           } finally {
