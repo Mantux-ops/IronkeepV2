@@ -34,7 +34,7 @@
         <Border Style="{StaticResource Card}">
           <StackPanel>
             <TextBlock Text="Connection" Style="{StaticResource CardTitle}"/>
-            <TextBlock Text="Discord sign-in is not in this build. The guild slug and legacy key stay here." Style="{StaticResource CardDesc}"/>
+            <TextBlock Text="Discord sign-in is on the main window. The legacy key is a separate fallback and is not used when a Discord session fails." Style="{StaticResource CardDesc}"/>
             <TextBlock x:Name="KeyNote" Style="{StaticResource FieldHint}"/>
             <TextBlock Text="Site address" Style="{StaticResource FieldLabel}"/>
             <TextBox x:Name="AddressBox"/>
@@ -43,7 +43,10 @@
             <TextBlock Text="Legacy key" Style="{StaticResource FieldLabel}"/>
             <PasswordBox x:Name="KeyBox"/>
             <TextBlock Style="{StaticResource FieldHint}" Text="Leave the key blank to keep the saved one. It is not shown, and it is not written in the clear."/>
-            <Button Content="Remove saved key" HorizontalAlignment="Left" Style="{StaticResource GhostButton}" Margin="0,10,0,0" Click="ClearKeyClick" AutomationProperties.Name="Remove saved key"/>
+            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+              <Button Content="Remove saved key" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="ClearKeyClick" AutomationProperties.Name="Remove saved key"/>
+              <Button Content="Use legacy key" Style="{StaticResource GhostButton}" Click="UseLegacyClick" AutomationProperties.Name="Use legacy guild key"/>
+            </StackPanel>
           </StackPanel>
         </Border>
 

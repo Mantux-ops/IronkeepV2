@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="Ironkeep Companion"
         Icon="/Assets/logo.png"
-        Width="460" Height="620"
-        MinWidth="420" MinHeight="560"
+        Width="460" Height="760"
+        MinWidth="420" MinHeight="640"
         Background="{StaticResource BgBrush}"
         WindowStartupLocation="CenterScreen"
         ResizeMode="CanResize">
@@ -38,6 +38,25 @@
 
     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Text="Discord" Style="{StaticResource CardTitle}"/>
+            <TextBlock Text="{Binding CardDetail}" Style="{StaticResource CardDesc}"/>
+            <ComboBox x:Name="GuildBox" Margin="0,10,0,0" MinHeight="36" SelectionChanged="GuildChanged" AutomationProperties.Name="Guild"/>
+            <Button x:Name="ConnectButton" Content="Connect with Discord" Style="{StaticResource AccentButton}" HorizontalAlignment="Stretch" Margin="0,12,0,0" Click="ConnectClick" AutomationProperties.Name="Connect with Discord"/>
+            <Button x:Name="CancelButton" Content="Cancel" Style="{StaticResource GhostButton}" HorizontalAlignment="Stretch" Margin="0,8,0,0" Click="CancelClick" AutomationProperties.Name="Cancel connection"/>
+            <Grid Margin="0,8,0,0">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="8"/>
+                <ColumnDefinition Width="*"/>
+              </Grid.ColumnDefinitions>
+              <Button x:Name="DisconnectButton" Grid.Column="0" Content="Disconnect" Style="{StaticResource GhostButton}" Click="DisconnectClick" AutomationProperties.Name="Disconnect"/>
+              <Button x:Name="RetryButton" Grid.Column="2" Content="Retry" Style="{StaticResource GhostButton}" Click="RetryClick" AutomationProperties.Name="Retry connection"/>
+            </Grid>
+          </StackPanel>
+        </Border>
+
         <Border Style="{StaticResource StatusBanner}">
           <StackPanel>
             <StackPanel Orientation="Horizontal">

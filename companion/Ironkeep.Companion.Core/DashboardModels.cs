@@ -42,8 +42,37 @@ namespace Ironkeep.Companion
         public string Retry { get { return _retry; } }
         public string Failed { get { return _failed; } }
         public string LastError { get { return _lastError; } }
+        public bool ShowConnect;
+        public bool ShowCancel;
+        public bool ShowDisconnect;
+        public bool ShowRetry;
+        string _cardDetail = "";
+        public string CardDetail { get { return _cardDetail; } }
+
+        public void ShowProgress(CompanionAuthState state)
+        {
+            string label = CompanionProtocol.Label(state);
+            Set(ref _headline, label, "Headline");
+            Set(ref _connection, label, "Connection");
+            Set(ref _syncState, label, "SyncState");
+            string detail = state == CompanionAuthState.AwaitingApproval
+                ? "Approve the connection in your browser. This does not change your website login."
+                : "Starting a local callback on this computer.";
+            Set(ref _detail, detail, "Detail");
+            Set(ref _level, "Warn", "Level");
+            Set(ref _cardDetail, detail, "CardDetail");
+            ShowConnect = false;
+            ShowCancel = true;
+            ShowDisconnect = false;
+            ShowRetry = false;
+        }
 
         public void Apply(SyncSnapshot snap, CompanionConfig config, int savedFiles)
+        {
+            Apply(snap, config, savedFiles, "");
+        }
+
+        public void Apply(SyncSnapshot snap, CompanionConfig config, int savedFiles, string notice)
         {
             if (snap == null) snap = new SyncSnapshot();
             if (config == null) config = new CompanionConfig();
@@ -63,6 +92,11 @@ namespace Ironkeep.Companion
             Set(ref _failed, snap.FailedPermanent.ToString(), "Failed");
             Set(ref _lastUpload, snap.LastConfirmedAt == null || snap.LastConfirmedAt.Length == 0 ? "None yet" : snap.LastConfirmedAt, "LastUpload");
             Set(ref _lastError, snap.LastError == null || snap.LastError.Length == 0 ? "None" : snap.LastError, "LastError");
+            if (config.AuthMode == CompanionConfig.ModeDiscord)
+            {
+                ApplyDiscord(config, notice);
+                return;
+            }
             string state;
             string level;
             bool waitingForGuild = snap.WaitingForGuild || (config.Slug ?? "").Trim().Length == 0;
@@ -73,18 +107,104 @@ namespace Ironkeep.Companion
             else if (snap.FailedPermanent > 0) { state = "A report was rejected"; level = "Bad"; }
             else if (snap.LastConfirmedAt != null && snap.LastConfirmedAt.Length > 0) { state = "Up to date"; level = "Ok"; }
             else { state = "Idle"; level = "Idle"; }
-            bool authenticated = !config.TokenUnreadable && (config.Token ?? "").Length > 0;
+            bool legacy = config.IsLegacy && !config.TokenUnreadable;
             if (config.TokenUnreadable) level = "Bad";
-            else if (!authenticated && level == "Ok") level = "Idle";
+            else if (!legacy && level == "Ok") level = "Idle";
             Set(ref _syncState, state, "SyncState");
             string connection;
             if (config.TokenUnreadable) connection = "Key unreadable";
-            else if (authenticated) connection = "Legacy channel";
+            else if (legacy) connection = "Legacy channel";
             else connection = "Not signed in";
             Set(ref _connection, connection, "Connection");
-            Set(ref _headline, authenticated ? state : connection, "Headline");
-            Set(ref _detail, authenticated ? connection : state, "Detail");
+            string headline = legacy ? state : connection;
+            string detail = legacy ? connection : state;
+            if (!legacy && notice != null && notice.Length > 0)
+            {
+                headline = "Connection failed";
+                detail = notice;
+                level = "Bad";
+            }
+            Set(ref _headline, headline, "Headline");
+            Set(ref _detail, detail, "Detail");
             Set(ref _level, level, "Level");
+            ShowConnect = true;
+            ShowCancel = false;
+            ShowDisconnect = false;
+            ShowRetry = notice != null && notice.Length > 0;
+            string card = legacy
+                ? "Uploads use the legacy guild key. Discord sign-in does not switch to it on failure."
+                : (notice != null && notice.Length > 0 ? notice : "Connect with Discord. The website login stays in the browser.");
+            if (config.TokenUnreadable) card = "The saved key could not be read. Enter it again in Settings.";
+            Set(ref _cardDetail, card, "CardDetail");
+        }
+
+        void ApplyDiscord(CompanionConfig config, string notice)
+        {
+            string name = (config.GuildName ?? "").Length > 0 ? config.GuildName : (config.Slug ?? "");
+            CompanionAuthState state = CompanionAuthState.NotConnected;
+            string detail = "Connect with Discord. The website login stays in the browser.";
+            string level = "Idle";
+            if (config.SessionUnreadable)
+            {
+                state = CompanionAuthState.ConnectionFailed;
+                detail = "The saved Discord session could not be read.";
+                level = "Bad";
+            }
+            else if (notice != null && notice.Length > 0)
+            {
+                state = CompanionAuthState.ConnectionFailed;
+                detail = notice;
+                level = "Bad";
+            }
+            else if (config.SessionStatus == CompanionConfig.StatusExpired)
+            {
+                state = CompanionAuthState.SessionExpired;
+                detail = "Sign in with Discord again. The legacy key is not used.";
+                level = "Bad";
+            }
+            else if (config.SessionStatus == CompanionConfig.StatusDenied)
+            {
+                state = CompanionAuthState.PermissionDenied;
+                detail = config.SessionDetail != null && config.SessionDetail.Length > 0 ? config.SessionDetail : "This account can no longer upload for that guild.";
+                level = "Bad";
+            }
+            else if (config.SessionStatus == CompanionConfig.StatusFailed)
+            {
+                state = CompanionAuthState.ConnectionFailed;
+                detail = config.SessionDetail != null && config.SessionDetail.Length > 0 ? config.SessionDetail : "The connection did not complete.";
+                level = "Bad";
+            }
+            else if ((config.RefreshToken ?? "").Length == 0)
+            {
+                state = CompanionAuthState.NotConnected;
+                detail = "Connect with Discord. The website login stays in the browser.";
+                level = "Idle";
+            }
+            else if (config.SessionStatus == CompanionConfig.StatusChoose || (config.Slug ?? "").Trim().Length == 0)
+            {
+                state = CompanionAuthState.GuildSelectionRequired;
+                detail = "Choose a guild returned by Ironkeep.";
+                level = "Warn";
+            }
+            else
+            {
+                state = CompanionAuthState.Ready;
+                detail = "Uploads go to " + name + " only.";
+                level = "Ok";
+            }
+            string label = CompanionProtocol.Label(state);
+            Set(ref _syncState, label, "SyncState");
+            Set(ref _connection, "Discord", "Connection");
+            Set(ref _headline, label, "Headline");
+            Set(ref _detail, detail, "Detail");
+            Set(ref _level, level, "Level");
+            Set(ref _auth, "Discord session", "Auth");
+            if (name.Length > 0) Set(ref _guild, name, "Guild");
+            ShowConnect = state != CompanionAuthState.Ready;
+            ShowCancel = false;
+            ShowDisconnect = true;
+            ShowRetry = state == CompanionAuthState.SessionExpired || state == CompanionAuthState.PermissionDenied || state == CompanionAuthState.ConnectionFailed || state == CompanionAuthState.GuildSelectionRequired;
+            Set(ref _cardDetail, detail, "CardDetail");
         }
 
         void Set(ref string field, string value, string name)
