@@ -137,7 +137,7 @@ def guild_member(access_token, guild_id):
     return _api("GET", f"/users/@me/guilds/{guild_id}/member", token=access_token)
 
 
-def bot_member(guild_id, user_id):
+def member_as_bot(guild_id, user_id):
     """Current guild member, using the bot token. The Companion does not keep the user's Discord token."""
     return _api("GET", f"/guilds/{guild_id}/members/{user_id}", token=config.BOT_TOKEN, bot=True)
 

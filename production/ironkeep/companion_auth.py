@@ -181,7 +181,7 @@ class LookupFailed(Exception):
 
 def _member_roles(guild_id, user_id):
     try:
-        member = discord_api.bot_member(guild_id, user_id)
+        member = discord_api.member_as_bot(guild_id, user_id)
     except discord_api.DiscordError as error:
         if error.status in (401, 403, 404):
             return set()
@@ -739,6 +739,8 @@ def _refresh(body):
     if not allowed:
         _end_family(family_id)
         return _json_error("You cannot connect the Companion for that guild.", 403)
+    now = datetime.now(timezone.utc)
+    stamp = _stamp(now)
     with _LOCK:
         conn = db.connect()
         started = False
@@ -751,6 +753,21 @@ def _refresh(body):
                 (stamp, _hash(token)),
             )
             if rotated.rowcount != 1:
+                current = conn.execute(
+                    "SELECT * FROM companion_credentials WHERE token_hash = ? AND kind = 'refresh'",
+                    (_hash(token),),
+                ).fetchone()
+                if current is not None and secrets.compare_digest(str(current["token_hash"]), _hash(token)):
+                    if current["revoked_at"]:
+                        _revoke_family(conn, current["family_id"], stamp)
+                        conn.commit()
+                        return _json_error("Companion login is required.", 401)
+                    if current["rotated_at"]:
+                        age = (now - _parse_stamp(current["rotated_at"])).total_seconds()
+                        if age > REUSE_GRACE_SECONDS:
+                            _revoke_family(conn, current["family_id"], stamp)
+                            conn.commit()
+                            return _json_error("Companion login is required.", 401)
                 conn.rollback()
                 return _json_error("Companion login is required.", 401)
             access_pair = _issue(conn, material, stamp, now, family_id)

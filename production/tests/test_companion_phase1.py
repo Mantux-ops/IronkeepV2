@@ -7,13 +7,17 @@ Run from the repository root:
 The database is a temporary file. Discord role lookups are patched.
 """
 
+import ast
 import http.cookies
+import inspect
 import json
 import os
 import shutil
 import sqlite3
 import sys
 import tempfile
+import threading
+import time
 import unittest
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -29,7 +33,7 @@ os.environ.pop("IRONKEEP_COMPANION_AUTH", None)
 
 from fastapi.testclient import TestClient
 
-from ironkeep import config, db, discord_api, main
+from ironkeep import companion_auth, config, db, discord_api, main
 from ironkeep.companion_auth import REUSE_GRACE_SECONDS, pkce_s256
 
 VERIFIER = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
@@ -63,7 +67,7 @@ class Phase1Tests(unittest.TestCase):
         self.client = TestClient(main.app)
         self.member_roles = {}
 
-        def bot_member(guild_id, user_id):
+        def member_as_bot(guild_id, user_id):
             found = self.member_roles.get((str(user_id), str(guild_id)))
             if found is None:
                 raise discord_api.DiscordError(404, {})
@@ -71,7 +75,7 @@ class Phase1Tests(unittest.TestCase):
                 raise discord_api.DiscordError(503, {})
             return {"roles": list(found)}
 
-        self._member = patch("ironkeep.discord_api.bot_member", side_effect=bot_member)
+        self._member = patch("ironkeep.discord_api.member_as_bot", side_effect=member_as_bot)
         self._member.start()
         self.addCleanup(self._member.stop)
         self.addCleanup(lambda: shutil.rmtree(self.tmp, ignore_errors=True))
@@ -391,3 +395,65 @@ class Phase1Tests(unittest.TestCase):
         self.assertEqual(kept["companion_roles"], ["8"])
         self.assertEqual(kept["wow"]["poster_roles"], ["5"])
         self.assertEqual(kept["tickets"]["language"], "en")
+
+    def test_overlapping_refresh_rotates_once_after_discord_returns(self):
+        self.enable()
+        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        self.session()
+        code, _state = self.allow("keep")
+        first = self.exchange(code)
+        arrived = threading.Barrier(2)
+        delay = REUSE_GRACE_SECONDS + 1
+
+        def slow(guild_id, user_id):
+            arrived.wait(timeout=5)
+            time.sleep(delay)
+            return {"roles": ["77"]}
+
+        results = []
+
+        def refresh():
+            results.append(
+                companion_auth._refresh({"grant_type": "refresh_token", "refresh_token": first["refresh_token"]})
+            )
+
+        with patch("ironkeep.discord_api.member_as_bot", side_effect=slow):
+            workers = [threading.Thread(target=refresh) for _ in range(2)]
+            for worker in workers:
+                worker.start()
+            for worker in workers:
+                worker.join(timeout=delay + 5)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(sorted(result.status_code for result in results), [200, 401])
+        winner = next(result for result in results if result.status_code == 200)
+        issued = json.loads(winner.body)
+        conn = sqlite3.connect(self.db_path)
+        rotated_at = conn.execute(
+            "SELECT rotated_at FROM companion_credentials WHERE kind = 'refresh' AND rotated_at IS NOT NULL"
+        ).fetchone()[0]
+        conn.close()
+        rotated = datetime.strptime(rotated_at, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+        self.assertLess((datetime.now(timezone.utc) - rotated).total_seconds(), REUSE_GRACE_SECONDS)
+        reused = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": first["refresh_token"]},
+        )
+        self.assertEqual(reused.status_code, 401)
+        follow = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": issued["refresh_token"]},
+        )
+        self.assertEqual(follow.status_code, 200, follow.text)
+
+
+class RoleLookupDefinitions(unittest.TestCase):
+    def test_live_role_lookups_keep_separate_names(self):
+        tree = ast.parse(Path(discord_api.__file__).read_text(encoding="utf-8"))
+        defined = [node.name for node in tree.body if isinstance(node, ast.FunctionDef)]
+        self.assertEqual(defined.count("bot_member"), 1)
+        self.assertEqual(defined.count("member_as_bot"), 1)
+        self.assertEqual(list(inspect.signature(discord_api.bot_member).parameters), ["guild_id"])
+        self.assertEqual(list(inspect.signature(discord_api.member_as_bot).parameters), ["guild_id", "user_id"])
+        self.assertIn("member_as_bot", companion_auth._member_roles.__code__.co_names)
+        self.assertNotIn("bot_member", companion_auth._member_roles.__code__.co_names)
