@@ -1,0 +1,173 @@
+diff -ruN a/config.py b/config.py
+--- a/config.py	2026-11-05 17:34:24.266651889 +0000
++++ b/config.py	2026-11-05 17:34:24.274651894 +0000
+@@ -51,3 +51,11 @@
+         "https://discord.com/oauth2/authorize"
+         f"?client_id={CLIENT_ID}&permissions={INVITE_PERMISSIONS}&scope=bot%20applications.commands"
+     )
++
++
++def companion_auth_enabled() -> bool:
++    """Desktop Companion login stays off unless this process opts in.
++
++    Website login does not read this flag.
++    """
++    return os.environ.get("IRONKEEP_COMPANION_AUTH", "").strip().lower() in {"1", "true", "yes"}
+diff -ruN a/db.py b/db.py
+--- a/db.py	2026-11-05 17:34:24.266651889 +0000
++++ b/db.py	2026-11-05 17:34:24.274651894 +0000
+@@ -79,6 +79,7 @@
+         "payout_view_roles": [],
+         "lootsplit_access_roles": [],
+         "lootsplit_access_users": [],
++        "companion_roles": [],
+         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
+         "messages": messages,
+         "accept": {"add": [], "remove": []},
+@@ -95,6 +96,14 @@
+     }
+ 
+ 
++def companion_role_ids(settings):
++    """Roles that may connect the Companion. Missing means none.
++
++    Recruitment roles and World of Warcraft poster roles are not read here.
++    """
++    return _role_id_list(settings, "companion_roles")
++
++
+ def trial_role_ids(settings):
+     settings = settings or {}
+     chosen = settings.get("trial_roles")
+@@ -719,6 +728,7 @@
+     settings = _loads(row["settings_json"], default_settings())
+     settings["trial_roles"] = trial_role_ids(settings)
+     settings.pop("trial_role", None)
++    settings["companion_roles"] = companion_role_ids(settings)
+     game = guild_game(settings)
+     if game:
+         settings["game"] = game
+@@ -1480,6 +1490,7 @@
+     event_channel=None,
+     log_channel=None,
+     tickets=None,
++    companion_roles=None,
+ ):
+     with _LOCK:
+         conn = connect()
+@@ -1597,6 +1608,8 @@
+             settings["tickets"] = tickets
+         if timezone:
+             settings["timezone"] = timezone
++        if companion_roles is not None:
++            settings["companion_roles"] = _role_id_list({"companion_roles": list(companion_roles)}, "companion_roles")
+         conn.execute("UPDATE guilds SET settings_json = ? WHERE slug = ?", (json.dumps(settings), slug))
+         conn.commit()
+         conn.close()
+diff -ruN a/discord_api.py b/discord_api.py
+--- a/discord_api.py	2026-11-05 17:34:24.266651889 +0000
++++ b/discord_api.py	2026-11-05 17:34:24.274651894 +0000
+@@ -137,6 +137,11 @@
+     return _api("GET", f"/users/@me/guilds/{guild_id}/member", token=access_token)
+ 
+ 
++def member_as_bot(guild_id, user_id):
++    """Current guild member, using the bot token. The Companion does not keep the user's Discord token."""
++    return _api("GET", f"/guilds/{guild_id}/members/{user_id}", token=config.BOT_TOKEN, bot=True)
++
++
+ def list_roles(guild_id):
+     return _api("GET", f"/guilds/{guild_id}/roles", token=config.BOT_TOKEN, bot=True)
+ 
+diff -ruN a/main.py b/main.py
+--- a/main.py	2026-11-05 17:34:24.266651889 +0000
++++ b/main.py	2026-11-05 17:34:24.278651897 +0000
+@@ -12,7 +12,7 @@
+ from fastapi.staticfiles import StaticFiles
+ from fastapi.templating import Jinja2Templates
+ 
+-from . import config, db, discord_api, forever_companion, tickets, warcraft_forever, wow
++from . import companion_auth, config, db, discord_api, forever_companion, tickets, warcraft_forever, wow
+ from . import mock_data as data
+ from pathlib import Path
+ 
+@@ -1169,6 +1169,15 @@
+     saved["payout_view_roles"] = db.payout_view_role_ids(saved)
+     saved["lootsplit_access_roles"] = db.lootsplit_access_role_ids(saved)
+     saved["lootsplit_access_users"] = db.lootsplit_access_user_ids(saved)
++    if "companion_roles" not in body:
++        saved["companion_roles"] = db.companion_role_ids(guild.get("settings"))
++    else:
++        chosen_companion = body.get("companion_roles")
++        if chosen_companion is None:
++            chosen_companion = []
++        if not isinstance(chosen_companion, list) or any(not isinstance(item, str) or not item.strip() for item in chosen_companion):
++            return JSONResponse({"error": "bad companion roles"}, status_code=400)
++        saved["companion_roles"] = [item.strip() for item in chosen_companion]
+     saved["game"] = "albion"
+     db.save_settings(slug, saved, new_slug)
+     target = new_slug or slug
+@@ -1408,10 +1417,11 @@
+ 
+ 
+ def _wow_setup_page(request, guild, *, setup_mode):
+-    code = request.query_params.get("error") or ""
+-    return render(
++        code = request.query_params.get("error") or ""
++        return render(
+         request,
+         "wow_setup.html",
++        companion_roles=db.companion_role_ids(guild.get("settings")),
+         guild=guild,
+         nav="settings",
+         setup_mode=setup_mode,
+@@ -1590,6 +1600,7 @@
+         event_channel=event_channel,
+         log_channel=log_channel,
+         tickets=tickets_payload,
++        companion_roles=None if "companion_roles" not in form else [role_id for role_id in (form.get("companion_roles") or []) if role_id in allowed_roles],
+     )
+     fresh = db.guild_by_slug(slug)
+     if not setup_mode and fresh and db.wow_settings(fresh["settings"]).get("temp_voice"):
+@@ -2389,3 +2400,15 @@
+     if problem:
+         return RedirectResponse(f"{target}?error={problem}", status_code=303)
+     return RedirectResponse(target, status_code=303)
++
++
++@app.middleware("http")
++async def _companion_routes_stay_off(request: Request, call_next):
++    # Companion routes answer 404 until IRONKEEP_COMPANION_AUTH is set.
++    hidden = companion_auth.hidden(request)
++    if hidden is not None:
++        return hidden
++    return await call_next(request)
++
++
++app.include_router(companion_auth.router)
+diff -ruN a/static/js/settings.js b/static/js/settings.js
+--- a/static/js/settings.js	2026-11-05 17:34:24.270651891 +0000
++++ b/static/js/settings.js	2026-11-05 17:34:24.278651897 +0000
+@@ -22,6 +22,8 @@
+   else state.lootsplit_access_roles = state.lootsplit_access_roles.filter(Boolean).map(String);
+   if (!Array.isArray(state.lootsplit_access_users)) state.lootsplit_access_users = [];
+   else state.lootsplit_access_users = state.lootsplit_access_users.filter(Boolean).map(String);
++  if (!Array.isArray(state.companion_roles)) state.companion_roles = [];
++  else state.companion_roles = state.companion_roles.filter(Boolean).map(String);
+   if (state.messages.reminder && state.messages.reminder.delivery !== "dm") state.messages.reminder.delivery = "channel";
+   let saved = JSON.stringify(state);
+ 
+diff -ruN a/templates/settings.html b/templates/settings.html
+--- a/templates/settings.html	2026-11-05 17:34:24.266651889 +0000
++++ b/templates/settings.html	2026-11-05 17:34:24.278651897 +0000
+@@ -138,6 +138,10 @@
+       <div class="picker" data-picker="content_roles" data-kind="role" data-multi></div>
+       {% endcall %}
+ 
++      {% call setting("Companion upload roles", "Members with any of these roles may connect the desktop Companion for this guild. A recruitment role does not include this, and it does not open the dashboard. The Ironkeep superadmin can connect without one of these roles. Leave the list empty to allow only that superadmin.") %}
++      <div class="picker" data-picker="companion_roles" data-kind="role" data-multi></div>
++      {% endcall %}
++
+       {% call setting("Members page filters", "These roles become filters on the Members page, next to All. Someone with the role shows up under that filter, even if they also have another chosen role.") %}
+       <div class="picker" data-picker="member_filters" data-kind="role" data-multi></div>
+       {% endcall %}
