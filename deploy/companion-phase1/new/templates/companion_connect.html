@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Connect Companion · Ironkeep</title>
+</head>
+<body>
+  <main>
+    <h1>Connect the Companion</h1>
+    {% if error %}
+    <p>{{ error }}</p>
+    {% else %}
+    <p>This connects the desktop Companion for one guild. It does not change your website login. A recruitment role does not include this.</p>
+    {% if not guilds %}
+    <p>No guild has given you a Companion role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
+    {% else %}
+    <form method="post" action="/companion/connect">
+      <input type="hidden" name="state" value="{{ state }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      {% for guild in guilds %}
+      <label>
+        <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
+        <span>{{ guild.name }}</span>
+      </label>
+      {% endfor %}
+      <p>
+        <button type="submit" name="decision" value="allow">Connect</button>
+        <button type="submit" name="decision" value="deny">Cancel</button>
+      </p>
+    </form>
+    {% endif %}
+    {% endif %}
+  </main>
+</body>
+</html>
