@@ -1,0 +1,6 @@
+{# Paste this into the live wow_setup.html, next to the poster-role picker.
+   The current production template was not in the upload, so it is not replaced here.
+   The save handler already keeps every other WoW and Albion setting when this field is posted. #}
+{% call setting("Companion roles", "Members with any of these roles may connect the desktop Companion for this guild. A raid-poster role does not include this. The Ironkeep superadmin can connect without one of these roles. Leave the list empty to allow only that superadmin.") %}
+{{ role_picker("companion_roles", companion_roles) }}
+{% endcall %}
