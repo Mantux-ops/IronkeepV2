@@ -275,10 +275,145 @@ class Phase1Tests(unittest.TestCase):
     def test_superadmin_can_connect_when_the_role_list_is_empty(self):
         self.enable()
         self.guild("1", "keep", self.albion_settings([]))
+        self.member_roles[(config.SUPERADMIN_ID, "1")] = []
         self.session(config.SUPERADMIN_ID)
         code, _state = self.allow("keep")
         body = self.exchange(code)
         self.assertEqual(body["guild_slug"], "keep")
+
+    def credential_rows(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            return conn.execute("SELECT guild_slug, kind FROM companion_credentials").fetchall()
+        finally:
+            conn.close()
+
+    def test_missing_membership_role_and_lost_permission_never_issue_a_token(self):
+        self.enable()
+        self.guild("10", "derelict", self.albion_settings(["77"]))
+        self.guild("11", "chaos", self.albion_settings(["77"]))
+        self.guild("12", "herberg", self.albion_settings(["77"]))
+        self.guild("13", "ironkeep", self.albion_settings(["77"]))
+        for guild_id in ("11", "12", "13"):
+            self.member_roles[("100", guild_id)] = ["77"]
+        self.session()
+        page = self.client.get("/companion/connect", params=self.connect_query(), cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200)
+        self.assertNotIn('value="derelict"', page.text)
+        for slug in ("chaos", "herberg", "ironkeep"):
+            self.assertIn(f'value="{slug}"', page.text)
+        csrf = cookie_value(page, "ik_companion_csrf")
+        missing = self.client.post(
+            "/companion/connect",
+            data={"state": STATE, "csrf": csrf, "decision": "allow", "guild": "derelict"},
+            cookies={"ik_session": self.website, "ik_companion_csrf": csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(missing.status_code, 403)
+        self.assertNotIn("code=", missing.headers.get("location", ""))
+        self.member_roles[("100", "12")] = ["10"]
+        role_page = self.client.get(
+            "/companion/connect",
+            params=self.connect_query("state-value-missing-role"),
+            cookies={"ik_session": self.website},
+        )
+        self.assertNotIn('value="herberg"', role_page.text)
+        self.assertNotIn('value="derelict"', role_page.text)
+        self.assertIn('value="chaos"', role_page.text)
+        role_csrf = cookie_value(role_page, "ik_companion_csrf")
+        missing_role = self.client.post(
+            "/companion/connect",
+            data={"state": "state-value-missing-role", "csrf": role_csrf, "decision": "allow", "guild": "herberg"},
+            cookies={"ik_session": self.website, "ik_companion_csrf": role_csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(missing_role.status_code, 403)
+        self.assertEqual(self.credential_rows(), [])
+
+        self.member_roles[(config.SUPERADMIN_ID, "11")] = []
+        self.session(config.SUPERADMIN_ID)
+        admin_page = self.client.get(
+            "/companion/connect",
+            params=self.connect_query("state-value-admin-member"),
+            cookies={"ik_session": self.website},
+        )
+        self.assertEqual(admin_page.status_code, 200)
+        self.assertIn('value="chaos"', admin_page.text)
+        for slug in ("derelict", "herberg", "ironkeep"):
+            self.assertNotIn(f'value="{slug}"', admin_page.text)
+        admin_csrf = cookie_value(admin_page, "ik_companion_csrf")
+        admin_missing = self.client.post(
+            "/companion/connect",
+            data={"state": "state-value-admin-member", "csrf": admin_csrf, "decision": "allow", "guild": "derelict"},
+            cookies={"ik_session": self.website, "ik_companion_csrf": admin_csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(admin_missing.status_code, 403)
+
+        shown = self.client.get(
+            "/companion/connect",
+            params=self.connect_query("state-value-admin-recheck"),
+            cookies={"ik_session": self.website},
+        )
+        self.assertIn('value="chaos"', shown.text)
+        del self.member_roles[(config.SUPERADMIN_ID, "11")]
+        rechecked = self.client.post(
+            "/companion/connect",
+            data={"state": "state-value-admin-recheck", "csrf": cookie_value(shown, "ik_companion_csrf"), "decision": "allow", "guild": "chaos"},
+            cookies={"ik_session": self.website, "ik_companion_csrf": cookie_value(shown, "ik_companion_csrf")},
+            follow_redirects=False,
+        )
+        self.assertEqual(rechecked.status_code, 403)
+        self.assertEqual(self.credential_rows(), [])
+
+        self.member_roles[(config.SUPERADMIN_ID, "11")] = []
+        code, _state = self.allow("chaos", state="state-value-admin-exchange")
+        del self.member_roles[(config.SUPERADMIN_ID, "11")]
+        exchanged = self.client.post(
+            "/api/companion/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": VERIFIER,
+                "redirect_uri": LOOPBACK,
+            },
+        )
+        self.assertEqual(exchanged.status_code, 403)
+        self.assertNotIn("access_token", exchanged.text)
+        self.assertEqual(self.credential_rows(), [])
+
+        self.member_roles[("100", "11")] = ["77"]
+        self.session()
+        code, _state = self.allow("chaos", state="state-value-leave-guild")
+        body = self.exchange(code)
+        del self.member_roles[("100", "11")]
+        left = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(left.status_code, 403)
+        left_again = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(left_again.status_code, 401)
+        listed = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]})
+        self.assertEqual(listed.status_code, 401)
+
+        self.member_roles[("100", "11")] = ["77"]
+        code, _state = self.allow("chaos", state="state-value-lose-role")
+        body = self.exchange(code)
+        self.member_roles[("100", "11")] = ["10"]
+        lost = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(lost.status_code, 403)
+        lost_again = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(lost_again.status_code, 401)
 
     def test_refresh_rotates_and_reuse_revokes_the_family(self):
         self.enable()

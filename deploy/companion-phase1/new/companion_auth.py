@@ -19,9 +19,11 @@ Companion in the browser. That approval is a different authorization layer:
 Connect permission is ``companion_roles`` on the guild. It defaults to an empty
 list. Recruitment roles, the person who added the bot, and World of Warcraft
 poster roles do not grant this. The one administrator exception is the
-Ironkeep superadmin (``config.SUPERADMIN_ID``). Token refresh and guild
-lookup check the role again, through the bot's guild-member lookup, because
-the Companion does not keep the user's Discord token.
+Ironkeep superadmin (``config.SUPERADMIN_ID``), and only after Discord
+confirms that account is a member of the guild. A guild the account has not
+joined is not listed and cannot be approved. Token refresh and guild lookup
+repeat that check through the bot's guild-member lookup, because the
+Companion does not keep the user's Discord token.
 
 The routes stay missing unless ``IRONKEEP_COMPANION_AUTH`` is set. No
 deployment file sets it. Attendance upload is not part of this module.
@@ -180,32 +182,41 @@ class LookupFailed(Exception):
 
 
 def _member_roles(guild_id, user_id):
+    """Role ids when Discord confirms membership. None means it does not.
+
+    An empty set is a confirmed member who has no extra roles. HTTP 404 is not
+    that case: Discord uses it when the user is not in the guild.
+    """
     try:
         member = discord_api.member_as_bot(guild_id, user_id)
     except discord_api.DiscordError as error:
         if error.status in (401, 403, 404):
-            return set()
+            return None
         raise LookupFailed from error
-    return {str(role) for role in (member or {}).get("roles", [])}
+    if not isinstance(member, dict):
+        return None
+    return {str(role) for role in member.get("roles") or []}
 
 
 def connect_allowed(user_id, guild):
     """Whether this person may connect the Companion for this guild right now.
 
     True or False is a definite answer. None means Discord could not be reached.
-    The superadmin is the only exception to companion_roles.
+    The superadmin skips companion_roles only after membership is confirmed.
     """
     if guild is None or guild.get("approval") == "rejected":
+        return False
+    try:
+        roles = _member_roles(guild["id"], user_id)
+    except LookupFailed:
+        return None
+    if roles is None:
         return False
     if str(user_id) == str(config.SUPERADMIN_ID):
         return True
     wanted = set(db.companion_role_ids(guild.get("settings")))
     if not wanted:
         return False
-    try:
-        roles = _member_roles(guild["id"], user_id)
-    except LookupFailed:
-        return None
     return bool(wanted & roles)
 
 
