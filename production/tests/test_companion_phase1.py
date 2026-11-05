@@ -123,6 +123,13 @@ class Phase1Tests(unittest.TestCase):
     def allow(self, slug, state=STATE):
         page = self.client.get("/companion/connect", params=self.connect_query(state), cookies={"ik_session": self.website})
         self.assertEqual(page.status_code, 200, page.text)
+        self.assertIn("Connect Ironkeep Companion", page.text)
+        self.assertIn('name="state" value="%s"' % state, page.text)
+        self.assertIn('name="csrf" value="', page.text)
+        self.assertIn('name="guild" value="%s"' % slug, page.text)
+        self.assertIn('name="decision" value="allow"', page.text)
+        self.assertIn('name="decision" value="deny"', page.text)
+        self.assertIn("does not change your website login", page.text)
         csrf = cookie_value(page, "ik_companion_csrf")
         response = self.client.post(
             "/companion/connect",

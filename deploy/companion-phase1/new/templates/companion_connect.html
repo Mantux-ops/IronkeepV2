@@ -2,34 +2,148 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <title>Connect Companion · Ironkeep</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connect Ironkeep Companion · Ironkeep</title>
+  <link rel="icon" href="/static/logo.png" type="image/png">
+  <link rel="apple-touch-icon" href="/static/logo.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/css/app.css">
+  <style>
+    .connect-card { text-align: left; }
+    .connect-card.login-card { max-width: 480px; }
+    .connect-card__intro { text-align: center; }
+    .connect-card__intro p { margin-top: 6px; }
+    .connect-guilds {
+      border: 0;
+      margin: 18px 0 0;
+      padding: 0;
+      display: grid;
+      gap: 8px;
+      min-width: 0;
+    }
+    .connect-guilds legend {
+      margin-bottom: 8px;
+      padding: 0;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .connect-guild {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      min-width: 0;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: var(--panel-2);
+      cursor: pointer;
+    }
+    .connect-guild:hover { border-color: var(--border-strong); }
+    .connect-guild:has(input:checked) {
+      border-color: var(--accent-border);
+      background: var(--accent-bg);
+    }
+    .connect-guild:focus-within {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .connect-guild input {
+      accent-color: var(--accent);
+      flex-shrink: 0;
+    }
+    .connect-guild__name {
+      min-width: 0;
+      color: var(--text);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+    .connect-note { margin-top: 16px; }
+    .connect-note p + p { margin-top: 4px; }
+    .connect-actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 18px;
+    }
+    .connect-card .connect-actions .button { width: 100%; margin-top: 0; }
+    .connect-card .button:focus-visible,
+    .connect-card a:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    .connect-card .empty-state { margin-top: 16px; padding: 28px 16px; }
+    @media (max-width: 640px) {
+      .public-header { flex-wrap: wrap; padding: 16px; }
+      .public-header__actions { width: 100%; }
+      .public-main { padding: 8px 16px 40px; }
+      .public-footer { flex-direction: column; align-items: flex-start; padding: 16px 16px 32px; }
+      .connect-card.login-card { margin-top: 8px; padding: 24px 16px; }
+    }
+  </style>
 </head>
-<body>
-  <main>
-    <h1>Connect the Companion</h1>
-    {% if error %}
-    <p>{{ error }}</p>
-    {% else %}
-    <p>This connects the desktop Companion for one guild. It does not change your website login. A recruitment role does not include this.</p>
-    {% if not guilds %}
-    <p>No guild has given you a Companion role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
-    {% else %}
-    <form method="post" action="/companion/connect">
-      <input type="hidden" name="state" value="{{ state }}">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      {% for guild in guilds %}
-      <label>
-        <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
-        <span>{{ guild.name }}</span>
-      </label>
-      {% endfor %}
-      <p>
-        <button type="submit" name="decision" value="allow">Connect</button>
-        <button type="submit" name="decision" value="deny">Cancel</button>
-      </p>
-    </form>
-    {% endif %}
-    {% endif %}
+<body class="public">
+  <header class="public-header">
+    <a class="brand" href="/">
+      <img class="brand__logo" src="/static/logo.png" alt="" width="32" height="32">
+      <span class="brand__name">Ironkeep</span>
+    </a>
+    <div class="public-header__actions">
+      <a class="button button--ghost" href="/login">Log in</a>
+      <a class="button button--discord" href="/login?add=1">Add to Discord</a>
+    </div>
+  </header>
+
+  <main class="public-main">
+    <div class="login-card connect-card">
+      <div class="connect-card__intro">
+        <img class="brand__logo brand__logo--lg" src="/static/logo.png" alt="" width="64" height="64">
+        <h1>Connect Ironkeep Companion</h1>
+      </div>
+      {% if error %}
+      <div class="callout callout--red connect-note" role="alert"><div><p>{{ error }}</p></div></div>
+      {% else %}
+      <div class="connect-card__intro">
+        <p>Choose the guild this desktop Companion should use.</p>
+      </div>
+      {% if not guilds %}
+      <div class="empty-state">
+        <h2>No guild is available</h2>
+        <p>No guild has given you a Companion role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
+      </div>
+      {% else %}
+      <form method="post" action="/companion/connect">
+        <input type="hidden" name="state" value="{{ state }}">
+        <input type="hidden" name="csrf" value="{{ csrf }}">
+        <fieldset class="connect-guilds">
+          <legend>Guild</legend>
+          {% for guild in guilds %}
+          <label class="connect-guild">
+            <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
+            <span class="guild-icon guild-icon--md" style="--guild-color: {{ guild.icon_color }}" aria-hidden="true">{{ guild.icon_letter }}</span>
+            <span class="connect-guild__name">{{ guild.name }}</span>
+          </label>
+          {% endfor %}
+        </fieldset>
+        <div class="callout callout--accent connect-note" id="connect-note">
+          <div>
+            <p>The Companion connects to the one guild selected here.</p>
+            <p>Connecting does not change your website login.</p>
+          </div>
+        </div>
+        <div class="connect-actions">
+          <button class="button button--accent button--lg" type="submit" name="decision" value="allow">Connect Companion</button>
+          <button class="button button--ghost" type="submit" name="decision" value="deny">Cancel</button>
+        </div>
+      </form>
+      {% endif %}
+      {% endif %}
+    </div>
   </main>
+
+  <footer class="public-footer">
+    <span>© 2026 Ironkeep · Not affiliated with Discord or Sandbox Interactive.</span>
+    <a href="/privacy">Privacy</a>
+  </footer>
 </body>
 </html>
