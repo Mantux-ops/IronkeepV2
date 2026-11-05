@@ -106,6 +106,12 @@ class Phase1Tests(unittest.TestCase):
             settings["companion_roles"] = list(companion)
         return settings
 
+    def wow_settings(self, companion=None):
+        settings = self.albion_settings(companion)
+        settings["game"] = "wow"
+        settings["wow"] = {"raid_channel": "1", "poster_roles": ["5"]}
+        return settings
+
     def session(self, user_id="100"):
         self.website = db.create_session(user_id, "Ada", "ada", "discord-access", "discord-refresh", 3600)
         return self.website
@@ -167,8 +173,8 @@ class Phase1Tests(unittest.TestCase):
 
     def test_successful_login_is_bound_to_the_selected_guild(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
-        self.guild("2", "other", self.albion_settings(["88"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.guild("2", "other", self.wow_settings(["88"]))
         self.member_roles[("100", "1")] = ["77"]
         self.member_roles[("100", "2")] = ["88"]
         self.session()
@@ -195,7 +201,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_expired_access_token_is_refused(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -212,8 +218,8 @@ class Phase1Tests(unittest.TestCase):
 
     def test_other_guild_and_missing_role_are_refused(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
-        self.guild("2", "other", self.albion_settings(["88"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.guild("2", "other", self.wow_settings(["88"]))
         self.member_roles[("100", "1")] = ["10"]
         self.member_roles[("100", "2")] = ["88"]
         self.session()
@@ -274,7 +280,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_superadmin_can_connect_when_the_role_list_is_empty(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings([]))
+        self.guild("1", "keep", self.wow_settings([]))
         self.member_roles[(config.SUPERADMIN_ID, "1")] = []
         self.session(config.SUPERADMIN_ID)
         code, _state = self.allow("keep")
@@ -290,10 +296,10 @@ class Phase1Tests(unittest.TestCase):
 
     def test_missing_membership_role_and_lost_permission_never_issue_a_token(self):
         self.enable()
-        self.guild("10", "derelict", self.albion_settings(["77"]))
-        self.guild("11", "chaos", self.albion_settings(["77"]))
-        self.guild("12", "herberg", self.albion_settings(["77"]))
-        self.guild("13", "ironkeep", self.albion_settings(["77"]))
+        self.guild("10", "derelict", self.wow_settings(["77"]))
+        self.guild("11", "chaos", self.wow_settings(["77"]))
+        self.guild("12", "herberg", self.wow_settings(["77"]))
+        self.guild("13", "ironkeep", self.wow_settings(["77"]))
         for guild_id in ("11", "12", "13"):
             self.member_roles[("100", guild_id)] = ["77"]
         self.session()
@@ -417,7 +423,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_refresh_rotates_and_reuse_revokes_the_family(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -443,7 +449,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_refresh_inside_the_grace_period_does_not_revoke_the_new_token(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -460,7 +466,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_revoked_refresh_token_stays_refused(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -474,7 +480,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_losing_the_role_blocks_refresh_and_guild_lookup(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -487,7 +493,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_discord_outage_does_not_revoke_the_refresh_token(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -533,7 +539,7 @@ class Phase1Tests(unittest.TestCase):
 
     def test_overlapping_refresh_rotates_once_after_discord_returns(self):
         self.enable()
-        self.guild("1", "keep", self.albion_settings(["77"]))
+        self.guild("1", "keep", self.wow_settings(["77"]))
         self.member_roles[("100", "1")] = ["77"]
         self.session()
         code, _state = self.allow("keep")
@@ -580,6 +586,104 @@ class Phase1Tests(unittest.TestCase):
             json={"grant_type": "refresh_token", "refresh_token": issued["refresh_token"]},
         )
         self.assertEqual(follow.status_code, 200, follow.text)
+
+
+    def test_only_wow_guilds_stay_eligible_after_a_profile_change(self):
+        self.enable()
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.guild("2", "albion", self.albion_settings(["77"]))
+        unset = db.default_settings()
+        unset.pop("game", None)
+        unset["companion_roles"] = ["77"]
+        self.guild("3", "unset", unset)
+        for guild_id in ("1", "2", "3"):
+            self.member_roles[("100", guild_id)] = ["77"]
+            self.member_roles[(config.SUPERADMIN_ID, guild_id)] = []
+        self.session()
+        page = self.client.get("/companion/connect", params=self.connect_query(), cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200)
+        self.assertIn('value="keep"', page.text)
+        self.assertNotIn('value="albion"', page.text)
+        self.assertNotIn('value="unset"', page.text)
+        csrf = cookie_value(page, "ik_companion_csrf")
+        for slug in ("albion", "unset"):
+            refused = self.client.post(
+                "/companion/connect",
+                data={"state": STATE, "csrf": csrf, "decision": "allow", "guild": slug},
+                cookies={"ik_session": self.website, "ik_companion_csrf": csrf},
+                follow_redirects=False,
+            )
+            self.assertEqual(refused.status_code, 403, slug)
+            self.assertNotIn("code=", refused.headers.get("location", ""))
+        self.session(config.SUPERADMIN_ID)
+        admin = self.client.get(
+            "/companion/connect",
+            params=self.connect_query("state-value-admin-game"),
+            cookies={"ik_session": self.website},
+        )
+        self.assertIn('value="keep"', admin.text)
+        self.assertNotIn('value="albion"', admin.text)
+        self.assertNotIn('value="unset"', admin.text)
+        admin_csrf = cookie_value(admin, "ik_companion_csrf")
+        admin_refused = self.client.post(
+            "/companion/connect",
+            data={"state": "state-value-admin-game", "csrf": admin_csrf, "decision": "allow", "guild": "albion"},
+            cookies={"ik_session": self.website, "ik_companion_csrf": admin_csrf},
+            follow_redirects=False,
+        )
+        self.assertEqual(admin_refused.status_code, 403)
+
+        self.session()
+        code, _state = self.allow("keep", state="state-value-game-exchange")
+        switched = db.guild_by_slug("keep")["settings"]
+        switched["game"] = "albion"
+        db.save_settings("keep", switched)
+        exchanged = self.client.post(
+            "/api/companion/token",
+            json={
+                "grant_type": "authorization_code",
+                "code": code,
+                "code_verifier": VERIFIER,
+                "redirect_uri": LOOPBACK,
+            },
+        )
+        self.assertEqual(exchanged.status_code, 403)
+        self.assertNotIn("access_token", exchanged.text)
+        self.assertEqual(self.credential_rows(), [])
+
+        switched["game"] = "wow"
+        db.save_settings("keep", switched)
+        code, _state = self.allow("keep", state="state-value-game-refresh")
+        body = self.exchange(code)
+        switched = db.guild_by_slug("keep")["settings"]
+        switched["game"] = "albion"
+        db.save_settings("keep", switched)
+        refreshed = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(refreshed.status_code, 403)
+        self.assertNotIn("access_token", refreshed.text)
+        refreshed_again = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": body["refresh_token"]},
+        )
+        self.assertEqual(refreshed_again.status_code, 401)
+        listed = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]})
+        self.assertEqual(listed.status_code, 401)
+
+        switched["game"] = "wow"
+        db.save_settings("keep", switched)
+        code, _state = self.allow("keep", state="state-value-game-access")
+        body = self.exchange(code)
+        switched = db.guild_by_slug("keep")["settings"]
+        switched["game"] = "albion"
+        db.save_settings("keep", switched)
+        current = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]})
+        self.assertEqual(current.status_code, 403)
+        self.assertNotIn("keep", current.text)
+        current_again = self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + body["access_token"]})
+        self.assertEqual(current_again.status_code, 401)
 
 
 class RoleLookupDefinitions(unittest.TestCase):

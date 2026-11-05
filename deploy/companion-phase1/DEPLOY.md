@@ -31,7 +31,7 @@ Hashes van de oorspronkelijke snapshot, daarna de hashes na een geslaagde instal
 | `main.py` | `3a5783a13b148fd88ec624b7a5b27b8e84789311481c5ec12f6f5537a5183c2e` | `f527479bb12ba29fe296504360191f79885db62c4cd4704aca9dcd5077c8c126` |
 | `templates/settings.html` | `c78de62594d5f328539bb52b45f0ce7c7b1577f18be67c9979ace79914329f88` | `3259370864f7a562dc62c66e183d3a6bc5269acb9ba174a529a6ab57e4ec95a0` |
 | `static/js/settings.js` | `ac9b1b3cc840ffb0474fb3a6f652b32ba57e78ab41a0391bb6fcf3d0502afe0f` | `01b861d4118481748d52f5803cf8ff52d1814b76894d4f1f0a9a9fd0c29b6cf2` |
-| `companion_auth.py` | bestaat nog niet | `e6dd742bd1dbbf2b04257cdd8c50c19323788e07a19cbac6394a6a4f2826d8c4` |
+| `companion_auth.py` | bestaat nog niet | `1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4` |
 | `templates/companion_connect.html` | bestaat nog niet | `d81f0a80515a46cf42cea9f73fb5b2986bbffa9769e30b46e12af8967ffda5b8` |
 
 ## Imports van de Companion-module

@@ -16,14 +16,17 @@ Companion in the browser. That approval is a different authorization layer:
   access token and a rotating refresh token.
 - Only hashes of those tokens are stored.
 
-Connect permission is ``companion_roles`` on the guild. It defaults to an empty
-list. Recruitment roles, the person who added the bot, and World of Warcraft
-poster roles do not grant this. The one administrator exception is the
-Ironkeep superadmin (``config.SUPERADMIN_ID``), and only after Discord
-confirms that account is a member of the guild. A guild the account has not
-joined is not listed and cannot be approved. Token refresh and guild lookup
-repeat that check through the bot's guild-member lookup, because the
-Companion does not keep the user's Discord token.
+Connect permission is a guild whose profile is World of Warcraft (``wow``),
+plus ``companion_roles`` on that guild. The role list defaults to empty.
+Recruitment roles, the person who added the bot, and World of Warcraft
+poster roles do not grant this. Albion guilds and guilds with no game
+profile are refused before Discord is asked. The one administrator
+exception is the Ironkeep superadmin (``config.SUPERADMIN_ID``), and only
+after the guild is WoW and Discord confirms that account is a member. A
+guild the account has not joined is not listed and cannot be approved.
+Token refresh and guild lookup repeat that check through the bot's
+guild-member lookup, because the Companion does not keep the user's
+Discord token.
 
 The routes stay missing unless ``IRONKEEP_COMPANION_AUTH`` is set. No
 deployment file sets it. Attendance upload is not part of this module.
@@ -202,9 +205,13 @@ def connect_allowed(user_id, guild):
     """Whether this person may connect the Companion for this guild right now.
 
     True or False is a definite answer. None means Discord could not be reached.
-    The superadmin skips companion_roles only after membership is confirmed.
+    The game profile is decided locally, before Discord is called. The
+    superadmin skips companion_roles only after the guild is WoW and
+    membership is confirmed.
     """
     if guild is None or guild.get("approval") == "rejected":
+        return False
+    if db.guild_game(guild.get("settings")) != "wow":
         return False
     try:
         roles = _member_roles(guild["id"], user_id)
