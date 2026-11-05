@@ -251,8 +251,9 @@ for i in "${!REL[@]}"; do
   path="${REL[$i]}"
   dest="$ROOT/$path"
   if [[ ! -e "$dest" ]]; then
-    cp "$HERE/new/$path" "$dest"
+    # Register before cp so a partial file is removed if the copy fails.
     CREATED+=("$path")
+    cp "$HERE/new/$path" "$dest"
     restore_attrs "$reference" "$dest"
     if [[ "${IRONKEEP_INSTALL_TEST:-}" == 1 && "${IRONKEEP_INSTALL_FAILPOINT:-}" == "after-first-new" && "${#CREATED[@]}" -eq 1 ]]; then
       echo "Test failpoint: after-first-new" >&2

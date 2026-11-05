@@ -158,6 +158,61 @@ if [[ "$(sudo sha256sum "$fail_root/templates/companion_connect.html" | awk '{pr
 fi
 pass "failed install rolls back"
 
+copy_root="$WORK/copy"
+copy_backup="$WORK/copy-backup"
+make_tree "$copy_root"
+sudo cp "$HERE/new/templates/companion_connect.html" "$copy_root/templates/companion_connect.html"
+sudo chown ironkeep:ironkeep "$copy_root/templates/companion_connect.html"
+sudo chmod 640 "$copy_root/templates/companion_connect.html"
+kept_copy_html=$(sudo sha256sum "$copy_root/templates/companion_connect.html" | awk '{print $1}')
+kept_bot=$(sudo sha256sum "$copy_root/bot.py" | awk '{print $1}')
+declare -A copy_id=()
+while read -r kind path before after; do
+  [[ -z "${kind:-}" || "$kind" == \#* || "$kind" != "patch" ]] && continue
+  copy_id["$path"]=$(sudo stat -c '%u %g %a' "$copy_root/$path")
+done < "$HERE/MANIFEST.txt"
+fake_bin="$WORK/bin"
+mkdir -p "$fake_bin"
+cat > "$fake_bin/cp" << 'EOF'
+#!/bin/bash
+if [[ "${1:-}" != "-a" && "${2:-}" == */companion_auth.py ]]; then
+  printf 'partial' > "$2"
+  exit 1
+fi
+exec /bin/cp "$@"
+EOF
+chmod +x "$fake_bin/cp"
+set +e
+sudo env PATH="$fake_bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+  bash "$HERE/install.sh" --root "$copy_root" --apply --backup-dir "$copy_backup"
+copy_status=$?
+set -e
+if [[ "$copy_status" -eq 0 ]]; then
+  echo "partial copy should have failed" >&2
+  exit 1
+fi
+assert_original_six "$copy_root"
+while read -r kind path before after; do
+  [[ -z "${kind:-}" || "$kind" == \#* || "$kind" != "patch" ]] && continue
+  if [[ "$(sudo stat -c '%u %g %a' "$copy_root/$path")" != "${copy_id[$path]}" ]]; then
+    echo "partial copy rollback changed owner or mode of $path" >&2
+    exit 1
+  fi
+done < "$HERE/MANIFEST.txt"
+if [[ -e "$copy_root/companion_auth.py" ]]; then
+  echo "partial companion_auth.py was left behind" >&2
+  exit 1
+fi
+if [[ "$(sudo sha256sum "$copy_root/templates/companion_connect.html" | awk '{print $1}')" != "$kept_copy_html" ]]; then
+  echo "partial copy rollback changed an existing Companion file" >&2
+  exit 1
+fi
+if [[ "$(sudo sha256sum "$copy_root/bot.py" | awk '{print $1}')" != "$kept_bot" ]]; then
+  echo "partial copy rollback changed bot.py" >&2
+  exit 1
+fi
+pass "partial copy is removed on rollback"
+
 bad_root="$WORK/bad"
 mkdir -p "$bad_root"
 set +e
