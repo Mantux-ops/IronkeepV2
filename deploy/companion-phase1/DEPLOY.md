@@ -15,8 +15,9 @@ Kopieer niet de map `production/ironkeep/` en niet de hele git-branch naar `/opt
 | `install.sh` | Dry-run of installatie |
 | `check_imports.py` | Importcontrole zonder productiedatabase |
 | `DEPLOY.md` | Deze procedure |
+| `test_install.sh` | Alleen lokaal. Niet naar de server kopiëren. |
 
-`install.sh` weigert te schrijven als een van de zes hashes afwijkt, als `companion_auth.py` al bestaat met een andere inhoud, of als `--backup-dir` ontbreekt. Een dry-run schrijft niets.
+`install.sh` draait als root. Het weigert een map die geen Ironkeep-package is, een afwijkende SHA-256, of een bestaand Companion-bestand met een andere inhoud. Een dry-run schrijft niets. Een installatie die halverwege mislukt zet de zes oorspronkelijke bestanden terug, inclusief eigenaar, groep en rechten, en verwijdert alleen Companion-bestanden die deze run zelf heeft aangemaakt. `IRONKEEP_COMPANION_AUTH` wordt niet gezet.
 
 ## Manifest
 
@@ -47,7 +48,7 @@ Zet het pakket bijvoorbeeld in `/home/ironadmin/companion-phase1-package`. Voer 
 sudo bash /home/ironadmin/companion-phase1-package/install.sh --root /opt/ironkeep/ironkeep
 ```
 
-Verwacht: `original ok` voor de zes bestanden, `patch dry-run ok`, en `Dry run finished. No files were written.`
+Verwacht: `original ok` voor de zes bestanden, `patch dry-run ok`, en `Dry run finished. No files were written.` De dry-run controleert ook dat de gebruiker `ironkeep` de bestaande bestanden kan lezen en de doelmap kan doorlopen. Er wordt niets aangemaakt of gewijzigd.
 
 ## Installatie
 
@@ -58,7 +59,7 @@ sudo bash /home/ironadmin/companion-phase1-package/install.sh \
   --backup-dir /home/ironadmin/companion-phase1-files-20261105
 ```
 
-Dit kopieert de zes huidige bestanden naar de backup-map, past de patch toe en zet de twee nieuwe bestanden neer. Het herstart geen service en wijzigt `/etc/ironkeep.env` niet.
+Dit kopieert de zes huidige bestanden naar de backup-map, past de patch toe en zet de twee nieuwe bestanden neer met dezelfde eigenaar, groep en rechten als `config.py`. Daarna controleert het dat `ironkeep` `companion_auth.py` en `templates/companion_connect.html` kan lezen. Mislukt een stap na de eerste wijziging, dan worden de zes bestanden uit de backup teruggezet en worden alleen de Companion-bestanden verwijderd die deze run heeft aangemaakt. Een bestand dat al de verwachte inhoud had, blijft staan. Het herstart geen service en wijzigt `/etc/ironkeep.env` niet. De vlag blijft uit.
 
 ## Python-importcontrole
 
@@ -96,7 +97,9 @@ Verwacht: login `303`, privacy `200`, connect `404`, en geen regel `IRONKEEP_COM
 
 ## Rollback
 
-Gebruik de file-backup van `--backup-dir`, of het archief `/home/ironadmin/ironkeep-pre-companion-20261105-172517.tar.gz`. De SQLite-backup `/var/lib/ironkeep/ironkeep.db.backup-20261105-172401` blijft onaangeroerd: deze installatie migreert geen bestaande tabellen zolang de vlag uit staat.
+Mislukt de installatie zelf, dan heeft `install.sh` de zes bestanden al teruggezet en de zojuist aangemaakte Companion-bestanden verwijderd. De backup-map blijft staan.
+
+Voor een handmatige rollback daarna: gebruik de file-backup van `--backup-dir`, of het archief `/home/ironadmin/ironkeep-pre-companion-20261105-172517.tar.gz`. De SQLite-backup `/var/lib/ironkeep/ironkeep.db.backup-20261105-172401` blijft onaangeroerd: deze installatie migreert geen bestaande tabellen zolang de vlag uit staat.
 
 ```bash
 sudo systemctl stop ironkeep.service

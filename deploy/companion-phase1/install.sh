@@ -1,13 +1,23 @@
 #!/bin/bash
-# Apply the phase 1 Companion patch onto a copy of the production package.
-# Default is a dry run. This script does not restart services, edit
-# /etc/ironkeep.env, or open the production database.
+# Apply the phase 1 Companion patch onto the production package.
+# Default is a dry run and does not write to the package.
+# An install restores the six original files and removes only Companion
+# files this run created if a later step fails.
+# This script does not restart services, edit /etc/ironkeep.env, or open
+# the production database. It does not set IRONKEEP_COMPANION_AUTH.
 set -euo pipefail
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=""
 APPLY=0
 BACKUP_DIR=""
+SERVICE_USER="ironkeep"
+CHANGED=0
+declare -a CREATED=()
+declare -a REL=()
+declare -a BEFORE=()
+declare -a AFTER=()
+declare -a KIND=()
 
 usage() {
   echo "Usage: install.sh --root /opt/ironkeep/ironkeep [--apply --backup-dir DIR]" >&2
@@ -34,6 +44,16 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+if [[ -n "${IRONKEEP_INSTALL_FAILPOINT:-}" && "${IRONKEEP_INSTALL_TEST:-}" != 1 ]]; then
+  echo "Refusing to run: IRONKEEP_INSTALL_FAILPOINT is only for the install tests." >&2
+  exit 2
+fi
+
+if [[ "$(id -u)" -ne 0 ]]; then
+  echo "Refusing to run: root is required so ownership can be kept and ${SERVICE_USER} can be checked." >&2
+  exit 1
+fi
+
 if [[ -z "$ROOT" || ! -d "$ROOT" ]]; then
   echo "Refusing to run: --root must be the ironkeep package directory." >&2
   exit 2
@@ -52,10 +72,67 @@ if [[ "$APPLY" -eq 1 && -z "$BACKUP_DIR" ]]; then
   exit 2
 fi
 
-declare -a REL
-declare -a BEFORE
-declare -a AFTER
-declare -a KIND
+sha256_file() {
+  sha256sum "$1" | awk '{print $1}'
+}
+
+restore_attrs() {
+  local reference="$1"
+  local dest="$2"
+  chown --reference="$reference" "$dest"
+  chmod --reference="$reference" "$dest"
+}
+
+rollback() {
+  local path=""
+  echo "Install failed. Restoring the six original files." >&2
+  for i in "${!REL[@]}"; do
+    if [[ "${KIND[$i]}" != "patch" ]]; then
+      continue
+    fi
+    path="${REL[$i]}"
+    cp -a "$BACKUP_DIR/$path" "$ROOT/$path"
+    if [[ "$(sha256_file "$ROOT/$path")" != "${BEFORE[$i]}" ]]; then
+      echo "ROLLBACK INCOMPLETE for $path. Copies remain in $BACKUP_DIR." >&2
+      return 1
+    fi
+  done
+  if [[ ${#CREATED[@]} -gt 0 ]]; then
+    for path in "${CREATED[@]}"; do
+      rm -f "$ROOT/$path"
+    done
+  fi
+  echo "Rollback finished. Companion files created by this run were removed." >&2
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [[ "$CHANGED" -eq 1 && "$status" -ne 0 ]]; then
+    rollback || status=1
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+require_text() {
+  local file="$1"
+  local needle="$2"
+  if [[ ! -f "$ROOT/$file" ]] || ! grep -q -F -- "$needle" "$ROOT/$file"; then
+    echo "Refusing to run: $ROOT is not an Ironkeep package ($file)." >&2
+    exit 1
+  fi
+}
+
+require_text "config.py" "SUPERADMIN_ID"
+require_text "main.py" 'SESSION_COOKIE = "ik_session"'
+require_text "db.py" "def init("
+require_text "discord_api.py" "def bot_member("
+if [[ ! -f "$ROOT/bot.py" || ! -d "$ROOT/templates" || ! -d "$ROOT/static/js" ]]; then
+  echo "Refusing to run: $ROOT is not an Ironkeep package." >&2
+  exit 1
+fi
+
 while read -r kind path before after; do
   [[ -z "${kind:-}" || "$kind" == \#* ]] && continue
   KIND+=("$kind")
@@ -64,13 +141,14 @@ while read -r kind path before after; do
   AFTER+=("$after")
 done < "$HERE/MANIFEST.txt"
 
-sha256_file() {
-  sha256sum "$1" | awk '{print $1}'
-}
+if ! id "$SERVICE_USER" >/dev/null 2>&1; then
+  echo "Refusing to run: service user ${SERVICE_USER} does not exist." >&2
+  exit 1
+fi
 
 echo "Package: $HERE"
 echo "Target:  $ROOT"
-echo "Mode:    $([[ $APPLY -eq 1 ]] && echo apply || echo dry-run)"
+echo "Mode:    $([[ "$APPLY" -eq 1 ]] && echo apply || echo dry-run)"
 
 for i in "${!REL[@]}"; do
   path="${REL[$i]}"
@@ -88,6 +166,10 @@ for i in "${!REL[@]}"; do
       echo "Not patching. The live file is not the reviewed snapshot." >&2
       exit 1
     fi
+    if ! runuser -u "$SERVICE_USER" -- test -r "$dest"; then
+      echo "Refusing to run: ${SERVICE_USER} cannot read $path." >&2
+      exit 1
+    fi
     echo "original ok  $path"
   elif [[ "${KIND[$i]}" == "new" ]]; then
     if [[ -e "$dest" ]]; then
@@ -96,8 +178,17 @@ for i in "${!REL[@]}"; do
         echo "Refusing to overwrite existing $path (hash $got)." >&2
         exit 1
       fi
+      if ! runuser -u "$SERVICE_USER" -- test -r "$dest"; then
+        echo "Refusing to run: ${SERVICE_USER} cannot read existing $path." >&2
+        exit 1
+      fi
       echo "already new  $path"
     else
+      parent=$(dirname "$dest")
+      if [[ ! -d "$parent" ]] || ! runuser -u "$SERVICE_USER" -- test -x "$parent"; then
+        echo "Refusing to run: ${SERVICE_USER} cannot reach $parent." >&2
+        exit 1
+      fi
       echo "new file     $path"
     fi
   else
@@ -117,29 +208,62 @@ if [[ "$APPLY" -ne 1 ]]; then
   exit 0
 fi
 
-mkdir -p "$BACKUP_DIR"
+backup_real=$(mkdir -p "$BACKUP_DIR" && cd "$BACKUP_DIR" && pwd)
+if [[ "$backup_real" == "$ROOT" || "$backup_real" == "$ROOT"/* ]]; then
+  echo "Refusing to apply: --backup-dir must be outside the package." >&2
+  exit 1
+fi
+BACKUP_DIR=$backup_real
+
 for i in "${!REL[@]}"; do
-  if [[ "${KIND[$i]}" == "patch" ]]; then
-    mkdir -p "$BACKUP_DIR/$(dirname "${REL[$i]}")"
-    cp -a "$ROOT/${REL[$i]}" "$BACKUP_DIR/${REL[$i]}"
+  if [[ "${KIND[$i]}" != "patch" ]]; then
+    continue
+  fi
+  path="${REL[$i]}"
+  mkdir -p "$BACKUP_DIR/$(dirname "$path")"
+  cp -a "$ROOT/$path" "$BACKUP_DIR/$path"
+  if [[ "$(sha256_file "$BACKUP_DIR/$path")" != "${BEFORE[$i]}" ]]; then
+    echo "Backup hash mismatch for $path. The package was not changed." >&2
+    exit 1
   fi
 done
 echo "file backup  $BACKUP_DIR"
 
+CHANGED=1
 patch --forward --batch -p1 -d "$ROOT" < "$HERE/phase1-production.patch"
+for i in "${!REL[@]}"; do
+  if [[ "${KIND[$i]}" != "patch" ]]; then
+    continue
+  fi
+  path="${REL[$i]}"
+  restore_attrs "$BACKUP_DIR/$path" "$ROOT/$path"
+done
+if [[ "${IRONKEEP_INSTALL_TEST:-}" == 1 && "${IRONKEEP_INSTALL_FAILPOINT:-}" == "after-patch" ]]; then
+  echo "Test failpoint: after-patch" >&2
+  exit 1
+fi
 
+reference="$ROOT/config.py"
 for i in "${!REL[@]}"; do
   if [[ "${KIND[$i]}" != "new" ]]; then
     continue
   fi
-  dest="$ROOT/${REL[$i]}"
-  if [[ -e "$dest" ]]; then
-    got=$(sha256_file "$dest")
-    [[ "$got" == "${AFTER[$i]}" ]] || exit 1
-    continue
+  path="${REL[$i]}"
+  dest="$ROOT/$path"
+  if [[ ! -e "$dest" ]]; then
+    cp "$HERE/new/$path" "$dest"
+    CREATED+=("$path")
+    restore_attrs "$reference" "$dest"
+    if [[ "${IRONKEEP_INSTALL_TEST:-}" == 1 && "${IRONKEEP_INSTALL_FAILPOINT:-}" == "after-first-new" && "${#CREATED[@]}" -eq 1 ]]; then
+      echo "Test failpoint: after-first-new" >&2
+      exit 1
+    fi
   fi
-  mkdir -p "$(dirname "$dest")"
-  cp -a "$HERE/new/${REL[$i]}" "$dest"
+  if ! runuser -u "$SERVICE_USER" -- test -r "$dest"; then
+    echo "${SERVICE_USER} cannot read $path." >&2
+    exit 1
+  fi
+  echo "readable     $path"
 done
 
 for i in "${!REL[@]}"; do
@@ -153,4 +277,5 @@ for i in "${!REL[@]}"; do
   echo "result ok    ${REL[$i]}"
 done
 
+CHANGED=0
 echo "Apply finished. IRONKEEP_COMPANION_AUTH was not set. No service was restarted."
