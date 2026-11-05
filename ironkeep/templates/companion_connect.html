@@ -1,31 +1,111 @@
 {% extends "public_layout.html" %}
 
-{% block title %}Connect Companion · Ironkeep{% endblock %}
+{% block title %}Connect Ironkeep Companion · Ironkeep{% endblock %}
 
 {% block content %}
-<div class="login-card">
-  <img class="brand__logo brand__logo--lg" src="{{ asset('logo.png') }}" alt="" width="64" height="64">
-  <h1>Connect the Companion</h1>
+<style>
+  .connect-card { text-align: left; }
+  .connect-card.login-card { max-width: 480px; }
+  .connect-card__intro { text-align: center; }
+  .connect-card__intro p { margin-top: 6px; }
+  .connect-guilds {
+    border: 0;
+    margin: 18px 0 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+    min-width: 0;
+  }
+  .connect-guilds legend {
+    margin-bottom: 8px;
+    padding: 0;
+    color: var(--muted);
+    font-weight: 600;
+  }
+  .connect-guild {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 0;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--panel-2);
+    cursor: pointer;
+  }
+  .connect-guild:hover { border-color: var(--border-strong); }
+  .connect-guild:has(input:checked) {
+    border-color: var(--accent-border);
+    background: var(--accent-bg);
+  }
+  .connect-guild:focus-within {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .connect-guild input {
+    accent-color: var(--accent);
+    flex-shrink: 0;
+  }
+  .connect-guild__name {
+    min-width: 0;
+    color: var(--text);
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+  .connect-note { margin-top: 16px; }
+  .connect-note p + p { margin-top: 4px; }
+  .connect-actions {
+    display: grid;
+    gap: 10px;
+    margin-top: 18px;
+  }
+  .connect-card .connect-actions .button { width: 100%; margin-top: 0; }
+  .connect-card .button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+  .connect-card .empty-state { margin-top: 16px; padding: 28px 16px; }
+</style>
+<div class="login-card connect-card">
+  <div class="connect-card__intro">
+    <img class="brand__logo brand__logo--lg" src="{{ asset('logo.png') }}" alt="" width="64" height="64">
+    <h1>Connect Ironkeep Companion</h1>
+  </div>
   {% if error %}
-  <div class="callout callout--red"><div><p>{{ error }}</p></div></div>
+  <div class="callout callout--red connect-note" role="alert"><div><p>{{ error }}</p></div></div>
   {% else %}
-  <p>This connects the desktop Companion for one guild. It does not change your website login, and a recruitment role does not include upload.</p>
+  <div class="connect-card__intro">
+    <p>Choose the guild this desktop Companion should use. A recruitment role does not include upload.</p>
+  </div>
   {% if not guilds %}
-  <p>No guild has given you a Companion upload role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
+  <div class="empty-state">
+    <h2>No guild is available</h2>
+    <p>No guild has given you a Companion upload role. The Ironkeep superadmin is the only account that can connect while that list is empty.</p>
+  </div>
   {% else %}
   <form method="post" action="/companion/connect">
     <input type="hidden" name="state" value="{{ state }}">
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    {% for guild in guilds %}
-    <label class="radio">
-      <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
-      <span><strong>{{ guild.name }}</strong></span>
-    </label>
-    {% endfor %}
-    <p>
-      <button class="button button--discord" type="submit" name="decision" value="allow">Connect</button>
+    <fieldset class="connect-guilds">
+      <legend>Guild</legend>
+      {% for guild in guilds %}
+      <label class="connect-guild">
+        <input type="radio" name="guild" value="{{ guild.slug }}" {% if loop.first %}checked{% endif %}>
+        <span class="guild-icon guild-icon--md" style="--guild-color: {{ guild.icon_color }}" aria-hidden="true">{{ guild.icon_letter }}</span>
+        <span class="connect-guild__name">{{ guild.name }}</span>
+      </label>
+      {% endfor %}
+    </fieldset>
+    <div class="callout callout--accent connect-note">
+      <div>
+        <p>The Companion connects to the one guild selected here.</p>
+        <p>Connecting does not change your website login.</p>
+      </div>
+    </div>
+    <div class="connect-actions">
+      <button class="button button--accent button--lg" type="submit" name="decision" value="allow">Connect Companion</button>
       <button class="button button--ghost" type="submit" name="decision" value="deny">Cancel</button>
-    </p>
+    </div>
   </form>
   {% endif %}
   {% endif %}

@@ -236,7 +236,7 @@ class CompanionAuthTests(unittest.TestCase):
         self.guild()
         page = self.start(token)
         self.assertEqual(page.status_code, 200)
-        self.assertIn("Connect the Companion", page.text)
+        self.assertIn("Connect Ironkeep Companion", page.text)
         self.assertIn('type="submit"', page.text)
         self.assertNotIn("location", {key.lower() for key in page.headers})
         header = cookie_headers(page, "ik_companion_csrf")[0].lower()
