@@ -41,10 +41,41 @@ def main():
     if "companion-v" not in workflow and "plan[\"tag\"]" not in workflow:
         if "publish_release.py --publish" not in workflow:
             fail("The workflow does not publish an immutable version tag.")
-    if "workflow_dispatch:" not in workflow or "source:" not in workflow or "publish:" not in workflow:
-        fail("The workflow does not require an explicit source.")
-    if "needs: [api, windows]" not in workflow:
-        fail("Publication does not wait for the tests and the Windows build.")
+    if "workflow_dispatch:" not in workflow or "workflow_call:" not in workflow:
+        fail("The workflow cannot be dispatched from main.")
+    if "source:" not in workflow or "publish:" not in workflow or "confirm:" not in workflow:
+        fail("The workflow does not require an explicit source and confirmation.")
+    if "job.workflow_sha" not in workflow:
+        fail("The release scripts are not taken from the workflow file commit.")
+    publisher = (ROOT / "companion/publish_release.py").read_text(encoding="utf-8")
+    if "that same reviewed commit" in publisher or re.search(r"(?m)^[ \t]+WORKFLOW_SHA:", workflow):
+        fail("Publication still requires the caller SHA to equal the Companion commit.")
+    if "needs: [guard]" not in workflow or "needs: [guard, api, windows]" not in workflow:
+        fail("Publication does not wait for source validation, the tests, and the Windows build.")
+    if "success() && github.event_name != 'push' && inputs.publish == true && inputs.confirm == 'publish'" not in workflow:
+        fail("Publication does not require the guard, tests, Windows build, and Defender scan to succeed.")
+    if "actions: write" in workflow:
+        fail("A build job still has Actions write access.")
+    scan_at = workflow.find("Scan with Microsoft Defender")
+    upload_at = workflow.find("name: companion-wpf-release")
+    if scan_at < 0 or upload_at < 0 or scan_at > upload_at:
+        fail("The Defender scan does not run before the release artifact is uploaded.")
+    release_job = workflow.split("  release:", 1)[1]
+    checkout = release_job.split("uses: actions/checkout@v4", 1)[1].split("uses: actions/setup-python", 1)[0]
+    if "job.workflow_sha" not in checkout or "job.workflow_repository" not in checkout:
+        fail("The release job does not check out the workflow file.")
+    if "needs.guard.outputs.commit" in checkout or "github.sha" in checkout:
+        fail("The release job checks out the source or the caller instead of the workflow file.")
+    caller = "b" * 40
+    pin = "e" * 40
+    if release_source.invocation("workflow_dispatch", caller, pin) != "workflow_call":
+        fail("A reusable dispatch was treated as a direct dispatch.")
+    try:
+        release_source.classify("companion-v2.0.1", "workflow_dispatch", caller, pin)
+    except SystemExit:
+        pass
+    else:
+        fail("A called workflow accepted a tag.")
     if "Scan with Microsoft Defender" not in workflow or "SCANNED.txt" not in workflow:
         fail("Publication does not require a Defender scan.")
     if "companion-wpf-release" not in workflow:
