@@ -2,10 +2,11 @@
 ## Title: Ironkeep
 ## Notes: Raid and party list for Ironkeep. WoW: Forever only.
 ## Author: Ironkeep
-## Version: 0.1.0
-## SavedVariables: IronkeepDB
+## Version: 0.1.1
+## SavedVariables: IronkeepDB, IronkeepRosterDB
 
 Bindings.xml
 Core.lua
 Group.lua
 Window.lua
+Roster.lua
