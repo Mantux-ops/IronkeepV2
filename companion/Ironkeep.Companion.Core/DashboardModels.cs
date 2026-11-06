@@ -81,11 +81,12 @@ namespace Ironkeep.Companion
             else Set(ref _auth, "No legacy key", "Auth");
             Set(ref _guild, (config.Slug ?? "").Trim().Length == 0 ? "Not set" : config.Slug.Trim(), "Guild");
             string folder = (config.WowFolder ?? "").Trim();
+            if (savedFiles < 0) savedFiles = 0;
             Set(ref _folder, folder.Length == 0 ? "Not selected" : folder, "Folder");
             if (folder.Length == 0) Set(ref _folderStatus, "No folder selected. This is not a detected install.", "FolderStatus");
             else if (!Directory.Exists(folder)) Set(ref _folderStatus, "That folder was not found.", "FolderStatus");
-            else Set(ref _folderStatus, "Folder found. The Forever layout is not verified.", "FolderStatus");
-            if (savedFiles < 0) savedFiles = 0;
+            else if (savedFiles > 0) Set(ref _folderStatus, "Forever SavedVariables layout found.", "FolderStatus");
+            else Set(ref _folderStatus, "Folder found, but no Ironkeep.lua was found in a supported SavedVariables layout.", "FolderStatus");
             Set(ref _savedStatus, savedFiles == 0 ? "No Ironkeep.lua found." : savedFiles + " Ironkeep.lua file" + (savedFiles == 1 ? "" : "s") + " found.", "SavedStatus");
             Set(ref _pending, snap.Pending.ToString(), "Pending");
             Set(ref _retry, snap.RetryScheduled.ToString(), "Retry");
