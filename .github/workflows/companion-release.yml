@@ -24,11 +24,11 @@ permissions:
 jobs:
   dispatch:
     permissions:
-      actions: write
+      actions: read
       contents: write
-    uses: Mantux-ops/IronkeepV2/.github/workflows/companion.yml@261af2e24afb3a43da3cc3899a690456d1bd2f88
+    uses: Mantux-ops/IronkeepV2/.github/workflows/companion.yml@f612ad3ae93c453c649ecdf37d81f2ea953e9225
     with:
       source: ${{ inputs.source }}
       publish: ${{ inputs.publish }}
       confirm: ${{ inputs.confirm }}
-      scripts: 261af2e24afb3a43da3cc3899a690456d1bd2f88
+      scripts: f612ad3ae93c453c649ecdf37d81f2ea953e9225
