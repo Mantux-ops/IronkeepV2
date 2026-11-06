@@ -2,6 +2,6 @@
 ## Title: Ironkeep Roster Probe
 ## Notes: Development-only read-only guild API probe. Not part of Ironkeep. Safe to delete.
 ## Author: Ironkeep
-## Version: 0.0.1
+## Version: 0.0.2
 
 Probe.lua
