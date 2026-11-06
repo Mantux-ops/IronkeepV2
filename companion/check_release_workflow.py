@@ -41,10 +41,17 @@ def main():
     if "companion-v" not in workflow and "plan[\"tag\"]" not in workflow:
         if "publish_release.py --publish" not in workflow:
             fail("The workflow does not publish an immutable version tag.")
-    if "workflow_dispatch:" not in workflow or "source:" not in workflow or "publish:" not in workflow:
-        fail("The workflow does not require an explicit source.")
-    if "needs: [api, windows]" not in workflow:
-        fail("Publication does not wait for the tests and the Windows build.")
+    if "workflow_dispatch:" not in workflow or "workflow_call:" not in workflow:
+        fail("The workflow cannot be dispatched from main.")
+    if "source:" not in workflow or "publish:" not in workflow or "confirm:" not in workflow:
+        fail("The workflow does not require an explicit source and confirmation.")
+    if "job.workflow_sha" not in workflow:
+        fail("The release scripts are not taken from the workflow file commit.")
+    publisher = (ROOT / "companion/publish_release.py").read_text(encoding="utf-8")
+    if "that same reviewed commit" in publisher or re.search(r"(?m)^[ \t]+WORKFLOW_SHA:", workflow):
+        fail("Publication still requires the caller SHA to equal the Companion commit.")
+    if "needs: [guard]" not in workflow or "needs: [guard, api, windows]" not in workflow:
+        fail("Publication does not wait for source validation, the tests, and the Windows build.")
     if "Scan with Microsoft Defender" not in workflow or "SCANNED.txt" not in workflow:
         fail("Publication does not require a Defender scan.")
     if "companion-wpf-release" not in workflow:

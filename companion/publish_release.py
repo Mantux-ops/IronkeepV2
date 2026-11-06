@@ -12,6 +12,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+import release_source
+
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 HASH = re.compile(r"^[0-9a-f]{64}$")
@@ -81,21 +83,48 @@ def plan_release(directory, expected_commit, expected_version):
     }
 
 
+def publication_gate(source, built_commit, publish, confirm):
+    """Return dry-run or publish. The caller workflow SHA is intentionally absent.
+
+    github.sha on a dispatch from main is main's commit. The built Companion
+    commit is the selected source, and those two are not the same.
+    """
+    if not truthy(publish):
+        return "dry-run"
+    if confirm != "publish":
+        raise SystemExit("Publication requires confirm=publish.")
+    if not COMMIT.fullmatch(source or "") or not COMMIT.fullmatch(built_commit or ""):
+        raise SystemExit("Publication requires the full source commit SHA.")
+    if source.lower() != built_commit.lower():
+        raise SystemExit("Refusing to publish because the built commit is not the requested source.")
+    return "publish"
+
+
+def truthy(value):
+    return str(value).strip().lower() in ("true", "1")
+
+
+def refuse_tag(tag):
+    if tag == "companion-latest" or not str(tag).startswith("companion-v"):
+        raise SystemExit("Refusing to publish " + str(tag) + ".")
+
+
+def release_already_published(view_code, remote_text):
+    return view_code == 0 or bool((remote_text or "").strip())
+
+
 def ensure_absent(tag):
-    if tag == "companion-latest" or not tag.startswith("companion-v"):
-        raise SystemExit("Refusing to publish " + tag + ".")
+    refuse_tag(tag)
     repo = os.environ.get("GITHUB_REPOSITORY", "")
     view = ["gh", "release", "view", tag]
     remote = ["git", "ls-remote", "--tags", "origin", "refs/tags/" + tag]
     if repo:
         view.extend(["--repo", repo])
     existing = subprocess.run(view, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    if existing.returncode == 0:
-        raise SystemExit(tag + " already exists and will not be replaced.")
     listed = subprocess.run(remote, check=False, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     if listed.returncode != 0:
         raise SystemExit("Could not check existing tags.")
-    if listed.stdout.strip():
+    if release_already_published(existing.returncode, listed.stdout):
         raise SystemExit(tag + " already exists and will not be replaced.")
 
 
@@ -135,6 +164,10 @@ def self_test():
         (root / "SCANNED.txt").write_text("defender=pass\ncommit=" + commit + "\n", encoding="utf-8")
         (root / "release-notes.md").write_text("Discord authentication\nSavedVariables layout\n", encoding="utf-8")
         plan = plan_release(root, commit, "2.0.1")
+        if publication_gate(commit, commit, False, "") != "dry-run":
+            raise SystemExit("A dry run tried to publish.")
+        if publication_gate(commit, commit, True, "publish") != "publish":
+            raise SystemExit("An explicit confirmation did not publish.")
         if plan["tag"] != "companion-v2.0.1" or plan["commit"] != commit:
             raise SystemExit("The release plan did not use the immutable tag.")
         if commit not in plan["notes"] or "SHA256" not in plan["notes"]:
@@ -159,12 +192,19 @@ def main(argv):
         return self_test()
     if "--publish" not in argv:
         raise SystemExit("Refusing to publish. The workflow passes --publish after the checks.")
-    directory = os.environ.get("RELEASE_DIR", "release")
-    plan = plan_release(directory, os.environ["EXPECTED_COMMIT"], os.environ["EXPECTED_VERSION"])
     source = os.environ.get("SOURCE_REF", "").strip()
-    workflow_sha = os.environ.get("WORKFLOW_SHA", "").strip()
-    if COMMIT.fullmatch(source) and (source.lower() != plan["commit"] or source.lower() != workflow_sha.lower()):
-        raise SystemExit("A commit release must be dispatched from that same reviewed commit.")
+    built = os.environ.get("EXPECTED_COMMIT", "").strip()
+    release_source.require_script_pin(
+        os.environ.get("GITHUB_EVENT_NAME", ""),
+        os.environ.get("SCRIPTS_INPUT", ""),
+        os.environ.get("JOB_WORKFLOW_SHA", ""),
+    )
+    if publication_gate(source, built, os.environ.get("PUBLISH_REQUESTED", "true"), os.environ.get("PUBLISH_CONFIRM", "")) != "publish":
+        raise SystemExit("Refusing to publish.")
+    directory = os.environ.get("RELEASE_DIR", "release")
+    plan = plan_release(directory, built, os.environ["EXPECTED_VERSION"])
+    if plan["commit"] != built.lower():
+        raise SystemExit("Refusing to publish because the built commit is not the requested source.")
     publish(plan)
     print("published " + plan["tag"] + " " + plan["commit"])
     return 0
