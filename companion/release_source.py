@@ -13,15 +13,35 @@ VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 REVIEWED_BRANCH = "cursor/companion-report-keep-f675"
 
 
-def classify(requested, event_name):
+def invocation(event_name, github_sha="", job_workflow_sha=""):
+    """Return push, workflow_dispatch, or workflow_call.
+
+    github.event_name inside a called workflow is the caller's event. A
+    dispatch from main therefore arrives here as workflow_dispatch. The
+    workflow file commit differs from github.sha only when this file was
+    called. An explicit workflow_call event is accepted as well.
+    """
+    caller = (github_sha or "").lower()
+    workflow_sha = (job_workflow_sha or "").lower()
+    if COMMIT.fullmatch(caller) and COMMIT.fullmatch(workflow_sha) and caller != workflow_sha:
+        return "workflow_call"
+    if event_name == "workflow_call":
+        return "workflow_call"
     if event_name in ("", "push"):
         return "push"
-    if event_name not in ("workflow_dispatch", "workflow_call"):
-        raise SystemExit("This event cannot select a Companion source.")
+    if event_name == "workflow_dispatch":
+        return "workflow_dispatch"
+    raise SystemExit("This event cannot select a Companion source.")
+
+
+def classify(requested, event_name, github_sha="", job_workflow_sha=""):
+    kind = invocation(event_name, github_sha, job_workflow_sha)
+    if kind == "push":
+        return "push"
     requested = (requested or "").strip()
     if requested.lower() == "companion-latest":
         raise SystemExit("companion-latest is not a release source.")
-    if event_name == "workflow_call":
+    if kind == "workflow_call":
         if not COMMIT.fullmatch(requested):
             raise SystemExit("The release dispatch requires a full commit SHA.")
         return "commit"
@@ -85,10 +105,13 @@ def script_commit(event_name, github_sha, job_workflow_sha):
     return job_workflow_sha.lower()
 
 
-def require_script_pin(event_name, scripts_input, job_workflow_sha):
-    if event_name != "workflow_call":
+def require_script_pin(event_name, scripts_input, job_workflow_sha, github_sha=""):
+    kind = invocation(event_name, github_sha, job_workflow_sha)
+    if kind == "push":
         return ""
-    pinned = script_commit(event_name, "", job_workflow_sha)
+    pinned = script_commit(kind, github_sha, job_workflow_sha)
+    if kind != "workflow_call":
+        return pinned
     if not COMMIT.fullmatch(scripts_input or "") or scripts_input.lower() != pinned:
         raise SystemExit("The dispatcher pin does not match the workflow file that is running.")
     return pinned
@@ -141,8 +164,8 @@ def read_version_from_commit(commit):
     return version_from_text(session, project)
 
 
-def selected_commit(requested, event_name):
-    kind = classify(requested, event_name)
+def selected_commit(requested, event_name, github_sha="", job_workflow_sha=""):
+    kind = classify(requested, event_name, github_sha, job_workflow_sha)
     if kind == "push":
         head = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
         if not COMMIT.fullmatch(head):
@@ -184,8 +207,10 @@ def resolve_head(requested, event_name):
 def main():
     event_name = os.environ.get("GITHUB_EVENT_NAME", "")
     requested = os.environ.get("SOURCE_REF", "")
-    require_script_pin(event_name, os.environ.get("SCRIPTS_INPUT", ""), os.environ.get("JOB_WORKFLOW_SHA", ""))
-    head, version = selected_commit(requested, event_name)
+    github_sha = os.environ.get("GITHUB_SHA", "")
+    job_workflow_sha = os.environ.get("JOB_WORKFLOW_SHA", "")
+    require_script_pin(event_name, os.environ.get("SCRIPTS_INPUT", ""), job_workflow_sha, github_sha)
+    head, version = selected_commit(requested, event_name, github_sha, job_workflow_sha)
     print("source " + head)
     print("version " + version)
     output = os.environ.get("GITHUB_OUTPUT", "")

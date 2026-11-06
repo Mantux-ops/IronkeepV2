@@ -198,6 +198,7 @@ def main(argv):
         os.environ.get("GITHUB_EVENT_NAME", ""),
         os.environ.get("SCRIPTS_INPUT", ""),
         os.environ.get("JOB_WORKFLOW_SHA", ""),
+        os.environ.get("GITHUB_SHA", ""),
     )
     if publication_gate(source, built, os.environ.get("PUBLISH_REQUESTED", "true"), os.environ.get("PUBLISH_CONFIRM", "")) != "publish":
         raise SystemExit("Refusing to publish.")

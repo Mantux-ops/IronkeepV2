@@ -1,8 +1,11 @@
 """Protections for the manual Companion release dispatch."""
 
+import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import publish_release
 import release_source
@@ -77,6 +80,100 @@ class PublicationSafeguardTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             release_source.require_script_pin("workflow_call", pin, "f" * 40)
         self.assertEqual(release_source.require_script_pin("push", "", ""), "")
+
+    def test_a_caller_dispatch_is_not_a_direct_dispatch(self):
+        pin = "e" * 40
+        self.assertEqual(release_source.invocation("workflow_dispatch", CALLER, pin), "workflow_call")
+        self.assertEqual(release_source.invocation("push", CALLER, pin), "workflow_call")
+        self.assertEqual(release_source.classify("c" * 40, "workflow_dispatch", CALLER, pin), "commit")
+        with self.assertRaises(SystemExit):
+            release_source.classify("companion-v2.0.1", "workflow_dispatch", CALLER, pin)
+        self.assertEqual(release_source.require_script_pin("workflow_dispatch", pin, pin, CALLER), pin)
+        with self.assertRaises(SystemExit):
+            release_source.require_script_pin("workflow_dispatch", CALLER, pin, CALLER)
+        with self.assertRaises(SystemExit):
+            release_source.require_script_pin("workflow_dispatch", pin, "", CALLER)
+
+    def test_a_direct_dispatch_can_still_select_a_version_tag(self):
+        pin = "e" * 40
+        self.assertEqual(release_source.invocation("workflow_dispatch", pin, pin.upper()), "workflow_dispatch")
+        self.assertEqual(release_source.invocation("push", pin, pin), "push")
+        self.assertEqual(release_source.classify("companion-v2.0.1", "workflow_dispatch", pin, pin), "tag")
+        self.assertEqual(release_source.require_script_pin("workflow_dispatch", "", pin, pin), pin)
+
+    def test_release_job_uses_the_workflow_file_and_not_the_source_commit(self):
+        workflow = (ROOT / ".github/workflows/companion.yml").read_text(encoding="utf-8")
+        self.assertNotIn("actions: write", workflow)
+        release = workflow.split("  release:", 1)[1]
+        checkout = release.split("uses: actions/checkout@v4", 1)[1].split("uses: actions/setup-python", 1)[0]
+        self.assertIn("job.workflow_repository", checkout)
+        self.assertIn("job.workflow_sha", checkout)
+        self.assertNotIn("needs.guard.outputs.commit", checkout)
+        self.assertNotIn("github.sha", checkout)
+        self.assertIn("success()", release)
+        self.assertLess(workflow.index("Scan with Microsoft Defender"), workflow.index("name: companion-wpf-release"))
+
+    def test_publish_entrypoint_stops_before_gh(self):
+        pin = "e" * 40
+        source = "c" * 40
+        cases = [
+            {"SCRIPTS_INPUT": "f" * 40, "SOURCE_REF": source, "EXPECTED_COMMIT": source, "PUBLISH_CONFIRM": "publish"},
+            {"SCRIPTS_INPUT": pin, "SOURCE_REF": source, "EXPECTED_COMMIT": "d" * 40, "PUBLISH_CONFIRM": "publish"},
+            {"SCRIPTS_INPUT": pin, "SOURCE_REF": source, "EXPECTED_COMMIT": source, "PUBLISH_CONFIRM": ""},
+        ]
+        for extra in cases:
+            env = {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_SHA": CALLER,
+                "JOB_WORKFLOW_SHA": pin,
+                "PUBLISH_REQUESTED": "true",
+                "EXPECTED_VERSION": "2.0.1",
+            }
+            env.update(extra)
+            with patch.dict(os.environ, env, clear=False):
+                with patch("publish_release.subprocess.run") as queried:
+                    with patch("publish_release.subprocess.check_call") as created:
+                        with self.assertRaises(SystemExit):
+                            publish_release.main(["--publish"])
+                        queried.assert_not_called()
+                        created.assert_not_called()
+
+    def test_publish_entrypoint_does_not_replace_an_existing_tag(self):
+        pin = "e" * 40
+        source = "c" * 40
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            payload = b"MZ" + (b"\0" * publish_release.MIN_EXECUTABLE_BYTES)
+            for name in publish_release.RELEASE_FILES:
+                (root / name).write_bytes(payload)
+            sums = "".join(publish_release._sha256(root / name) + "  " + name + "\n" for name in publish_release.RELEASE_FILES)
+            (root / "SHA256SUMS.txt").write_text(sums, encoding="utf-8")
+            (root / "BUILD.txt").write_text("version=2.0.1\ncommit=" + source + "\n", encoding="utf-8")
+            (root / "SCANNED.txt").write_text("defender=pass\ncommit=" + source + "\n", encoding="utf-8")
+            (root / "release-notes.md").write_text("Discord authentication\nSavedVariables layout\n", encoding="utf-8")
+            env = {
+                "GITHUB_EVENT_NAME": "workflow_dispatch",
+                "GITHUB_SHA": CALLER,
+                "JOB_WORKFLOW_SHA": pin,
+                "SCRIPTS_INPUT": pin,
+                "SOURCE_REF": source,
+                "EXPECTED_COMMIT": source,
+                "PUBLISH_REQUESTED": "true",
+                "PUBLISH_CONFIRM": "publish",
+                "EXPECTED_VERSION": "2.0.1",
+                "RELEASE_DIR": str(root),
+            }
+            view = subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="existing", stderr="")
+            listed = subprocess.CompletedProcess(args=["git"], returncode=0, stdout="abc\trefs/tags/companion-v2.0.1\n", stderr="")
+            with patch.dict(os.environ, env, clear=False):
+                with patch("publish_release.subprocess.run", side_effect=[view, listed]) as queried:
+                    with patch("publish_release.subprocess.check_call") as created:
+                        with self.assertRaises(SystemExit) as raised:
+                            publish_release.main(["--publish"])
+                        self.assertIn("will not be replaced", str(raised.exception))
+                        created.assert_not_called()
+                        for call in queried.call_args_list:
+                            self.assertNotIn("delete", call.args[0])
 
     def test_existing_companion_latest_and_versioned_tags_are_not_replaced(self):
         with self.assertRaises(SystemExit) as raised:

@@ -62,6 +62,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
           ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
           fetch-depth: 0
       - name: Validate the selected source
@@ -69,6 +70,7 @@ jobs:
         env:
           SOURCE_REF: ${{ inputs.source }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
           SCRIPTS_INPUT: ${{ inputs.scripts }}
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: python companion/release_source.py
@@ -100,10 +102,20 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Confirm the guarded checkout
+        run: |
+          expected="${{ needs.guard.outputs.commit }}"
+          case "$expected" in
+            *[!0-9a-fA-F]*|"") echo "The guarded commit is not a full SHA."; exit 1 ;;
+          esac
+          if [ "${#expected}" -ne 40 ]; then echo "The guarded commit is not a full SHA."; exit 1; fi
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$expected" ]; then echo "Checked out $head instead of $expected."; exit 1; fi
       - name: Resolve the selected source
         env:
           SOURCE_REF: ${{ inputs.source }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
           SCRIPTS_INPUT: ${{ inputs.scripts }}
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: python companion/release_source.py
@@ -125,7 +137,6 @@ jobs:
     if: needs.guard.result == 'success' && (github.event_name == 'push' || inputs.publish != true || inputs.confirm == 'publish')
     runs-on: windows-latest
     permissions:
-      actions: write
       contents: read
     defaults:
       run:
@@ -147,11 +158,18 @@ jobs:
         with:
           dotnet-version: "10.0.x"
 
+      - name: Confirm the guarded checkout
+        run: |
+          $expected = "${{ needs.guard.outputs.commit }}"
+          if ($expected -notmatch '^[0-9a-fA-F]{40}$') { Write-Error "The guarded commit is not a full SHA."; exit 1 }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $expected) { Write-Error "Checked out $head instead of $expected."; exit 1 }
       - name: Resolve the selected source
         id: source
         env:
           SOURCE_REF: ${{ inputs.source }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
           SCRIPTS_INPUT: ${{ inputs.scripts }}
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
         run: python companion/release_source.py
@@ -413,7 +431,7 @@ jobs:
 
   release:
     needs: [guard, api, windows]
-    if: github.event_name != 'push' && inputs.publish == true && inputs.confirm == 'publish'
+    if: success() && github.event_name != 'push' && inputs.publish == true && inputs.confirm == 'publish'
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -440,6 +458,7 @@ jobs:
           PUBLISH_REQUESTED: ${{ inputs.publish }}
           PUBLISH_CONFIRM: ${{ inputs.confirm }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
           SCRIPTS_INPUT: ${{ inputs.scripts }}
           JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
           RELEASE_DIR: release
