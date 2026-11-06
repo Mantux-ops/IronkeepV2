@@ -112,6 +112,15 @@ class PublicationSafeguardTest(unittest.TestCase):
         self.assertNotIn("github.sha", checkout)
         self.assertIn("success()", release)
         self.assertLess(workflow.index("Scan with Microsoft Defender"), workflow.index("name: companion-wpf-release"))
+        api = workflow.split("  api:", 1)[1].split("  windows:", 1)[0]
+        trusted = api.split("- name: Check out the trusted release scripts", 1)[1].split("- name: Confirm the trusted release scripts", 1)[0]
+        check = api.split("- name: Check the release workflow", 1)[1].split("- name: Test the attendance route", 1)[0]
+        self.assertIn("path: trusted", trusted)
+        self.assertIn("job.workflow_sha", trusted)
+        self.assertNotIn("needs.guard.outputs.commit", trusted)
+        self.assertIn("working-directory: trusted", check)
+        self.assertIn("ref: ${{ needs.guard.outputs.commit }}", api)
+        self.assertNotIn("working-directory: trusted", api.split("- name: Test the attendance route", 1)[1])
 
     def test_publish_entrypoint_stops_before_gh(self):
         pin = "e" * 40
