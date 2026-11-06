@@ -24,12 +24,17 @@ profile are refused before Discord is asked. The one administrator
 exception is the Ironkeep superadmin (``config.SUPERADMIN_ID``), and only
 after the guild is WoW and Discord confirms that account is a member. A
 guild the account has not joined is not listed and cannot be approved.
-Token refresh and guild lookup repeat that check through the bot's
-guild-member lookup, because the Companion does not keep the user's
-Discord token.
+Token refresh, guild lookup, and attendance upload repeat that check
+through the bot's guild-member lookup, because the Companion does not
+keep the user's Discord token.
+
+The desktop Companion posts one ``format: ironkeep-group 1`` group list to
+``POST /api/companion/guilds/{slug}/attendance``. The slug is accepted only
+when it resolves to the guild id bound to the ``ika.`` access token.
+Uploaded reports stay in their own tables. They are not raid attendance.
 
 The routes stay missing unless ``IRONKEEP_COMPANION_AUTH`` is set. No
-deployment file sets it. Attendance upload is not part of this module.
+deployment file sets it.
 """
 
 import base64
@@ -43,7 +48,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from . import config, db, discord_api
+from . import companion_reports, config, db, discord_api
 
 ACCESS_SECONDS = 600
 REFRESH_SECONDS = 30 * 86400
@@ -58,6 +63,7 @@ _STATE_RE = re.compile(r"^[A-Za-z0-9._~-]{16,128}$")
 _VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 _CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _PATH_RE = re.compile(r"/[A-Za-z0-9._~/-]{0,200}")
+_UPLOAD = re.compile(r"^/api/companion/guilds/[^/]+/attendance$")
 _EXACT = {
     "/companion/connect",
     "/api/companion/token",
@@ -82,7 +88,7 @@ def hidden(request: Request):
     if _active():
         return None
     path = request.url.path
-    if path in _EXACT:
+    if path in _EXACT or _UPLOAD.fullmatch(path):
         return _disabled()
     return None
 
@@ -907,3 +913,88 @@ def guilds(request: Request):
         _end_family(row["family_id"])
         return _json_error("You cannot connect the Companion for that guild.", 403)
     return _no_store(JSONResponse({"ok": True, "guilds": [{"id": guild["id"], "slug": guild["slug"], "name": guild["name"]}]}))
+
+
+def _upload_guild(slug, guild_id):
+    """The guild bound to this token, and only when the URL names that guild."""
+    bound = db.guild_by_id(guild_id)
+    if bound is None:
+        return None
+    if str(bound["slug"]).casefold() != str(slug or "").strip().casefold():
+        return None
+    return bound
+
+
+def _plain_report(request):
+    raw = request.headers.get("content-type", "")
+    if not raw:
+        return False
+    media, _, params = raw.partition(";")
+    if media.strip().lower() != "text/plain":
+        return False
+    for param in params.split(";"):
+        if not param.strip():
+            continue
+        key, separator, value = param.partition("=")
+        if separator and key.strip().lower() == "charset" and value.strip().strip('"').lower() not in ("utf-8", "utf8"):
+            return False
+    return True
+
+
+async def _report_bytes(request):
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > companion_reports.MAX_BYTES:
+                return None
+        except ValueError:
+            raise companion_reports.ReportError("This report could not be read.")
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > companion_reports.MAX_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.post("/api/companion/guilds/{slug}/attendance")
+async def upload_attendance(slug: str, request: Request):
+    if not _active():
+        return _disabled()
+    row = _credential(_bearer(request, ACCESS_PREFIX), "access")
+    if row is None:
+        return _json_error("Companion login is required.", 401)
+    guild = _upload_guild(slug, row["guild_id"])
+    if guild is None:
+        return _json_error("You cannot connect the Companion for that guild.", 403)
+    allowed = connect_allowed(row["user_id"], guild)
+    if allowed is None:
+        return _json_error("Discord could not be reached. Try again.", 503)
+    if not allowed:
+        _end_family(row["family_id"])
+        return _json_error("You cannot connect the Companion for that guild.", 403)
+    if not _plain_report(request):
+        return _json_error("This report could not be read.", 415)
+    try:
+        raw = await _report_bytes(request)
+    except companion_reports.ReportError as error:
+        return _json_error(error.args[0], 400)
+    if raw is None:
+        return _json_error("This report is too large.", 413)
+    try:
+        text = raw.decode("utf-8")
+        report = companion_reports.parse_text(text)
+        body_hash = companion_reports.digest(text)
+    except UnicodeDecodeError:
+        return _json_error("This report could not be read.", 400)
+    except companion_reports.ReportError as error:
+        return _json_error(error.args[0], 400)
+    try:
+        duplicate = companion_reports.store(str(guild["id"]), report, body_hash)
+    except Exception:
+        return _json_error("The report could not be stored.", 500)
+    if duplicate:
+        return _no_store(JSONResponse({"ok": True, "duplicate": True}))
+    return _no_store(JSONResponse({"ok": True}))
