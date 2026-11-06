@@ -10,6 +10,7 @@ The script does not read /etc/ironkeep.env and it does not execute
 ironkeep.main, because that calls db.init().
 """
 
+import inspect
 import os
 import py_compile
 import sys
@@ -53,6 +54,14 @@ if "connect_allowed" not in names or "_upload_guild" not in names:
     sys.exit("Upload does not recheck the guild bound to the token")
 if not hasattr(reports, "parse_text") or not hasattr(reports, "store"):
     sys.exit("Report parser is missing")
+import ironkeep.db as database
+deletion = inspect.getsource(database.delete_guild) + inspect.getsource(database._delete_companion_reports)
+if "_delete_companion_reports" not in inspect.getsource(database.delete_guild):
+    sys.exit("Guild deletion does not remove companion reports")
+if "companion_reports" not in deletion or "companion_report_hashes" not in deletion:
+    sys.exit("Guild deletion does not remove companion reports")
+if "LIMIT 20" in inspect.getsource(reports.store):
+    sys.exit("Report storage still trims accepted reports")
 
 routes = sorted(
     (getattr(route, "path", ""), tuple(sorted(getattr(route, "methods", None) or ())))
