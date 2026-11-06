@@ -12,7 +12,7 @@ namespace Ironkeep.Companion
     /// </summary>
     public sealed class CompanionSession : IDisposable
     {
-        public const string Version = "2.0.0";
+        public const string Version = "2.0.1";
         public const string StartupName = "IronkeepCompanion";
 
         readonly CompanionConfigStore _store;
