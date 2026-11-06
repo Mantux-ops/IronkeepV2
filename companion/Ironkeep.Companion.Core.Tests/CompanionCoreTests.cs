@@ -31,6 +31,13 @@ namespace Ironkeep.Companion.Core.Tests
         }
 
         [Fact]
+        public void DisplayedVersionIsTheReleaseVersion()
+        {
+            Assert.Equal("2.0.1", CompanionSession.Version);
+            Assert.Equal("2.0.1", new DashboardViewModel().Version);
+        }
+
+        [Fact]
         public void ConfigRoundTripKeepsTheKeyProtected()
         {
             var store = new CompanionConfigStore(Path.Combine(_root, "settings.txt"), new PrefixProtector());

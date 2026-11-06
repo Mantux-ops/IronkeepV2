@@ -11,21 +11,42 @@ on:
       - "tests/test_companion_auth.py"
       - ".github/workflows/companion.yml"
   workflow_dispatch:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA or existing companion-vX.Y.Z tag"
+        required: true
+        type: string
+      publish:
+        description: "Publish companion-vX.Y.Z after the tests, build, and Defender scan pass"
+        required: true
+        type: boolean
+        default: false
 
 permissions:
-  contents: write
+  contents: read
+  actions: write
 
 jobs:
   api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source || github.sha }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Resolve the selected source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: python companion/release_source.py
+      - name: Check the release workflow
+        run: python companion/check_release_workflow.py
       - name: Test the attendance route
         run: |
           python -m pip install -r requirements.txt httpx
@@ -40,8 +61,14 @@ jobs:
     defaults:
       run:
         shell: pwsh
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.source || github.sha }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -50,6 +77,13 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+
+      - name: Resolve the selected source
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+        run: python companion/release_source.py
 
       - name: Test the sync library
         run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
@@ -224,6 +258,25 @@ jobs:
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
           }
 
+      - name: Build the WPF installer
+        working-directory: companion
+        run: |
+          $iscc = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Error 'Inno Setup compiler was not found.'; exit 1 }
+          $version = "${{ steps.source.outputs.version }}"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { Write-Error "Version '$version' cannot be built."; exit 1 }
+          & $iscc "/DAppVersion=$version" wpf-setup.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force out\release | Out-Null
+          Copy-Item out\wpf\IronkeepCompanion.exe out\release\IronkeepCompanion.exe -Force
+          if (-not (Test-Path out\release\IronkeepCompanionSetup.exe)) { Write-Error 'The WPF installer was not created.'; exit 1 }
+          $staged = Get-Item out\release\IronkeepCompanion.exe
+          $built = Get-Item out\wpf\IronkeepCompanion.exe
+          if ($staged.Length -ne $built.Length) { Write-Error 'The staged executable does not match the published executable.'; exit 1 }
+
       - name: Scan with Microsoft Defender
         working-directory: companion
         run: |
@@ -233,7 +286,7 @@ jobs:
           Get-MpComputerStatus | Format-List AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
 
           $flagged = $false
-          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\wpf\IronkeepCompanion.exe')) {
+          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\release\IronkeepCompanion.exe', 'out\release\IronkeepCompanionSetup.exe')) {
             $path = (Resolve-Path $file).Path
             & $mp -Scan -ScanType 3 -File $path -DisableRemediation | Out-Host
             $code = $LASTEXITCODE
@@ -243,17 +296,38 @@ jobs:
           }
           try { Get-MpThreatDetection | Format-List | Out-Host } catch { }
           if ($flagged) { Write-Error 'Defender flagged the new build.'; exit 1 }
+
+          $commit = "${{ steps.source.outputs.commit }}"
+          $version = "${{ steps.source.outputs.version }}"
+          if ($commit -notmatch '^[0-9a-fA-F]{40}$') { Write-Error 'The source commit is not a full SHA.'; exit 1 }
+          $sums = @()
+          foreach ($name in @('IronkeepCompanionSetup.exe', 'IronkeepCompanion.exe')) {
+            $path = Join-Path (Join-Path (Get-Location) 'out\release') $name
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sums += "$hash  $name"
+          }
+          Set-Content -Path out\release\SHA256SUMS.txt -Encoding ascii -Value ($sums -join "`n")
+          Set-Content -Path out\release\BUILD.txt -Encoding ascii -Value "version=$version`ncommit=$($commit.ToLowerInvariant())`n"
+          Set-Content -Path out\release\SCANNED.txt -Encoding ascii -Value "defender=pass`ncommit=$($commit.ToLowerInvariant())`n"
+          Copy-Item release-notes.md out\release\release-notes.md -Force
           exit 0
 
       - uses: actions/upload-artifact@v4
         with:
-          name: IronkeepCompanion-${{ github.sha }}
+          name: companion-wpf-release
+          if-no-files-found: error
           path: |
-            companion/out/IronkeepCompanionSetup.exe
-            companion/out/IronkeepCompanion.exe
-            companion/IronkeepCompanion.exe.config
-            companion/out/BUILD.txt
-            companion/out/wpf/IronkeepCompanion.exe
+            companion/out/release/IronkeepCompanionSetup.exe
+            companion/out/release/IronkeepCompanion.exe
+            companion/out/release/SHA256SUMS.txt
+            companion/out/release/BUILD.txt
+            companion/out/release/SCANNED.txt
+            companion/out/release/release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IronkeepCompanion-preview-${{ steps.source.outputs.commit }}
+          path: |
             companion/out/wpf/SIZE.txt
             companion/out/wpf/preview/dashboard.png
             companion/out/wpf/preview/settings.png
@@ -266,15 +340,28 @@ jobs:
             companion/out/wpf/preview/connected-125.png
             companion/out/wpf/preview/connected-150.png
 
-      - name: Publish the download
-        if: github.ref == 'refs/heads/cursor/forever-companion-f675' || github.ref == 'refs/heads/cursor/companion-attendance-f675' || github.ref == 'refs/heads/cursor/forever-addon-f675' || github.ref == 'refs/heads/cursor/companion-windows-ci-f675'
-        working-directory: companion
+  release:
+    needs: [api, windows]
+    if: github.event_name == 'workflow_dispatch' && inputs.publish == true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: companion-wpf-release
+          path: release
+      - name: Publish the immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $setup = (Get-FileHash out\IronkeepCompanionSetup.exe -Algorithm SHA256).Hash
-          $window = (Get-FileHash out\IronkeepCompanion.exe -Algorithm SHA256).Hash
-          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst. Vul zelf de Forever-gilde in en plak de sleutel van de raids-pagina. Daarna stuurt het de lijst. De sleutel blijft alleen voor deze Windows-gebruiker bewaard.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
-          gh release delete companion-latest --yes --cleanup-tag 2>$null
-          gh release create companion-latest out\IronkeepCompanionSetup.exe out\IronkeepCompanion.exe IronkeepCompanion.exe.config out\BUILD.txt --prerelease --target $env:GITHUB_SHA --title 'Ironkeep Companion' --notes $notes
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          EXPECTED_COMMIT: ${{ needs.windows.outputs.commit }}
+          EXPECTED_VERSION: ${{ needs.windows.outputs.version }}
+          SOURCE_REF: ${{ inputs.source }}
+          WORKFLOW_SHA: ${{ github.sha }}
+          RELEASE_DIR: release
+        run: python companion/publish_release.py --publish
