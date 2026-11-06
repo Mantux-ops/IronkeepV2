@@ -1,0 +1,77 @@
+#!/usr/bin/env python3
+"""Import the Companion modules without opening the production database.
+
+Run from the server after the files are in place:
+
+    cd /opt/ironkeep
+    .venv/bin/python /path/to/check_imports.py
+
+The script does not read /etc/ironkeep.env and it does not execute
+ironkeep.main, because that calls db.init().
+"""
+
+import os
+import py_compile
+import sys
+
+PRODUCTION_DB = "/var/lib/ironkeep/ironkeep.db"
+for name in (
+    "IRONKEEP_DB",
+    "IRONKEEP_COMPANION_AUTH",
+    "DISCORD_BOT_TOKEN",
+    "DISCORD_CLIENT_ID",
+    "DISCORD_CLIENT_SECRET",
+    "DISCORD_TOKEN",
+):
+    os.environ.pop(name, None)
+os.environ["IRONKEEP_ENV_FILE"] = "/tmp/ironkeep-phase2-no-such-env"
+
+import ironkeep
+import ironkeep.companion_auth as auth
+import ironkeep.companion_reports as reports
+import ironkeep.config as config
+
+root = os.path.dirname(os.path.abspath(ironkeep.__file__))
+if os.path.abspath(root).startswith("/var/lib/ironkeep"):
+    sys.exit("Refusing to run inside the database directory")
+
+for relative in ("config.py", "db.py", "main.py", "companion_auth.py", "companion_reports.py"):
+    path = os.path.join(root, relative)
+    if not os.path.isfile(path):
+        sys.exit("Missing " + path)
+    if path.endswith(".py"):
+        py_compile.compile(path, doraise=True)
+
+if config.companion_auth_enabled():
+    sys.exit("IRONKEEP_COMPANION_AUTH is on in this process")
+if config.DB_PATH == PRODUCTION_DB:
+    sys.exit("This process resolved the production database")
+if "guild_game" not in auth.connect_allowed.__code__.co_names:
+    sys.exit("The WoW guild check is missing from connect_allowed")
+names = auth.upload_attendance.__code__.co_names
+if "connect_allowed" not in names or "_upload_guild" not in names:
+    sys.exit("Upload does not recheck the guild bound to the token")
+if not hasattr(reports, "parse_text") or not hasattr(reports, "store"):
+    sys.exit("Report parser is missing")
+
+routes = sorted(
+    (getattr(route, "path", ""), tuple(sorted(getattr(route, "methods", None) or ())))
+    for route in auth.router.routes
+)
+expected = [
+    ("/api/companion/guilds", ("GET",)),
+    ("/api/companion/guilds/{slug}/attendance", ("POST",)),
+    ("/api/companion/logout", ("POST",)),
+    ("/api/companion/revoke", ("POST",)),
+    ("/api/companion/token", ("POST",)),
+    ("/companion/connect", ("GET",)),
+    ("/companion/connect", ("POST",)),
+]
+if routes != expected:
+    shown = ", ".join(" ".join(methods) + " " + path for path, methods in routes)
+    sys.exit("Unexpected Companion routes: " + shown)
+
+print("import check ok")
+print("flag off")
+print("routes " + ", ".join(" ".join(methods) + " " + path for path, methods in routes))
+print("database " + (config.DB_PATH or "(unset)"))

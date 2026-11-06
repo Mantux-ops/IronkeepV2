@@ -1,0 +1,5 @@
+# path before_sha256 after_sha256
+# before_sha256 is '-' when the file does not exist yet
+# companion_auth.py before is the Phase 1 file from commit 8cc056c (PR #39)
+companion_auth.py 1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4 8799e163f0db6123605671c8b5db4b12d472af130c845b64f5523cbcf20ef6ca
+companion_reports.py - 51726eed1fa54aa0c05d395d671a1160400b5ae5c864d5c6ea6f5f6824ee42b2

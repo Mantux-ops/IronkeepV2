@@ -160,10 +160,17 @@ class Phase1Tests(unittest.TestCase):
     def test_flag_off_hides_routes_and_leaves_website_login(self):
         response = self.client.get("/companion/connect", params=self.connect_query())
         self.assertEqual(response.status_code, 404)
-        for path in ("/api/companion/token", "/api/companion/revoke", "/api/companion/logout", "/api/companion/guilds"):
+        for path in (
+            "/api/companion/token",
+            "/api/companion/revoke",
+            "/api/companion/logout",
+            "/api/companion/guilds",
+            "/api/companion/guilds/keep/attendance",
+        ):
             self.assertEqual(self.client.post(path).status_code, 404)
         self.assertNotIn("companion_connect", self.tables())
         self.assertNotIn("companion_credentials", self.tables())
+        self.assertNotIn("companion_reports", self.tables())
         login = self.client.get("/login", follow_redirects=False)
         self.assertEqual(login.status_code, 303)
         query = urllib.parse.parse_qs(urllib.parse.urlsplit(login.headers["location"]).query)
@@ -189,7 +196,10 @@ class Phase1Tests(unittest.TestCase):
             "/api/companion/guilds/keep/attendance",
             headers={"Authorization": "Bearer " + body["access_token"]},
         )
-        self.assertEqual(upload.status_code, 404)
+        self.assertEqual(upload.status_code, 415)
+        self.assertEqual(upload.json()["ok"], False)
+        self.assertNotIn(body["access_token"], upload.text)
+        self.assertNotIn("companion_reports", self.tables())
 
     def test_invalid_redirect_and_bad_token_request_are_refused(self):
         self.enable()
