@@ -56,6 +56,20 @@ def main():
         fail("Publication does not require the guard, tests, Windows build, and Defender scan to succeed.")
     if "actions: write" in workflow:
         fail("A build job still has Actions write access.")
+    api = workflow.split("  api:", 1)[1].split("  windows:", 1)[0]
+    trusted = api.split("- name: Check out the trusted release scripts", 1)[1].split("- name: Confirm the trusted release scripts", 1)[0]
+    if "path: trusted" not in trusted or "job.workflow_sha" not in trusted:
+        fail("The trusted release scripts are not checked out from the workflow file.")
+    if "needs.guard.outputs.commit" in trusted:
+        fail("The trusted release scripts are checked out from the selected source.")
+    check = api.split("- name: Check the release workflow", 1)[1].split("- name: Test the attendance route", 1)[0]
+    if "working-directory: trusted" not in check or "test_release_dispatch.py" not in check:
+        fail("Release infrastructure tests do not run from the trusted workflow checkout.")
+    if "ref: ${{ needs.guard.outputs.commit }}" not in api:
+        fail("Application tests do not use the selected source commit.")
+    attendance = api.split("- name: Test the attendance route", 1)[1]
+    if "working-directory: trusted" in attendance:
+        fail("Application tests run from the trusted workflow checkout.")
     scan_at = workflow.find("Scan with Microsoft Defender")
     upload_at = workflow.find("name: companion-wpf-release")
     if scan_at < 0 or upload_at < 0 or scan_at > upload_at:
