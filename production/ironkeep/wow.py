@@ -4371,20 +4371,38 @@ def handle_temp_voice(guild_id, user_id, name, role_ids, left_id, joined_id, lef
             db.clear_temp_room_empty(joined_id)
 
 
-def settle_temp_rooms(guild, now):
+def settle_temp_rooms(guild, now, voice=None):
+    """Remove a room after it has stayed empty for the configured number of minutes.
+
+    voice maps a guild id to the channels the bot can currently see and how many
+    people are in each. A visible room with nobody in it starts that timer even
+    when the leave event never recorded the empty moment. Someone walking in
+    clears the timer. The caller does not count bots as people.
+    """
+    from datetime import timezone
+
     config_wow = db.wow_settings(guild.get("settings"))
     if not config_wow["temp_voice"]:
         return
     wait = timedelta(minutes=config_wow["temp_voice_empty"])
+    seen = None if voice is None else voice.get(str(guild["id"]))
     for room in db.temp_rooms(guild["id"]):
+        channel_id = str(room["channel_id"])
         empty = room.get("empty_at")
-        if not empty:
-            continue
-        if _aware(empty) <= now - wait:
-            _drop_temp_room(room["channel_id"])
+        if seen is not None and channel_id in seen.get("channels", ()):
+            occupied = int((seen.get("counts") or {}).get(channel_id, 0) or 0)
+            if occupied:
+                if empty:
+                    db.clear_temp_room_empty(channel_id)
+                continue
+            if not empty:
+                db.mark_temp_room_empty(channel_id, now.astimezone(timezone.utc).isoformat())
+                continue
+        if empty and _aware(empty) <= now - wait:
+            _drop_temp_room(channel_id)
 
 
-def sync_temp_voice(guild, now):
+def sync_temp_voice(guild, now, voice=None):
     """Keep the click channel present, and remove rooms that stayed empty."""
     import time
 
@@ -4395,11 +4413,11 @@ def sync_temp_voice(guild, now):
     if not config_wow.get("temp_voice_hub_id") or time.monotonic() - _hub_seen.get(guild_id, 0) > 60:
         try:
             ensure_temp_hub(guild)
-        except discord_api.DiscordError as error:
+        except Exception as error:
             _hub_seen[guild_id] = time.monotonic()
-            log.warning("Could not open the join channel for %s: %s", guild_id, error)
-            return
-    settle_temp_rooms(guild, now)
+            detail = getattr(error, "body", None) or error
+            log.warning("Could not open the join channel for %s: %s", guild_id, detail)
+    settle_temp_rooms(guild, now, voice)
 
 
 _ATTENDANCE_STATE = {
@@ -4679,7 +4697,7 @@ def _history_result(item):
     return "", "grey"
 
 
-def run_schedule(now=None):
+def run_schedule(now=None, voice=None):
     """Close signup when a raid starts, and send the reminders saved on that raid."""
     from datetime import datetime, timezone
 
@@ -4694,7 +4712,7 @@ def run_schedule(now=None):
             detail = getattr(error, "body", None) or error
             log.warning("Could not sync voice for %s: %s", guild.get("id"), detail)
         try:
-            sync_temp_voice(guild, now)
+            sync_temp_voice(guild, now, voice)
         except Exception as error:
             detail = getattr(error, "body", None) or error
             log.warning("Could not sync temporary voice for %s: %s", guild.get("id"), detail)
