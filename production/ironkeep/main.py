@@ -233,7 +233,14 @@ def page_access(request, guild):
     person = viewer(request)
     if not config.live():
         label = "Superadmin" if person["superadmin"] else "Recruiter"
-        return {"trials": True, "payout": True, "lootsplit": True, "characters": False, "label": label}
+        return {
+            "trials": True,
+            "payout": True,
+            "lootsplit": True,
+            "characters": False,
+            "roster": False,
+            "label": label,
+        }
     session = _session(request)
     wow_server = db.guild_game(guild["settings"]) == "wow"
     staff_area = can_access(session, guild)
@@ -257,6 +264,7 @@ def page_access(request, guild):
         "lootsplit": lootsplit,
         "raids": staff_area and wow_server,
         "members": can_edit_settings(session, guild) if wow_server else staff_area,
+        "roster": can_edit_settings(session, guild) if wow_server else False,
         "settings": can_edit_settings(session, guild) if wow_server else staff_area,
         "tickets": can_view_tickets(session, guild) if wow_server else False,
         "characters": member or (staff_area and wow_server),
@@ -730,6 +738,9 @@ def guild_roster(slug: str, request: Request):
     guild, error = guild_or_404(request, slug)
     if error:
         return error
+    moved = _away_from(guild, "wow")
+    if moved:
+        return moved
     if db.guild_game(guild.get("settings")) != "wow":
         return render(
             request,

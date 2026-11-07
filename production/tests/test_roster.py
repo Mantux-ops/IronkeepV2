@@ -36,6 +36,9 @@ def snapshot(captured_at, name="Ada Smith", guild_name="Herberg", level=70):
 
 class ProductionRosterTests(unittest.TestCase):
     def setUp(self):
+        import ironkeep.main as site
+
+        site.templates.env.globals["asset"] = lambda path: "/static/" + path
         self.fx = phase1.Phase1Tests()
         self.fx.setUp()
         self.fx.enable()
@@ -125,6 +128,25 @@ class ProductionRosterTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200, page.text)
         self.assertIn("Ada Smith", page.text)
         self.assertIn("Herberg", page.text)
+        self.assertIn('href="/dutchchaos/roster"', page.text)
+        self.assertIn(">Roster<", page.text)
+
+    def test_an_albion_guild_is_sent_to_its_own_home(self):
+        self.fx.guild("33", "albionkeep", self.fx.albion_settings(["9"]))
+        self.fx.session(config.SUPERADMIN_ID)
+        page = self.fx.client.get("/albionkeep/roster", cookies={"ik_session": self.fx.website}, follow_redirects=False)
+        self.assertEqual(page.status_code, 303, page.text)
+        self.assertTrue(page.headers["location"].endswith("/albionkeep/trial"))
+
+    def test_a_member_without_the_members_page_is_refused(self):
+        from unittest.mock import patch
+
+        self.fx.session("200")
+        with patch("ironkeep.discord_api.guild_member", return_value={"roles": [], "user": {"id": "200"}}):
+            page = self.fx.client.get("/dutchchaos/roster", cookies={"ik_session": self.fx.website})
+        self.assertEqual(page.status_code, 403, page.text)
+        self.assertIn("include this page", page.text)
+        self.assertNotIn("Guild roster", page.text)
 
 
 if __name__ == "__main__":

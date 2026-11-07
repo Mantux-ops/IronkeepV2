@@ -1,24 +1,36 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <title>Roster · {{ guild.name }} · Ironkeep</title>
-</head>
-<body>
-  <main>
-    <h1>Guild roster</h1>
-    <p>{{ guild.name }} · the snapshot the companion read from WoW Forever.</p>
-    {% if roster %}
-    <h2>{{ roster.wow_guild_name }}</h2>
-    <p>{{ roster.members|length }} members · captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
-    <ul>
-      {% for member in roster.members %}
-      <li>{{ member.name }} · {{ member.className }} · {{ member.classToken }} · level {{ member.level }} · {{ member.rankName }} · {{ member.guid }}</li>
-      {% endfor %}
-    </ul>
-    {% else %}
-    <p>No guild roster yet. Run /ikroster, log out of the game, and leave the companion open.</p>
-    {% endif %}
-  </main>
-</body>
-</html>
+{% extends "app_layout.html" %}
+{% from "_icons.html" import icon %}
+
+{% block title %}Roster · {{ guild.name }} · Ironkeep{% endblock %}
+
+{% block main %}
+<header class="page-header">
+  <div>
+    <h1 class="page-title">Guild roster</h1>
+    <p class="page-subtitle">{{ guild.name }} · the snapshot the companion read from WoW Forever.</p>
+  </div>
+</header>
+
+<article class="card measure-card">
+  {% if roster %}
+  <div class="card__head">
+    <div>
+      <h2 class="card__title">{{ roster.wow_guild_name }}</h2>
+      <p class="card__desc">{{ roster.members|length }} members · captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
+    </div>
+  </div>
+  <div class="raid-list">
+    {% for member in roster.members %}
+    <div class="raid-row">
+      <span class="raid-row__name">
+        <span class="raid-row__title">{{ member.name }}</span>
+        <span class="raid-row__sub">{{ member.className }} · {{ member.classToken }} · level {{ member.level }} · {{ member.rankName }} · {{ member.guid }}</span>
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">No guild roster yet. Run /ikroster, log out of the game, and leave the companion open.</p>
+  {% endif %}
+</article>
+{% endblock %}

@@ -180,6 +180,27 @@ class RosterHttpTests(unittest.TestCase):
         self.roles = ["9"]
         self.assertEqual(self.post(snapshot(1794011429)).status_code, 401)
 
+    def test_a_wow_page_links_the_roster_and_another_game_does_not(self):
+        page = self.client.get("/dutchchaos/roster", cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertIn('href="/dutchchaos/roster"', page.text)
+        self.assertIn("Roster", page.text)
+        db.upsert_guild("5252", "Albion Keep", [], [], added_by="Ada", added_by_id="1001")
+        guild = db.guild_by_slug("albionkeep")
+        settings = guild["settings"]
+        settings["game"] = "albion"
+        db.save_settings(guild["slug"], settings)
+        db.set_approval(guild["slug"], "approved")
+        refused = self.client.get("/albionkeep/roster", cookies={"ik_session": self.website})
+        self.assertEqual(refused.status_code, 404, refused.text)
+        self.assertIn("This guild has no roster page.", refused.text)
+        self.assertNotIn("Guild roster", refused.text)
+
+    def test_someone_without_access_cannot_open_the_roster(self):
+        outsider = db.create_session("2002", "Bea", "bea", "discord-access", "discord-refresh", 3600)
+        refused = self.client.get("/dutchchaos/roster", cookies={"ik_session": outsider})
+        self.assertEqual(refused.status_code, 403, refused.text)
+
     def test_guild_deletion_then_rejoin_starts_empty(self):
         self.assertEqual(self.post(snapshot(1794011429)).status_code, 200)
         db.delete_guild("dutchchaos")

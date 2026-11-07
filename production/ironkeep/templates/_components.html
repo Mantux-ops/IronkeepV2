@@ -1,0 +1,23 @@
+{% from "_icons.html" import icon %}
+
+{% macro avatar(name, color, size="md") -%}
+<span class="avatar avatar--{{ size }}" style="--avatar-color: {{ color }}">{{ name[:1] | upper }}</span>
+{%- endmacro %}
+
+{% macro guild_icon(guild, size="md") -%}
+<span class="guild-icon guild-icon--{{ size }}" style="--guild-color: {{ guild.icon_color }}">{{ guild.icon_letter }}</span>
+{%- endmacro %}
+
+{% macro pill(text, tone="grey", dot=True) -%}
+<span class="pill pill--{{ tone }}">{% if dot %}<span class="pill__dot"></span>{% endif %}{{ text }}</span>
+{%- endmacro %}
+
+{% macro stat_card(label, value, icon_name, tone="accent", href=None) -%}
+{% if href %}<a class="stat-card stat-card--{{ tone }}" href="{{ href }}">{% else %}<div class="stat-card stat-card--{{ tone }}">{% endif %}
+  <span class="stat-card__icon">{{ icon(icon_name, 22) }}</span>
+  <span class="stat-card__body">
+    <span class="stat-card__label">{{ label }}</span>
+    <span class="stat-card__value">{{ value }}</span>
+  </span>
+{% if href %}</a>{% else %}</div>{% endif %}
+{%- endmacro %}
