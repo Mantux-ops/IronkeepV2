@@ -22,7 +22,7 @@ IronkeepDB = saved
 local previous = { schema = 1, marker = "keep-me", members = { { guid = "old", name = "Old Name" } } }
 IronkeepRosterDB = previous
 
-dofile("addon/Ironkeep/Roster.lua")
+dofile("addon/IronkeepRoster/Roster.lua")
 
 local function assertTrue(value, message)
 	if not value then error(message or "check failed", 2) end
@@ -33,6 +33,27 @@ local function assertEqual(actual, expected, message)
 		error((message or "mismatch") .. ": " .. tostring(actual) .. " ~= " .. tostring(expected), 2)
 	end
 end
+
+assertTrue(IronkeepRosterDB == previous, "loading the roster addon replaced an existing snapshot")
+assertTrue(IronkeepDB == saved, "loading the roster addon replaced attendance data")
+
+local function savedVariables(path)
+	local handle = io.open(path, "r")
+	if not handle then error("missing " .. path) end
+	local text = handle:read("*a")
+	handle:close()
+	local line = string.match(text, "## SavedVariables:%s*([^\n]+)")
+	return text, line
+end
+
+local ironkeepText, ironkeepSaved = savedVariables("addon/Ironkeep/Ironkeep.toc")
+local rosterText, rosterSaved = savedVariables("addon/IronkeepRoster/IronkeepRoster.toc")
+assertEqual(ironkeepSaved, "IronkeepDB", "attendance SavedVariables")
+assertEqual(rosterSaved, "IronkeepRosterDB", "roster SavedVariables")
+assertTrue(string.find(ironkeepText, "Roster.lua", 1, true) == nil, "Ironkeep still loads the roster file")
+assertTrue(string.find(rosterText, "\nRoster.lua", 1, true) ~= nil, "the roster addon does not load Roster.lua")
+assertTrue(string.find(rosterText, "OptionalDeps: Ironkeep", 1, true) ~= nil, "Ironkeep is not loaded first")
+assertTrue(string.find(ironkeepText, "IronkeepRosterDB", 1, true) == nil, "Ironkeep still saves the roster global")
 
 local function chat()
 	return table.concat(printed, "\n")
@@ -96,14 +117,14 @@ end
 
 install(0, 0)
 printed = {}
-local emptyFirst = Ironkeep.Roster.Scan()
+local emptyFirst = IronkeepRoster.Scan()
 assertEqual(emptyFirst.reason, "empty")
 assertTrue(IronkeepRosterDB == previous, "an empty guild replaced the existing snapshot")
 assertEqual(IronkeepRosterDB.marker, "keep-me")
 
 install(214, 110)
 printed = {}
-local published = Ironkeep.Roster.Scan()
+local published = IronkeepRoster.Scan()
 assertTrue(published.published, "the 214 member roster was not published")
 assertEqual(published.reason, "published")
 assertEqual(published.examined, 214)
@@ -153,7 +174,7 @@ install(5, 2, function(index)
 	if index == 3 then return "empty" end
 end)
 printed = {}
-local partial = Ironkeep.Roster.Scan()
+local partial = IronkeepRoster.Scan()
 assertEqual(partial.reason, "incomplete")
 assertTrue(not partial.published)
 assertEqual(partial.examined, 5)
@@ -166,7 +187,7 @@ install(4, 2, function(index)
 	end
 end)
 printed = {}
-local dupGuid = Ironkeep.Roster.Scan()
+local dupGuid = IronkeepRoster.Scan()
 assertEqual(dupGuid.reason, "duplicate-guid")
 assertTrue(not dupGuid.published)
 assertMissing(chat(), "Player-5826-0A1")
@@ -178,7 +199,7 @@ install(4, 2, function(index)
 	end
 end)
 printed = {}
-local dupName = Ironkeep.Roster.Scan()
+local dupName = IronkeepRoster.Scan()
 assertEqual(dupName.reason, "duplicate-name")
 assertTrue(not dupName.published)
 assertMissing(chat(), "Person2")
@@ -190,7 +211,7 @@ install(4, 2, function(index)
 	end
 end)
 printed = {}
-local missing = Ironkeep.Roster.Scan()
+local missing = IronkeepRoster.Scan()
 assertEqual(missing.reason, "missing-guid")
 assertTrue(not missing.published)
 kept()
@@ -201,7 +222,7 @@ install(4, 2, function(index)
 	end
 end)
 printed = {}
-local missingName = Ironkeep.Roster.Scan()
+local missingName = IronkeepRoster.Scan()
 assertEqual(missingName.reason, "missing-name")
 assertTrue(not missingName.published)
 kept()
@@ -214,15 +235,15 @@ _G.GetNumGuildMembers = function()
 	return 8, 4
 end
 printed = {}
-local changed = Ironkeep.Roster.Scan()
+local changed = IronkeepRoster.Scan()
 assertEqual(changed.reason, "count-changed")
 assertTrue(not changed.published)
 assertEqual(changed.countStable, false)
 kept()
 
-install(Ironkeep.Roster.SCAN_CAP + 1, 200)
+install(IronkeepRoster.SCAN_CAP + 1, 200)
 printed = {}
-local capped = Ironkeep.Roster.Scan()
+local capped = IronkeepRoster.Scan()
 assertEqual(capped.reason, "partial-cap")
 assertTrue(not capped.published)
 assertEqual(capped.examined, 500)

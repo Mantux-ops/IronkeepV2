@@ -87,7 +87,7 @@ function GetInstanceInfo() return "Hall of Thanes", "raid" end
 dofile("addon/Ironkeep/Group.lua")
 dofile("addon/Ironkeep/Window.lua")
 dofile("addon/Ironkeep/Core.lua")
-dofile("addon/Ironkeep/Roster.lua")
+dofile("addon/IronkeepRoster/Roster.lua")
 
 local eventFrame
 for i = 1, #frames do
@@ -145,6 +145,10 @@ end
 if not report then fail("Copy list did not produce the report") end
 if not report:find("Dain Frost", 1, true) then fail("the report dropped someone who left") end
 
+if SlashCmdList.IRONKEEP == SlashCmdList.IKROSTER then fail("the roster command replaced the group command") end
+if SLASH_IRONKEEP1 ~= "/ironkeep" or SLASH_IKROSTER1 ~= "/ikroster" then
+	fail("slash commands were not registered separately")
+end
 local kept = Ironkeep.db
 SlashCmdList.IKROSTER()
 if Ironkeep.db ~= kept then fail("a roster scan replaced the group list") end

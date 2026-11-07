@@ -1,17 +1,24 @@
 -- Guild roster snapshot for one WoW Forever client.
+-- This is a separate addon so IronkeepRosterDB is written to
+-- SavedVariables/IronkeepRoster.lua. Ironkeep.lua keeps only IronkeepDB.
 -- A scan is published only when it is complete and every character name and
 -- GUID is present and unique. Any other result leaves IronkeepRosterDB as it was.
 -- This file does not read or write IronkeepDB.
 --
--- Field positions were checked on one Forever client (guild Herberg, 214 members):
+-- The first in-game capture stored IronkeepRosterDB inside Ironkeep.lua.
+-- Loading does not clear that global. With both addons enabled, Ironkeep loads
+-- first and that old assignment still runs. The next logout writes the global
+-- to IronkeepRoster.lua and stops writing it into Ironkeep.lua. Do not delete
+-- the old Ironkeep.lua before that logout.
+--
+-- Field positions were checked on one Forever client (guild Herberg):
 -- 1 name, 2 rank name, 4 level, 5 localized class, 11 class file token, 17 GUID.
 -- Rank index and per-character online status are not stored.
 
-Ironkeep = Ironkeep or {}
-Ironkeep.Roster = {}
+IronkeepRoster = IronkeepRoster or {}
 
 local SCAN_CAP = 500
-Ironkeep.Roster.SCAN_CAP = SCAN_CAP
+IronkeepRoster.SCAN_CAP = SCAN_CAP
 
 local function global(name)
 	if type(_G) == "table" then return _G[name] end
@@ -19,12 +26,8 @@ local function global(name)
 end
 
 local function say(text)
-	if type(Ironkeep.Print) == "function" then
-		Ironkeep.Print(text)
-		return
-	end
 	if type(print) == "function" then
-		print("|cff2dd4bfIronkeep|r " .. tostring(text))
+		print("|cff2dd4bfIronkeep roster|r " .. tostring(text))
 	end
 end
 
@@ -242,7 +245,7 @@ local function announce(info, guild)
 	say("Guild roster was not saved (" .. tostring(info.reason) .. "). The previous snapshot is unchanged.")
 end
 
-function Ironkeep.Roster.Scan()
+function IronkeepRoster.Scan()
 	local found = playerHints()
 	local inFn = global("IsInGuild")
 	if type(inFn) == "function" then
@@ -396,5 +399,5 @@ end
 SLASH_IKROSTER1 = "/ikroster"
 if type(SlashCmdList) ~= "table" then SlashCmdList = {} end
 SlashCmdList.IKROSTER = function()
-	return Ironkeep.Roster.Scan()
+	return IronkeepRoster.Scan()
 end

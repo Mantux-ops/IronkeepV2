@@ -1,0 +1,9 @@
+## Interface: 16001
+## Title: Ironkeep Roster
+## Notes: Guild roster snapshot for one WoW Forever guild. Safe to disable.
+## Author: Ironkeep
+## Version: 0.1.0
+## SavedVariables: IronkeepRosterDB
+## OptionalDeps: Ironkeep
+
+Roster.lua
