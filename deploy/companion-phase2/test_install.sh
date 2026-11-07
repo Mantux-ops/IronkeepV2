@@ -11,8 +11,15 @@ seed_layout() {
   mkdir -p "$dest/templates"
   cat > "$dest/templates/app_layout.html" <<'EOF'
 <nav>
+{% if guild.game == "wow" %}
+      {% if access.members %}
       <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
-      <a class="nav__item {% if nav == 'settings' %}is-active{% endif %}" href="/{{ guild.slug }}/settings">{{ icon("settings") }}<span>Settings</span></a>
+      {% endif %}
+{% elif guild.game == "albion" or not live %}
+      {% if access.trials %}
+      <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
+      {% endif %}
+{% endif %}
 </nav>
 EOF
 }
@@ -120,6 +127,16 @@ if [[ $(grep -c "nav == 'roster'" "$ROOT/templates/app_layout.html") -ne 1 ]]; t
   echo "Roster link was not inserted once" >&2
   exit 1
 fi
+python3 - "$ROOT/templates/app_layout.html" <<'PY'
+import sys
+text = open(sys.argv[1], encoding="utf-8").read()
+albion = text.split('{% elif guild.game == "albion" or not live %}', 1)[1]
+if "nav == 'roster'" in albion:
+    raise SystemExit("Roster link was inserted in Albion navigation")
+wow = text.split('{% if guild.game == "wow" %}', 1)[1].split("{% elif", 1)[0]
+if "nav == 'roster'" not in wow or "{% if access.members %}" not in wow:
+    raise SystemExit("Roster link is not inside the WoW Members gate")
+PY
 if ! grep -q 'href="/{{ guild.slug }}/members"' "$ROOT/templates/app_layout.html"; then
   echo "Members link was removed" >&2
   exit 1
@@ -172,4 +189,5 @@ if [[ -e "$ROOT/companion_reports.py.sqlite" || -e "$ROOT/ironkeep.db" ]]; then
   echo "installer created a database" >&2
   exit 1
 fi
+python3 "$HERE/test_patch_layout.py" -q
 echo "install tests passed"

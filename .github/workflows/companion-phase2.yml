@@ -1,0 +1,31 @@
+name: Companion phase 2
+
+on:
+  push:
+    paths:
+      - "deploy/companion-phase2/**"
+      - ".github/workflows/companion-phase2.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install production import dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Test the roster layout patch
+        run: python deploy/companion-phase2/test_patch_layout.py -q
+      - name: Test the phase 2 installer
+        run: bash deploy/companion-phase2/test_install.sh
+      - name: Check production imports
+        run: PYTHONPATH=production python deploy/companion-phase2/check_imports.py
