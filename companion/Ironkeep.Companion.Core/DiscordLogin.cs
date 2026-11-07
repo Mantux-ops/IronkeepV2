@@ -426,6 +426,18 @@ namespace Ironkeep.Companion
             return builder.Uri;
         }
 
+        public static Uri RosterUri(string address, string slug)
+        {
+            string problem;
+            Uri probe = SiteClient.Target(address, slug, out problem);
+            if (probe == null) return null;
+            string lowered = (slug ?? "").Trim().ToLowerInvariant();
+            var builder = new UriBuilder(probe);
+            builder.Path = "/api/companion/guilds/" + lowered + "/roster";
+            builder.Query = "";
+            return builder.Uri;
+        }
+
         public static HttpReply Send(Uri url, string method, string body, string bearer, string contentType)
         {
             var reply = new HttpReply();
@@ -495,6 +507,11 @@ namespace Ironkeep.Companion
 
         public UploadResult Upload(string guildId, string body)
         {
+            return Upload(guildId, body, "attendance");
+        }
+
+        public UploadResult Upload(string guildId, string body, string kind)
+        {
             CompanionConfig config = _read() ?? new CompanionConfig();
             if (config.AuthMode != CompanionConfig.ModeDiscord)
                 return Denied();
@@ -507,12 +524,12 @@ namespace Ironkeep.Companion
             bool transport;
             string access = _login.EnsureAccess(false, out transport);
             if (access == null || access.Length == 0) return transport ? Offline() : Unauthorized();
-            UploadResult first = Post(config.Address, selected, access, body);
+            UploadResult first = Post(config.Address, selected, access, body, kind);
             if (first.Status == 401)
             {
                 access = _login.EnsureAccess(true, out transport);
                 if (access == null || access.Length == 0) return transport ? Offline() : Unauthorized();
-                first = Post(config.Address, selected, access, body);
+                first = Post(config.Address, selected, access, body, kind);
                 if (first.Status == 401)
                 {
                     _login.NoteSessionExpired();
@@ -523,20 +540,27 @@ namespace Ironkeep.Companion
             return first;
         }
 
-        static UploadResult Post(string address, string slug, string access, string body)
+        static UploadResult Post(string address, string slug, string access, string body, string kind)
         {
-            Uri url = DiscordLogin.AttendanceUri(address, slug);
+            bool roster = string.Equals(kind, RosterPayload.Kind, StringComparison.Ordinal);
+            Uri url = roster ? DiscordLogin.RosterUri(address, slug) : DiscordLogin.AttendanceUri(address, slug);
             if (url == null) return Denied();
-            try
+            if (!roster)
             {
-                int status;
-                string response = SiteClient.Post(url, access, body, out status);
-                return new UploadResult { Status = status, Body = response ?? "" };
+                try
+                {
+                    int status;
+                    string response = SiteClient.Post(url, access, body, out status);
+                    return new UploadResult { Status = status, Body = response ?? "" };
+                }
+                catch (WebException)
+                {
+                    return new UploadResult { Status = 0, Body = "", TransportFailed = true };
+                }
             }
-            catch (WebException)
-            {
-                return new UploadResult { Status = 0, Body = "", TransportFailed = true };
-            }
+            HttpReply reply = DiscordLogin.Send(url, "POST", body, access, "application/json; charset=utf-8");
+            if (reply.TransportFailed) return new UploadResult { Status = 0, Body = "", TransportFailed = true };
+            return new UploadResult { Status = reply.Status, Body = reply.Body ?? "" };
         }
 
         static UploadResult Denied()
@@ -570,9 +594,14 @@ namespace Ironkeep.Companion
 
         public UploadResult Upload(string guildId, string body)
         {
+            return Upload(guildId, body, "attendance");
+        }
+
+        public UploadResult Upload(string guildId, string body, string kind)
+        {
             CompanionConfig config = _read() ?? new CompanionConfig();
-            if (config.AuthMode == CompanionConfig.ModeDiscord) return _discord.Upload(guildId, body);
-            if (config.IsLegacy) return _legacy.Upload(guildId, body);
+            if (config.AuthMode == CompanionConfig.ModeDiscord) return _discord.Upload(guildId, body, kind);
+            if (config.IsLegacy) return _legacy.Upload(guildId, body, kind);
             return new UploadResult { Status = 401, Body = "{\"ok\":false}" };
         }
     }

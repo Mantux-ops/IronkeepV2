@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import companion_auth, config, db, discord_api, forever_companion, tickets, warcraft_forever, wow
+from . import companion_auth, config, db, discord_api, forever_companion, roster, tickets, warcraft_forever, wow
 from . import mock_data as data
 from pathlib import Path
 
@@ -233,7 +233,14 @@ def page_access(request, guild):
     person = viewer(request)
     if not config.live():
         label = "Superadmin" if person["superadmin"] else "Recruiter"
-        return {"trials": True, "payout": True, "lootsplit": True, "characters": False, "label": label}
+        return {
+            "trials": True,
+            "payout": True,
+            "lootsplit": True,
+            "characters": False,
+            "roster": False,
+            "label": label,
+        }
     session = _session(request)
     wow_server = db.guild_game(guild["settings"]) == "wow"
     staff_area = can_access(session, guild)
@@ -257,6 +264,7 @@ def page_access(request, guild):
         "lootsplit": lootsplit,
         "raids": staff_area and wow_server,
         "members": can_edit_settings(session, guild) if wow_server else staff_area,
+        "roster": can_edit_settings(session, guild) if wow_server else False,
         "settings": can_edit_settings(session, guild) if wow_server else staff_area,
         "tickets": can_view_tickets(session, guild) if wow_server else False,
         "characters": member or (staff_area and wow_server),
@@ -723,6 +731,34 @@ def members(slug: str, request: Request):
     source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
     prepared = prepare_members(guild, source)
     return render(request, "members.html", guild=guild, nav="members", **prepared)
+
+
+@app.get("/{slug}/roster", response_class=HTMLResponse)
+def guild_roster(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    moved = _away_from(guild, "wow")
+    if moved:
+        return moved
+    if db.guild_game(guild.get("settings")) != "wow":
+        return render(
+            request,
+            "forbidden.html",
+            status_code=404,
+            message="This guild has no roster page.",
+            guild=None,
+            nav=None,
+        )
+    if config.live() and not can_edit_settings(_session(request), guild):
+        return forbidden(request, "Your roles don't include this page.")
+    return render(
+        request,
+        "roster.html",
+        guild=guild,
+        nav="roster",
+        roster=roster.current(guild["id"]),
+    )
 
 
 CHARACTER_ERRORS = {

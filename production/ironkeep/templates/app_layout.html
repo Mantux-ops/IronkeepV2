@@ -1,0 +1,98 @@
+{# Checkout render shell for tests. The live sidebar is not this file.
+   install.sh does not copy it; it inserts the Roster link into the server layout. #}
+{% extends "base.html" %}
+{% from "_icons.html" import icon %}
+{% from "_components.html" import avatar, guild_icon %}
+
+{% block body_class %}app{% endblock %}
+
+{% block body %}
+<div class="shell">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar__brand">
+      <a class="brand" href="{{ '/admin' if viewer.superadmin else '/' }}">
+        <img class="brand__logo" src="{{ asset('logo.png') }}" alt="" width="32" height="32">
+        <span class="brand__name">Ironkeep</span>
+      </a>
+      {% if viewer.superadmin %}<span class="badge-superadmin">Superadmin</span>{% endif %}
+    </div>
+
+    {% if guild or viewer.superadmin %}
+    <div class="switcher" data-dropdown>
+      <button class="switcher__button" type="button" data-dropdown-toggle aria-haspopup="listbox">
+        {% if guild %}
+          {{ guild_icon(guild, "sm") }}
+          <span class="switcher__name">{{ guild.name }}</span>
+        {% else %}
+          <span class="guild-icon guild-icon--sm guild-icon--empty">{{ icon("list", 14) }}</span>
+          <span class="switcher__name">Choose a guild</span>
+        {% endif %}
+        {{ icon("chevron-down", 16, "switcher__caret") }}
+      </button>
+      <div class="dropdown" role="listbox" hidden>
+        {% for g in guilds %}
+        <a class="dropdown__item {% if guild and g.slug == guild.slug %}is-active{% endif %}" href="/{{ g.slug }}/{{ 'raids' if g.game == 'wow' else 'trial' }}">
+          {{ guild_icon(g, "sm") }}
+          <span>{{ g.name }}</span>
+          {% if g.approval == "pending" %}<span class="dropdown__meta">Pending</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    <nav class="nav">
+      {% if viewer.superadmin %}
+      <div class="nav__section">Ironkeep</div>
+      <a class="nav__item {% if nav == 'admin' %}is-active{% endif %}" href="/admin">{{ icon("shield") }}<span>All guilds</span></a>
+      <a class="nav__item {% if nav == 'errors' %}is-active{% endif %}" href="/admin/errors">{{ icon("alert") }}<span>Errors</span></a>
+      <a class="nav__item {% if nav == 'data' %}is-active{% endif %}" href="/admin/data">{{ icon("database") }}<span>Data requests</span></a>
+      {% endif %}
+
+      {% if guild %}
+      <div class="nav__section">{{ guild.name }}</div>
+      {% if access is defined and access.trials %}
+      <a class="nav__item {% if nav == 'trials' %}is-active{% endif %}" href="/{{ guild.slug }}/trial">{{ icon("scale") }}<span>Trials</span></a>
+      {% endif %}
+      {% if access is defined and access.raids %}
+      <a class="nav__item {% if nav == 'raids' %}is-active{% endif %}" href="/{{ guild.slug }}/raids">{{ icon("calendar") }}<span>Raids</span></a>
+      <a class="nav__item {% if nav == 'archive' %}is-active{% endif %}" href="/{{ guild.slug }}/archive">{{ icon("clock") }}<span>Archive</span></a>
+      {% endif %}
+      {% if access is defined and access.characters %}
+      <a class="nav__item {% if nav == 'characters' %}is-active{% endif %}" href="/{{ guild.slug }}/characters">{{ icon("user-plus") }}<span>Characters</span></a>
+      {% endif %}
+      {% if access is defined and access.members %}
+      <a class="nav__item {% if nav == 'members' %}is-active{% endif %}" href="/{{ guild.slug }}/members">{{ icon("users") }}<span>Members</span></a>
+      {% endif %}
+      {% if access is defined and access.roster %}
+      <a class="nav__item {% if nav == 'roster' %}is-active{% endif %}" href="/{{ guild.slug }}/roster">{{ icon("list") }}<span>Roster</span></a>
+      {% endif %}
+      {% if access is defined and access.settings %}
+      <a class="nav__item {% if nav == 'settings' %}is-active{% endif %}" href="/{{ guild.slug }}/settings">{{ icon("settings") }}<span>Settings</span></a>
+      {% endif %}
+      {% endif %}
+    </nav>
+
+    <div class="sidebar__user">
+      {{ avatar(viewer.name, viewer.color) }}
+      <span class="sidebar__user-text">
+        <span class="sidebar__user-name">{{ viewer.name }}</span>
+        <span class="sidebar__user-role">{{ access.label if access is defined and access.label else ("Superadmin" if viewer.superadmin else "Member") }}</span>
+      </span>
+      <a class="icon-button" href="/logout" title="Log out">{{ icon("log-out", 16) }}</a>
+    </div>
+  </aside>
+
+  <main class="main">
+    <button class="menu-button" type="button" data-sidebar-toggle aria-label="Open menu">{{ icon("list", 20) }}</button>
+    {% if guild and viewer.superadmin %}
+    <div class="banner banner--accent">
+      {{ icon("shield", 16) }}
+      <span>You're viewing <strong>{{ guild.name }}</strong> as superadmin.</span>
+      <a class="banner__link" href="/admin">{{ icon("arrow-left", 14) }} Back to all guilds</a>
+    </div>
+    {% endif %}
+    {% block main %}{% endblock %}
+  </main>
+</div>
+{% endblock %}

@@ -565,7 +565,7 @@ namespace Ironkeep.Companion.Core.Tests
                 Add(status, body, false);
             }
 
-            public UploadResult Upload(string guildId, string body)
+            public UploadResult Upload(string guildId, string body, string kind)
             {
                 Guilds.Add(guildId ?? "");
                 Bodies.Add(body ?? "");

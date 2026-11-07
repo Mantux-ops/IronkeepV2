@@ -23,6 +23,13 @@ namespace Ironkeep.Companion
 
         public UploadResult Upload(string guildId, string body)
         {
+            return Upload(guildId, body, "attendance");
+        }
+
+        public UploadResult Upload(string guildId, string body, string kind)
+        {
+            if (string.Equals(kind, RosterPayload.Kind, StringComparison.Ordinal))
+                return Finish(403, "{\"ok\":false}");
             CompanionConfig config = _current() ?? new CompanionConfig();
             string token = config.Token ?? "";
             if (token.Length == 0)

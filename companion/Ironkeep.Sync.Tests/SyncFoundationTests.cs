@@ -650,14 +650,56 @@ namespace Ironkeep.Tests
             return File.ReadAllText(path).Replace("Hall of Thanes", place);
         }
 
+        [Fact]
+        public void OneRosterFileIsQueuedAndTwoAccountsAreNot()
+        {
+            WriteRoster("One", 1794011429);
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            QueueItem item = Assert.Single(_queue.Due(DateTime.UtcNow));
+            Assert.Equal(RosterPayload.Kind, item.Kind);
+            Assert.Contains("\"capturedAt\":1794011429", item.Body);
+            Assert.Contains("\"wowGuildName\":\"Herberg\"", item.Body);
+            Assert.Equal("1 IronkeepRoster.lua file found.", _sync.Snapshot().RosterStatus);
+
+            WriteRoster("Two", 1794013045);
+            _sync.Reconcile();
+            Assert.Contains("More than one IronkeepRoster.lua", _sync.Snapshot().RosterStatus);
+            _uploader.Handler = delegate { return Ok(false); };
+            _sync.Pump(DateTime.UtcNow);
+            Assert.Empty(_uploader.Sent);
+            Assert.Single(_queue.Due(DateTime.UtcNow));
+        }
+
+        [Fact]
+        public void AttendanceStillQueuesBesideARosterFile()
+        {
+            WriteAccount("One", Sample("Hall of Thanes"));
+            WriteRoster("One", 1794011429);
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            List<QueueItem> items = _queue.Due(DateTime.UtcNow);
+            Assert.Equal(2, items.Count);
+            Assert.Contains(items, item => item.Kind == "attendance" && item.Body.Contains("format: ironkeep-group 1"));
+            Assert.Contains(items, item => item.Kind == RosterPayload.Kind && item.Body.Contains("\"schema\":1"));
+        }
+
+        string WriteRoster(string account, long capturedAt)
+        {
+            string file = Path.Combine(WowRoot(), "WTF", "Account", account, "SavedVariables", "IronkeepRoster.lua");
+            Directory.CreateDirectory(Path.GetDirectoryName(file));
+            File.WriteAllText(file, "IronkeepRosterDB = { schema = 1, wowGuildName = \"Herberg\", capturedAt = " + capturedAt.ToString() + ", completeness = { status = \"complete\", examined = 1, populated = 1, empty = 0, errors = 0, reportedTotal = 1, reportedOnline = 1, countStable = true }, members = { { guid = \"Player-1\", name = \"Ada Smith\", level = 70, classToken = \"WARRIOR\", className = \"Warrior\", rankName = \"Member\" } } }\n");
+            return file;
+        }
+
         sealed class RecordingUploader : IReportUploader
         {
             public readonly List<SentReport> Sent = new List<SentReport>();
             public Func<string, string, UploadResult> Handler = delegate { return Ok(false); };
 
-            public UploadResult Upload(string guildId, string body)
+            public UploadResult Upload(string guildId, string body, string kind)
             {
-                Sent.Add(new SentReport { GuildId = guildId, Body = body });
+                Sent.Add(new SentReport { GuildId = guildId, Body = body, Kind = kind });
                 return Handler(guildId, body);
             }
         }
@@ -666,6 +708,7 @@ namespace Ironkeep.Tests
         {
             public string GuildId;
             public string Body;
+            public string Kind;
         }
     }
 }

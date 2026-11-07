@@ -40,7 +40,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 
-from . import config, db, discord_api
+from . import config, db, discord_api, roster
 
 ACCESS_SECONDS = 600
 REFRESH_SECONDS = 30 * 86400
@@ -56,6 +56,7 @@ _VERIFIER_RE = re.compile(r"^[A-Za-z0-9._~-]{43,128}$")
 _CHALLENGE_RE = re.compile(r"^[A-Za-z0-9_-]{43}$")
 _PATH_RE = re.compile(r"/[A-Za-z0-9._~/-]{0,200}")
 _UPLOAD = re.compile(r"^/api/companion/guilds/[^/]+/attendance$")
+_ROSTER = re.compile(r"^/api/companion/guilds/[^/]+/roster$")
 _EXACT = {
     "/companion/connect",
     "/api/companion/token",
@@ -80,7 +81,7 @@ def hidden(request: Request):
     if _active():
         return None
     path = request.url.path
-    if path in _EXACT or _UPLOAD.match(path):
+    if path in _EXACT or _UPLOAD.match(path) or _ROSTER.fullmatch(path):
         return _disabled()
     return None
 
@@ -184,6 +185,45 @@ def _member_roles(guild_id, user_id):
     except discord_api.DiscordError:
         return set()
     return {str(role) for role in (member or {}).get("roles", [])}
+
+
+class LookupFailed(Exception):
+    """Discord did not answer the roster role check."""
+
+
+def _roster_member_roles(guild_id, user_id):
+    try:
+        member = discord_api.bot_member(guild_id, user_id)
+    except discord_api.DiscordError as error:
+        if error.status in (401, 403, 404):
+            return None
+        raise LookupFailed from error
+    if not isinstance(member, dict):
+        return None
+    return {str(role) for role in member.get("roles") or []}
+
+
+def roster_allowed(user_id, guild):
+    """Roster upload uses the production rule: WoW, membership, then companion role.
+
+    Attendance upload stays on upload_allowed. None means Discord could not be reached.
+    """
+    if guild is None or guild.get("approval") == "rejected":
+        return False
+    if (guild.get("settings") or {}).get("game") != "wow":
+        return False
+    try:
+        roles = _roster_member_roles(guild["id"], user_id)
+    except LookupFailed:
+        return None
+    if roles is None:
+        return False
+    if str(user_id) == str(config.SUPERADMIN_ID):
+        return True
+    wanted = set(db.companion_role_ids(guild.get("settings")))
+    if not wanted:
+        return False
+    return bool(wanted & roles)
 
 
 def upload_allowed(user_id, guild):
@@ -443,6 +483,25 @@ async def connect_submit(request: Request):
 
 def _redirect(uri, params):
     return RedirectResponse(uri + "?" + urllib.parse.urlencode(params), status_code=303)
+
+
+def _end_family(family_id):
+    if not family_id:
+        return
+    stamp = _stamp()
+    with _LOCK:
+        conn = db.connect()
+        try:
+            _ensure_tables(conn)
+            conn.commit()
+            conn.execute("BEGIN IMMEDIATE")
+            _revoke_family(conn, family_id, stamp)
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def _revoke_family(conn, family_id, stamp):
@@ -859,3 +918,87 @@ async def upload(slug: str, request: Request):
         "place": stored["place"],
         "people": len(stored["people"]),
     }
+
+
+def _roster_guild(row, slug):
+    guild = db.guild_by_slug(slug)
+    if guild is None or str(guild["id"]) != str(row["guild_id"]):
+        return None
+    return guild
+
+
+def _json_body(request):
+    raw = request.headers.get("content-type", "")
+    if not raw:
+        return False
+    media, _, params = raw.partition(";")
+    if media.strip().lower() != "application/json":
+        return False
+    for param in params.split(";"):
+        if not param.strip():
+            continue
+        key, separator, value = param.partition("=")
+        if separator and key.strip().lower() == "charset" and value.strip().strip('"').lower() not in ("utf-8", "utf8"):
+            return False
+    return True
+
+
+async def _roster_bytes(request):
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > roster.MAX_BYTES:
+                return None
+        except ValueError:
+            raise roster.RosterError("This roster could not be read.")
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > roster.MAX_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@router.post("/api/companion/guilds/{slug}/roster")
+async def upload_roster(slug: str, request: Request):
+    if not _active():
+        return _disabled()
+    row = _credential(_bearer(request, ACCESS_PREFIX), "access")
+    if row is None:
+        return _json_error("Companion login is required.", 401)
+    guild = _roster_guild(row, slug)
+    if guild is None:
+        return _json_error("You cannot connect the Companion for that guild.", 403)
+    allowed = roster_allowed(row["user_id"], guild)
+    if allowed is None:
+        return _json_error("Discord could not be reached. Try again.", 503)
+    if not allowed:
+        _end_family(row["family_id"])
+        return _json_error("You cannot connect the Companion for that guild.", 403)
+    if not _json_body(request):
+        return _json_error("This roster could not be read.", 415)
+    try:
+        raw = await _roster_bytes(request)
+    except roster.RosterError as error:
+        return _json_error(error.args[0], error.status_code)
+    if raw is None:
+        return _json_error("This roster is too large.", 413)
+    try:
+        text = raw.decode("utf-8")
+        snapshot, _body, body_hash = roster.parse_body(text)
+        outcome = roster.store(str(guild["id"]), snapshot, body_hash)
+    except UnicodeDecodeError:
+        return _json_error("This roster could not be read.", 400)
+    except roster.RosterError as error:
+        return _json_error(error.args[0], error.status_code)
+    if outcome == "duplicate":
+        return _no_store(JSONResponse({"ok": True, "duplicate": True}))
+    if outcome == "stored":
+        return _no_store(JSONResponse({"ok": True}))
+    if outcome == "stale":
+        return _json_error("This roster is stale.", 409)
+    if outcome == "conflict":
+        return _json_error("This roster conflicts with the saved snapshot.", 409)
+    return _json_error("This roster is for a different guild.", 409)

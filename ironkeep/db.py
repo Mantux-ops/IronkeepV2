@@ -379,6 +379,7 @@ def delete_guild(slug):
                     "DELETE FROM companion_credentials WHERE guild_id = ? OR guild_slug = ?",
                     (guild_id, slug),
                 )
+            _delete_roster(conn, guild_id)
             conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
             conn.commit()
         except Exception:
@@ -386,6 +387,21 @@ def delete_guild(slug):
             raise
         finally:
             conn.close()
+
+
+def _delete_roster(conn, guild_id):
+    """Drop a guild roster when those tables exist. A guild that never uploaded still deletes."""
+    present = {
+        item[0]
+        for item in conn.execute(
+            """SELECT name FROM sqlite_master
+               WHERE type = 'table' AND name IN ('roster_snapshots', 'roster_hashes')"""
+        )
+    }
+    if "roster_hashes" in present:
+        conn.execute("DELETE FROM roster_hashes WHERE guild_id = ?", (str(guild_id),))
+    if "roster_snapshots" in present:
+        conn.execute("DELETE FROM roster_snapshots WHERE guild_id = ?", (str(guild_id),))
 
 
 def mark_missing_guilds(present_ids):

@@ -44,7 +44,12 @@ namespace Ironkeep
 
         public static Dictionary<object, object> Load(string text)
         {
-            var reader = new Reader(text.TrimStart('\uFEFF'));
+            return LoadNamed(text, "IronkeepDB");
+        }
+
+        public static Dictionary<object, object> LoadNamed(string text, string globalName)
+        {
+            var reader = new Reader((text ?? "").TrimStart('\uFEFF'));
             var found = new Dictionary<string, object>();
             while (true)
             {
@@ -55,8 +60,15 @@ namespace Ironkeep
                 found[name] = reader.Value();
             }
             object db;
-            if (!found.TryGetValue("IronkeepDB", out db) || !(db is Dictionary<object, object>))
-                throw new SavedException("This file has no Ironkeep list.");
+            if (globalName == "IronkeepDB")
+            {
+                if (!found.TryGetValue(globalName, out db) || !(db is Dictionary<object, object>))
+                    throw new SavedException("This file has no Ironkeep list.");
+            }
+            else if (!found.TryGetValue(globalName, out db) || !(db is Dictionary<object, object>))
+            {
+                throw new SavedException("This file has no " + globalName + ".");
+            }
             return (Dictionary<object, object>)db;
         }
 
@@ -196,6 +208,55 @@ namespace Ironkeep
                 return files;
             }
             string direct = Path.Combine(start, "Ironkeep.lua");
+            if (File.Exists(direct)) files.Add(direct);
+            return files;
+        }
+
+        public static List<string> AllRoster(string start)
+        {
+            return AllNamed(start, "IronkeepRoster.lua");
+        }
+
+        static List<string> AllNamed(string start, string fileName)
+        {
+            var files = new List<string>();
+            if (start == null) start = "";
+            start = start.Trim().Trim('"').Replace('/', Path.DirectorySeparatorChar);
+            start = start.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (start.Length == 0) return files;
+            if (File.Exists(start))
+            {
+                if (string.Equals(Path.GetFileName(start), fileName, StringComparison.OrdinalIgnoreCase))
+                    files.Add(start);
+                return files;
+            }
+            if (!Directory.Exists(start)) return files;
+            string root = Path.Combine(start, "WTF", "Account");
+            if (Directory.Exists(root))
+            {
+                foreach (string account in Directory.GetDirectories(root))
+                {
+                    string path = Path.Combine(account, "SavedVariables", fileName);
+                    if (File.Exists(path)) files.Add(path);
+                }
+            }
+            if (files.Count > 0)
+            {
+                files.Sort(StringComparer.Ordinal);
+                return files;
+            }
+            if (string.Equals(Path.GetFileName(start), "WTF", StringComparison.OrdinalIgnoreCase))
+            {
+                string parent = Path.GetDirectoryName(start);
+                if (parent != null) return AllNamed(parent, fileName);
+            }
+            string inAccount = Path.Combine(start, "SavedVariables", fileName);
+            if (File.Exists(inAccount))
+            {
+                files.Add(inAccount);
+                return files;
+            }
+            string direct = Path.Combine(start, fileName);
             if (File.Exists(direct)) files.Add(direct);
             return files;
         }

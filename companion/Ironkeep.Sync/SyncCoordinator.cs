@@ -7,7 +7,7 @@ namespace Ironkeep
 {
     public interface IReportUploader
     {
-        UploadResult Upload(string guildId, string body);
+        UploadResult Upload(string guildId, string body, string kind);
     }
 
     public sealed class UploadResult
@@ -55,6 +55,7 @@ namespace Ironkeep
         public string LastConfirmedAt = "";
         public string Folder = "";
         public string GuildId = "";
+        public string RosterStatus = "";
     }
 
     /// <summary>
@@ -75,6 +76,8 @@ namespace Ironkeep
         Timer _settleTimer;
         Timer _rescanTimer;
         int _watcherFaults;
+        int _rosterFiles;
+        string _rosterStatus = "";
         volatile bool _started;
 
         public SyncCoordinator(QueueStore queue, IReportUploader uploader, SyncSettings settings)
@@ -136,6 +139,10 @@ namespace Ironkeep
             if (folder == null || folder.Trim().Length == 0 || !Directory.Exists(folder)) return;
             if (guild == null || guild.Trim().Length == 0) return;
             foreach (string file in Saved.AllSaved(folder)) SnapshotFile(guild, file);
+            List<string> rosters = Saved.AllRoster(folder);
+            _rosterFiles = rosters.Count;
+            _rosterStatus = RosterPayload.StatusForCount(rosters.Count);
+            if (rosters.Count == 1) SnapshotRoster(guild, rosters[0]);
         }
 
         public void Arm(string path)
@@ -170,7 +177,7 @@ namespace Ironkeep
             }
             string guild = GuildId;
             if (guild == null || guild.Trim().Length == 0) return;
-            foreach (string path in ready) SnapshotFile(guild, path);
+            foreach (string path in ready) SnapshotPath(guild, path);
         }
 
         public int Pump(DateTime utcNow)
@@ -228,6 +235,8 @@ namespace Ironkeep
                     _queue.MarkFailed(item.Id, "missing snapshot", utcNow);
                     continue;
                 }
+                string itemKind = string.IsNullOrEmpty(item.Kind) ? "attendance" : item.Kind;
+                if (itemKind == RosterPayload.Kind && _rosterFiles != 1) continue;
                 string body = item.Body;
                 string guild = item.GuildId;
                 int attempt = item.Attempts + 1;
@@ -235,7 +244,7 @@ namespace Ironkeep
                 UploadResult result;
                 try
                 {
-                    result = _uploader.Upload(guild, body);
+                    result = _uploader.Upload(guild, body, itemKind);
                 }
                 catch (Exception)
                 {
@@ -295,6 +304,7 @@ namespace Ironkeep
             if (counts.TryGetValue(SyncState.FailedPermanent, out count)) snap.FailedPermanent = count;
             snap.LastError = _queue.LatestError() ?? "";
             snap.LastConfirmedAt = _queue.LatestConfirmedAt() ?? "";
+            snap.RosterStatus = _rosterStatus ?? "";
             return snap;
         }
 
@@ -325,7 +335,35 @@ namespace Ironkeep
             string text = Saved.TextFor(db);
             if (text == null || text.Trim().Length == 0) return;
             if (text.IndexOf("format: ironkeep-group 1") < 0) return;
-            _queue.Enqueue(guild, file, text);
+            _queue.Enqueue(guild, file, text, "attendance");
+        }
+
+        void SnapshotPath(string guild, string path)
+        {
+            if (path != null && string.Equals(Path.GetFileName(path), "IronkeepRoster.lua", StringComparison.OrdinalIgnoreCase))
+            {
+                List<string> rosters = Saved.AllRoster(Folder);
+                _rosterFiles = rosters.Count;
+                _rosterStatus = RosterPayload.StatusForCount(rosters.Count);
+                if (rosters.Count == 1) SnapshotRoster(guild, path);
+                return;
+            }
+            SnapshotFile(guild, path);
+        }
+
+        void SnapshotRoster(string guild, string file)
+        {
+            string json;
+            try
+            {
+                json = RosterPayload.Canonical(File.ReadAllText(file));
+            }
+            catch (Exception)
+            {
+                return;
+            }
+            if (json == null || json.Trim().Length == 0) return;
+            _queue.Enqueue(guild, file, json, RosterPayload.Kind);
         }
 
         void StartWatcher()
@@ -335,7 +373,7 @@ namespace Ironkeep
             string folder = Folder;
             if (folder == null || !Directory.Exists(folder)) return;
             var watcher = new FileSystemWatcher(folder);
-            watcher.Filter = "Ironkeep.lua";
+            watcher.Filter = "Ironkeep*.lua";
             watcher.IncludeSubdirectories = true;
             watcher.NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size;
             watcher.Changed += delegate(object sender, FileSystemEventArgs e) { Arm(e.FullPath); };

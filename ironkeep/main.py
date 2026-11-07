@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import attendance, companion_auth, config, db, discord_api
+from . import attendance, companion_auth, config, db, discord_api, roster
 from . import mock_data as data
 from pathlib import Path
 
@@ -546,6 +546,29 @@ def raids(slug: str, request: Request):
         nav="raids",
         report=report,
         companion_key=attendance.token_for(guild),
+    )
+
+
+@app.get("/{slug}/roster", response_class=HTMLResponse)
+def guild_roster(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    if (guild.get("settings") or {}).get("game") != "wow":
+        return render(
+            request,
+            "forbidden.html",
+            status_code=404,
+            message="This guild has no roster page.",
+            guild=None,
+            nav=None,
+        )
+    return render(
+        request,
+        "roster.html",
+        guild=guild,
+        nav="roster",
+        roster=roster.current(guild["id"]),
     )
 
 

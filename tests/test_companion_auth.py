@@ -182,6 +182,7 @@ class CompanionAuthTests(unittest.TestCase):
             ("POST", "/api/companion/logout"),
             ("GET", "/api/companion/guilds"),
             ("POST", "/api/companion/guilds/foreverguild/attendance"),
+            ("POST", "/api/companion/guilds/foreverguild/roster"),
             ("POST", "/api/companion/exchange"),
             ("GET", "/api/companion/session"),
         )

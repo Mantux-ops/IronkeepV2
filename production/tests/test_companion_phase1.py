@@ -166,6 +166,7 @@ class Phase1Tests(unittest.TestCase):
             "/api/companion/logout",
             "/api/companion/guilds",
             "/api/companion/guilds/keep/attendance",
+            "/api/companion/guilds/keep/roster",
         ):
             self.assertEqual(self.client.post(path).status_code, 404)
         self.assertNotIn("companion_connect", self.tables())
