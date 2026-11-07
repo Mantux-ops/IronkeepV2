@@ -25,6 +25,11 @@ from ironkeep import companion_reports, config, db
 from production.tests import test_companion_phase1 as phase1
 
 
+def named_report(index):
+    name = "Raider" + chr(ord("A") + (index // 26)) + chr(ord("A") + (index % 26))
+    return report([(name, "Warrior", "Tank", "5m", "here")])
+
+
 def report(people=None, place="Hall of Thanes", started="2026-11-01 12:00"):
     rows = people
     if rows is None:
@@ -265,6 +270,97 @@ class UploadTests(unittest.TestCase):
         self.assertEqual(second.status_code, 403)
         self.assertEqual(self.report_count(), (1, 1, 0))
         self.assertEqual(self.client.get("/api/companion/guilds", headers={"Authorization": "Bearer " + token}).status_code, 401)
+
+    def test_many_distinct_reports_remain_and_the_first_is_still_a_duplicate(self):
+        self.enable()
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        token = self.issue()["access_token"]
+        first = named_report(0)
+        for index in range(25):
+            posted = self.post_report(token, body=named_report(index))
+            self.assertEqual(posted.status_code, 200, posted.text)
+            self.assertEqual(posted.json(), {"ok": True})
+        self.assertEqual(self.report_count(), (25, 25, 0))
+        again = self.post_report(token, body=first.replace("\n", "\r\n"))
+        self.assertEqual(again.status_code, 200, again.text)
+        self.assertEqual(again.json(), {"ok": True, "duplicate": True})
+        self.assertEqual(self.report_count(), (25, 25, 0))
+        conn = sqlite3.connect(self.db_path)
+        try:
+            stored = conn.execute("SELECT people_json FROM companion_reports").fetchall()
+        finally:
+            conn.close()
+        self.assertTrue(any("RaiderAA" in row[0] for row in stored))
+        self.assertTrue(any("RaiderAY" in row[0] for row in stored))
+
+    def test_deleting_a_guild_removes_its_reports_and_a_rejoin_starts_clean(self):
+        self.enable()
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.guild("2", "other", self.wow_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        self.member_roles[("100", "2")] = ["77"]
+        token = self.issue()["access_token"]
+        self.assertEqual(self.post_report(token).status_code, 200)
+        other = companion_reports.parse_text(named_report(3))
+        self.assertFalse(companion_reports.store("2", other, companion_reports.digest(named_report(3))))
+        db.delete_guild("keep")
+        self.assertIsNone(db.guild_by_id("1"))
+        self.assertEqual(self.report_count("1"), (0, 0, 0))
+        self.assertEqual(self.report_count("2"), (1, 1, 0))
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        rejoined = self.issue(state="state-value-rejoin-report")["access_token"]
+        posted = self.post_report(rejoined)
+        self.assertEqual(posted.status_code, 200, posted.text)
+        self.assertEqual(posted.json(), {"ok": True})
+        self.assertEqual(self.report_count("1"), (1, 1, 0))
+        self.assertEqual(self.report_count("2"), (1, 1, 0))
+
+    def test_deleting_a_guild_without_report_tables_still_removes_it(self):
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        conn = sqlite3.connect(self.db_path)
+        try:
+            names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+        finally:
+            conn.close()
+        self.assertNotIn("companion_reports", names)
+        self.assertNotIn("companion_report_hashes", names)
+        db.delete_guild("keep")
+        self.assertIsNone(db.guild_by_slug("keep"))
+
+    def test_a_failed_guild_delete_keeps_the_guild_and_its_reports(self):
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        parsed = companion_reports.parse_text(report())
+        self.assertFalse(companion_reports.store("1", parsed, companion_reports.digest(report())))
+        real_connect = db.connect
+
+        class StopBeforeGuildRow:
+            def __init__(self, conn):
+                self._conn = conn
+
+            def execute(self, sql, parameters=()):
+                if isinstance(sql, str) and sql.startswith("DELETE FROM guilds"):
+                    raise sqlite3.OperationalError("forced")
+                return self._conn.execute(sql, parameters)
+
+            def commit(self):
+                return self._conn.commit()
+
+            def rollback(self):
+                return self._conn.rollback()
+
+            def close(self):
+                return self._conn.close()
+
+        def fail_before_commit():
+            return StopBeforeGuildRow(real_connect())
+
+        with patch("ironkeep.db.connect", fail_before_commit):
+            with self.assertRaises(sqlite3.OperationalError):
+                db.delete_guild("keep")
+        self.assertIsNotNone(db.guild_by_slug("keep"))
+        self.assertEqual(self.report_count("1"), (1, 1, 0))
 
 
 if __name__ == "__main__":

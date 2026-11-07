@@ -843,31 +843,55 @@ def mark_bot_left(discord_id):
 
 
 def delete_guild(slug):
+    """Remove one guild and the rows that belong to it, including Companion reports.
+
+    Report tables are optional. A guild that never uploaded still deletes.
+    Every delete shares one transaction with the guild row.
+    """
     with _LOCK:
         conn = connect()
-        row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
-        if row is None:
+        try:
+            row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
+            if row is None:
+                return
+            guild_id = row["id"]
+            conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM raid_signups WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)", (guild_id,))
+            conn.execute(
+                "DELETE FROM voice_stays WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)",
+                (guild_id,),
+            )
+            conn.execute(
+                "DELETE FROM raid_attendance WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)",
+                (guild_id,),
+            )
+            conn.execute("DELETE FROM raids WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM wow_characters WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM character_wishes WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
+            _delete_companion_reports(conn, guild_id)
+            conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
             conn.close()
-            return
-        guild_id = row["id"]
-        conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM raid_signups WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)", (guild_id,))
-        conn.execute(
-            "DELETE FROM voice_stays WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)",
-            (guild_id,),
+
+
+def _delete_companion_reports(conn, guild_id):
+    present = {
+        row[0]
+        for row in conn.execute(
+            """SELECT name FROM sqlite_master
+               WHERE type = 'table' AND name IN ('companion_reports', 'companion_report_hashes')"""
         )
-        conn.execute(
-            "DELETE FROM raid_attendance WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)",
-            (guild_id,),
-        )
-        conn.execute("DELETE FROM raids WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM wow_characters WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM character_wishes WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
-        conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
-        conn.commit()
-        conn.close()
+    }
+    if "companion_reports" in present:
+        conn.execute("DELETE FROM companion_reports WHERE guild_id = ?", (str(guild_id),))
+    if "companion_report_hashes" in present:
+        conn.execute("DELETE FROM companion_report_hashes WHERE guild_id = ?", (str(guild_id),))
 
 
 def mark_missing_guilds(present_ids):

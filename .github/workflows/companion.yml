@@ -11,21 +11,135 @@ on:
       - "tests/test_companion_auth.py"
       - ".github/workflows/companion.yml"
   workflow_dispatch:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA or existing companion-vX.Y.Z tag"
+        required: true
+        type: string
+      publish:
+        description: "Publish companion-vX.Y.Z after the tests, build, and Defender scan pass"
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: "Type publish to confirm publication. Leave empty for a dry run."
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA"
+        required: true
+        type: string
+      publish:
+        description: "Publish the versioned release"
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: "Type publish to confirm publication"
+        required: false
+        type: string
+        default: ""
+      scripts:
+        description: "Full SHA of the trusted workflow file"
+        required: false
+        type: string
+        default: ""
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  api:
+  guard:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.select.outputs.commit }}
+      version: ${{ steps.select.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
+          ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
+          fetch-depth: 0
+      - name: Validate the selected source
+        id: select
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
+
+  rejected:
+    needs: [guard]
+    if: github.event_name != 'push' && inputs.publish == true && inputs.confirm != 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse an unconfirmed publication
+        run: echo "Publication requires confirm=publish. Leave publish off for a dry run." && exit 1
+
+  api:
+    needs: [guard]
+    if: needs.guard.result == 'success' && (github.event_name == 'push' || inputs.publish != true || inputs.confirm == 'publish')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+      - name: Confirm the guarded checkout
+        run: |
+          expected="${{ needs.guard.outputs.commit }}"
+          case "$expected" in
+            *[!0-9a-fA-F]*|"") echo "The guarded commit is not a full SHA."; exit 1 ;;
+          esac
+          if [ "${#expected}" -ne 40 ]; then echo "The guarded commit is not a full SHA."; exit 1; fi
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$expected" ]; then echo "Checked out $head instead of $expected."; exit 1; fi
+      - name: Resolve the selected source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
+      - name: Check out the trusted release scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
+          ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
+          path: trusted
+          fetch-depth: 0
+      - name: Confirm the trusted release scripts
+        run: |
+          expected="${{ github.event_name == 'push' && github.sha || job.workflow_sha }}"
+          case "$expected" in
+            *[!0-9a-fA-F]*|"") echo "The workflow file commit is not a full SHA."; exit 1 ;;
+          esac
+          if [ "${#expected}" -ne 40 ]; then echo "The workflow file commit is not a full SHA."; exit 1; fi
+          head=$(git -C trusted rev-parse HEAD)
+          if [ "$head" != "$expected" ]; then echo "Trusted scripts are $head instead of $expected."; exit 1; fi
+      - name: Check the release workflow
+        working-directory: trusted
+        run: |
+          python companion/check_release_workflow.py
+          python -m unittest discover -s companion -p 'test_release_dispatch.py'
       - name: Test the attendance route
         run: |
           python -m pip install -r requirements.txt httpx
@@ -36,12 +150,22 @@ jobs:
         run: dotnet test companion/Ironkeep.Companion.Core.Tests/Ironkeep.Companion.Core.Tests.csproj -c Release
 
   windows:
+    needs: [guard]
+    if: needs.guard.result == 'success' && (github.event_name == 'push' || inputs.publish != true || inputs.confirm == 'publish')
     runs-on: windows-latest
+    permissions:
+      contents: read
     defaults:
       run:
         shell: pwsh
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
 
       - uses: actions/setup-python@v5
         with:
@@ -50,6 +174,22 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: "10.0.x"
+
+      - name: Confirm the guarded checkout
+        run: |
+          $expected = "${{ needs.guard.outputs.commit }}"
+          if ($expected -notmatch '^[0-9a-fA-F]{40}$') { Write-Error "The guarded commit is not a full SHA."; exit 1 }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $expected) { Write-Error "Checked out $head instead of $expected."; exit 1 }
+      - name: Resolve the selected source
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
 
       - name: Test the sync library
         run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
@@ -125,7 +265,7 @@ jobs:
           if (-not $iscc) { Write-Error 'Inno Setup compiler was not found.'; exit 1 }
           & $iscc setup.iss
           if ($LASTEXITCODE) { exit $LASTEXITCODE }
-          Set-Content -Path out\BUILD.txt -Encoding ascii -Value $env:GITHUB_SHA
+          Set-Content -Path out\BUILD.txt -Encoding ascii -Value "${{ needs.guard.outputs.commit }}"
 
       - name: Publish the WPF companion
         run: |
@@ -224,6 +364,25 @@ jobs:
             if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
           }
 
+      - name: Build the WPF installer
+        working-directory: companion
+        run: |
+          $iscc = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Error 'Inno Setup compiler was not found.'; exit 1 }
+          $version = "${{ needs.guard.outputs.version }}"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { Write-Error "Version '$version' cannot be built."; exit 1 }
+          & $iscc "/DAppVersion=$version" wpf-setup.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force out\release | Out-Null
+          Copy-Item out\wpf\IronkeepCompanion.exe out\release\IronkeepCompanion.exe -Force
+          if (-not (Test-Path out\release\IronkeepCompanionSetup.exe)) { Write-Error 'The WPF installer was not created.'; exit 1 }
+          $staged = Get-Item out\release\IronkeepCompanion.exe
+          $built = Get-Item out\wpf\IronkeepCompanion.exe
+          if ($staged.Length -ne $built.Length) { Write-Error 'The staged executable does not match the published executable.'; exit 1 }
+
       - name: Scan with Microsoft Defender
         working-directory: companion
         run: |
@@ -233,7 +392,7 @@ jobs:
           Get-MpComputerStatus | Format-List AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
 
           $flagged = $false
-          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\wpf\IronkeepCompanion.exe')) {
+          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\release\IronkeepCompanion.exe', 'out\release\IronkeepCompanionSetup.exe')) {
             $path = (Resolve-Path $file).Path
             & $mp -Scan -ScanType 3 -File $path -DisableRemediation | Out-Host
             $code = $LASTEXITCODE
@@ -243,17 +402,38 @@ jobs:
           }
           try { Get-MpThreatDetection | Format-List | Out-Host } catch { }
           if ($flagged) { Write-Error 'Defender flagged the new build.'; exit 1 }
+
+          $commit = "${{ needs.guard.outputs.commit }}"
+          $version = "${{ needs.guard.outputs.version }}"
+          if ($commit -notmatch '^[0-9a-fA-F]{40}$') { Write-Error 'The source commit is not a full SHA.'; exit 1 }
+          $sums = @()
+          foreach ($name in @('IronkeepCompanionSetup.exe', 'IronkeepCompanion.exe')) {
+            $path = Join-Path (Join-Path (Get-Location) 'out\release') $name
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sums += "$hash  $name"
+          }
+          Set-Content -Path out\release\SHA256SUMS.txt -Encoding ascii -Value ($sums -join "`n")
+          Set-Content -Path out\release\BUILD.txt -Encoding ascii -Value "version=$version`ncommit=$($commit.ToLowerInvariant())`n"
+          Set-Content -Path out\release\SCANNED.txt -Encoding ascii -Value "defender=pass`ncommit=$($commit.ToLowerInvariant())`n"
+          Copy-Item release-notes.md out\release\release-notes.md -Force
           exit 0
 
       - uses: actions/upload-artifact@v4
         with:
-          name: IronkeepCompanion-${{ github.sha }}
+          name: companion-wpf-release
+          if-no-files-found: error
           path: |
-            companion/out/IronkeepCompanionSetup.exe
-            companion/out/IronkeepCompanion.exe
-            companion/IronkeepCompanion.exe.config
-            companion/out/BUILD.txt
-            companion/out/wpf/IronkeepCompanion.exe
+            companion/out/release/IronkeepCompanionSetup.exe
+            companion/out/release/IronkeepCompanion.exe
+            companion/out/release/SHA256SUMS.txt
+            companion/out/release/BUILD.txt
+            companion/out/release/SCANNED.txt
+            companion/out/release/release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IronkeepCompanion-preview-${{ steps.source.outputs.commit }}
+          path: |
             companion/out/wpf/SIZE.txt
             companion/out/wpf/preview/dashboard.png
             companion/out/wpf/preview/settings.png
@@ -266,15 +446,37 @@ jobs:
             companion/out/wpf/preview/connected-125.png
             companion/out/wpf/preview/connected-150.png
 
-      - name: Publish the download
-        if: github.ref == 'refs/heads/cursor/forever-companion-f675' || github.ref == 'refs/heads/cursor/companion-attendance-f675' || github.ref == 'refs/heads/cursor/forever-addon-f675' || github.ref == 'refs/heads/cursor/companion-windows-ci-f675'
-        working-directory: companion
+  release:
+    needs: [guard, api, windows]
+    if: success() && github.event_name != 'push' && inputs.publish == true && inputs.confirm == 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: companion-wpf-release
+          path: release
+      - name: Publish the immutable release
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          $setup = (Get-FileHash out\IronkeepCompanionSetup.exe -Algorithm SHA256).Hash
-          $window = (Get-FileHash out\IronkeepCompanion.exe -Algorithm SHA256).Hash
-          $notes = "Installeer IronkeepCompanionSetup.exe. Het venster leest de groepslijst. Vul zelf de Forever-gilde in en plak de sleutel van de raids-pagina. Daarna stuurt het de lijst. De sleutel blijft alleen voor deze Windows-gebruiker bewaard.`n`nGebouwd op Windows vanaf $env:GITHUB_SHA en daarna gescand door Microsoft Defender.`n`nSHA256 setup: $setup`nSHA256 venster: $window"
-          gh release delete companion-latest --yes --cleanup-tag 2>$null
-          gh release create companion-latest out\IronkeepCompanionSetup.exe out\IronkeepCompanion.exe IronkeepCompanion.exe.config out\BUILD.txt --prerelease --target $env:GITHUB_SHA --title 'Ironkeep Companion' --notes $notes
-          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          EXPECTED_COMMIT: ${{ needs.guard.outputs.commit }}
+          EXPECTED_VERSION: ${{ needs.guard.outputs.version }}
+          SOURCE_REF: ${{ inputs.source }}
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
+          PUBLISH_CONFIRM: ${{ inputs.confirm }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          RELEASE_DIR: release
+        run: python companion/publish_release.py --publish

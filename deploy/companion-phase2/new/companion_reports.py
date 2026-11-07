@@ -117,8 +117,8 @@ def _place_ok(value):
 def store(guild_id, report, body_hash):
     """Insert one report. The same normalized text for this guild is kept once.
 
-    Returns True when the hash was already stored. The hash row stays after
-    the visible list is trimmed to 20 reports.
+    Returns True when the hash was already stored. Accepted reports stay until
+    the guild is deleted.
     """
     if _HASH.fullmatch(str(body_hash or "")) is None:
         raise ReportError("This report could not be read.")
@@ -143,12 +143,6 @@ def store(guild_id, report, body_hash):
                    (guild_id, place, started, received_at, people_json, body_hash)
                    VALUES (?, ?, ?, ?, ?, ?)""",
                 (guild_id, report["place"], report["started"], received, people, body_hash),
-            )
-            conn.execute(
-                """DELETE FROM companion_reports WHERE guild_id = ? AND id NOT IN (
-                       SELECT id FROM companion_reports WHERE guild_id = ? ORDER BY id DESC LIMIT 20
-                   )""",
-                (guild_id, guild_id),
             )
             conn.commit()
             return False

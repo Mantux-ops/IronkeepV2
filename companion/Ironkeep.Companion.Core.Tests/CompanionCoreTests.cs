@@ -31,6 +31,13 @@ namespace Ironkeep.Companion.Core.Tests
         }
 
         [Fact]
+        public void DisplayedVersionIsTheReleaseVersion()
+        {
+            Assert.Equal("2.0.1", CompanionSession.Version);
+            Assert.Equal("2.0.1", new DashboardViewModel().Version);
+        }
+
+        [Fact]
         public void ConfigRoundTripKeepsTheKeyProtected()
         {
             var store = new CompanionConfigStore(Path.Combine(_root, "settings.txt"), new PrefixProtector());
@@ -144,7 +151,7 @@ namespace Ironkeep.Companion.Core.Tests
                 Assert.Equal("Legacy channel", model.Connection);
                 Assert.Equal("Ok", model.Level);
                 Assert.Equal("0", model.Pending);
-                Assert.Contains("not verified", model.FolderStatus);
+                Assert.Equal("Forever SavedVariables layout found.", model.FolderStatus);
                 Assert.Equal("1 Ironkeep.lua file found.", model.SavedStatus);
                 Assert.DoesNotContain(Token, model.Auth + model.LastError + model.Connection + model.Guild);
                 var settings = new SettingsViewModel();
@@ -308,7 +315,8 @@ namespace Ironkeep.Companion.Core.Tests
             Assert.Equal("No legacy key", model.Auth);
             Assert.Equal("Waiting for a guild", model.SyncState);
             Assert.NotEqual("Ok", model.Level);
-            Assert.Contains("No folder selected", model.FolderStatus);
+            Assert.Equal("No folder selected. This is not a detected install.", model.FolderStatus);
+            Assert.Equal("No Ironkeep.lua found.", model.SavedStatus);
             var stored = new SyncSnapshot();
             stored.LastConfirmedAt = "2026-01-01T00:00:00.0000000Z";
             var signedOut = new CompanionConfig();
@@ -459,6 +467,55 @@ namespace Ironkeep.Companion.Core.Tests
             config.WowFolder = folder;
             session.Save(config);
             return session;
+        }
+
+        [Fact]
+        public void FolderStatusFollowsTheSupportedSavedVariablesLayout()
+        {
+            string sample = Path.Combine(AppContext.BaseDirectory, "sample-Ironkeep.lua");
+            string parent = Path.Combine(_root, "World of Warcraft");
+            string forever = Path.Combine(parent, "_forever_");
+            string saved = Path.Combine(forever, "WTF", "Account", "125458546#1", "SavedVariables");
+            Directory.CreateDirectory(saved);
+            File.Copy(sample, Path.Combine(saved, "Ironkeep.lua"), true);
+            string bare = Path.Combine(_root, "empty-install");
+            Directory.CreateDirectory(bare);
+            var model = new DashboardViewModel();
+
+            var found = new CompanionConfig();
+            found.WowFolder = forever;
+            int foundFiles = Saved.AllSaved(forever).Count;
+            model.Apply(new SyncSnapshot(), found, foundFiles);
+            Assert.Equal(1, foundFiles);
+            Assert.Equal("Forever SavedVariables layout found.", model.FolderStatus);
+            Assert.Equal("1 Ironkeep.lua file found.", model.SavedStatus);
+
+            var parentConfig = new CompanionConfig();
+            parentConfig.WowFolder = parent;
+            int parentFiles = Saved.AllSaved(parent).Count;
+            model.Apply(new SyncSnapshot(), parentConfig, parentFiles);
+            Assert.Equal(0, parentFiles);
+            Assert.Equal("Folder found, but no Ironkeep.lua was found in a supported SavedVariables layout.", model.FolderStatus);
+            Assert.Equal("No Ironkeep.lua found.", model.SavedStatus);
+
+            var bareConfig = new CompanionConfig();
+            bareConfig.WowFolder = bare;
+            int bareFiles = Saved.AllSaved(bare).Count;
+            model.Apply(new SyncSnapshot(), bareConfig, bareFiles);
+            Assert.Equal(0, bareFiles);
+            Assert.Equal("Folder found, but no Ironkeep.lua was found in a supported SavedVariables layout.", model.FolderStatus);
+            Assert.Equal("No Ironkeep.lua found.", model.SavedStatus);
+
+            var missing = new CompanionConfig();
+            missing.WowFolder = Path.Combine(_root, "missing-forever");
+            model.Apply(new SyncSnapshot(), missing, 0);
+            Assert.Equal("That folder was not found.", model.FolderStatus);
+            Assert.Equal("No Ironkeep.lua found.", model.SavedStatus);
+            Assert.False(Directory.Exists(missing.WowFolder));
+
+            model.Apply(new SyncSnapshot(), new CompanionConfig(), 0);
+            Assert.Equal("No folder selected. This is not a detected install.", model.FolderStatus);
+            Assert.Equal("No Ironkeep.lua found.", model.SavedStatus);
         }
 
         string InstallLua()
