@@ -346,6 +346,26 @@ async def _scan(guild):
     log.info("Synced members in %s", guild.name)
 
 
+def temp_voice_snapshot(client):
+    """Channels the bot can see, and how many people are in each. Bots do not count."""
+    snapshot = {}
+    for guild in client.guilds:
+        channels = {str(channel.id) for channel in getattr(guild, "voice_channels", ())}
+        counts = {}
+        for user_id, state in getattr(guild, "_voice_states", {}).items():
+            channel = getattr(state, "channel", None)
+            if channel is None:
+                continue
+            member = guild.get_member(user_id)
+            if member is not None and member.bot:
+                continue
+            channel_id = str(channel.id)
+            channels.add(channel_id)
+            counts[channel_id] = counts.get(channel_id, 0) + 1
+        snapshot[str(guild.id)] = {"channels": channels, "counts": counts}
+    return snapshot
+
+
 def main():
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s %(message)s")
     if not config.BOT_TOKEN:
@@ -428,7 +448,10 @@ def main():
         wow.note_voice(member.guild.id, member.id, wow.clean_name(member.display_name), left, joined)
         remaining = 0
         if before.channel is not None:
-            remaining = len([person for person in before.channel.members if person.id != member.id])
+            remaining = len([
+                person for person in before.channel.members
+                if person.id != member.id and not person.bot
+            ])
         role_ids = [str(role.id) for role in member.roles if not role.is_default()]
         await asyncio.to_thread(
             wow.handle_temp_voice,
@@ -677,7 +700,7 @@ def main():
                         await _scan(guild)
                 await asyncio.to_thread(_register_commands)
                 await asyncio.to_thread(_reminders)
-                await asyncio.to_thread(wow.run_schedule)
+                await asyncio.to_thread(wow.run_schedule, None, temp_voice_snapshot(client))
                 if time.time() >= albion_after:
                     from .albion import refresh_open_trials
 
