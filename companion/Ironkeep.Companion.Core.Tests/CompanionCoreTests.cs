@@ -126,6 +126,50 @@ namespace Ironkeep.Companion.Core.Tests
         }
 
         [Fact]
+        public void StartupShowsARosterFileBeforeTheRescanTimer()
+        {
+            string forever = Path.Combine(_root, "World of Warcraft", "_forever_");
+            string saved = Path.Combine(forever, "WTF", "Account", "125458546#1", "SavedVariables");
+            Directory.CreateDirectory(saved);
+            File.Copy(Path.Combine(AppContext.BaseDirectory, "sample-Ironkeep.lua"), Path.Combine(saved, "Ironkeep.lua"), true);
+            File.WriteAllText(Path.Combine(saved, "IronkeepRoster.lua"), "IronkeepRosterDB = { schema = 1, wowGuildName = \"Herberg\", capturedAt = 1794011429, completeness = { status = \"complete\", examined = 1, populated = 1, empty = 0, errors = 0, reportedTotal = 1, reportedOnline = 1, countStable = true }, members = { { guid = \"Player-1\", name = \"Ada Smith\", level = 70, classToken = \"WARRIOR\", className = \"Warrior\", rankName = \"Member\" } } }\n");
+            using (CompanionSession session = Open("roster-start", forever, "", "", new ScriptedUploader(), new MemoryStartup()))
+            {
+                session.Start();
+                SyncSnapshot snap = session.Snapshot();
+                var model = new DashboardViewModel();
+                model.Apply(snap, session.Config, session.SavedFileCount());
+                Assert.Equal("1 IronkeepRoster.lua file found.", snap.RosterStatus);
+                Assert.Equal("1 IronkeepRoster.lua file found.", model.RosterStatus);
+                Assert.Equal("1 Ironkeep.lua file found.", model.SavedStatus);
+                Assert.Equal("Forever SavedVariables layout found.", model.FolderStatus);
+                Assert.Equal(0, snap.Pending);
+                Assert.Empty(session.History());
+            }
+        }
+
+        [Fact]
+        public void AValidDiscordSessionForHerbergSuppliesTheGuildSlug()
+        {
+            var config = new CompanionConfig();
+            config.AuthMode = CompanionConfig.ModeDiscord;
+            config.Address = "https://ironkeep.gg";
+            config.Slug = "herberg";
+            config.GuildName = "Herberg";
+            config.GuildDiscordId = "125458546";
+            config.RefreshToken = "ikr.herberg-session";
+            config.AccessToken = "ika.herberg-session";
+            config.SessionStatus = "";
+            using (var session = new CompanionSession(Path.Combine(_root, "herberg.sqlite"), Path.Combine(_root, "herberg.txt"), new PrefixProtector(), new MemoryStartup(), "", new ScriptedUploader()))
+            {
+                session.UseMemory(config);
+                Assert.Equal("herberg", session.Snapshot().GuildId);
+                Assert.NotEqual(config.GuildDiscordId, session.Snapshot().GuildId);
+                Assert.Equal("Herberg", session.Config.GuildName);
+            }
+        }
+
+        [Fact]
         public void RealCoordinatorUploadsAndPresentsTheQueue()
         {
             var uploader = new ScriptedUploader();

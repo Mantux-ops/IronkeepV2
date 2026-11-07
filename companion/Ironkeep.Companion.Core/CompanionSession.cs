@@ -209,6 +209,7 @@ namespace Ironkeep.Companion
         public void Start()
         {
             ApplyToCoordinator();
+            _coordinator.Reconcile();
             _coordinator.Start();
         }
 
