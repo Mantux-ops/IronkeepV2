@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       source:
-        description: "Reviewed full commit SHA on cursor/companion-report-keep-f675"
+        description: "Reviewed full commit SHA on main"
         required: true
         type: string
       publish:
@@ -26,9 +26,9 @@ jobs:
     permissions:
       actions: read
       contents: write
-    uses: Mantux-ops/IronkeepV2/.github/workflows/companion.yml@ceff401a54bfbd52dad9482b32b11f1ab454ff94
+    uses: Mantux-ops/IronkeepV2/.github/workflows/companion.yml@f06d86a7f4fb5c610bcf48e426dfe286e668998a
     with:
       source: ${{ inputs.source }}
       publish: ${{ inputs.publish }}
       confirm: ${{ inputs.confirm }}
-      scripts: ceff401a54bfbd52dad9482b32b11f1ab454ff94
+      scripts: f06d86a7f4fb5c610bcf48e426dfe286e668998a
