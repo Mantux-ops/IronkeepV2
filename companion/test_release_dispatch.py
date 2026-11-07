@@ -2,6 +2,7 @@
 
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -27,6 +28,52 @@ class SourceSelectionTest(unittest.TestCase):
     def test_a_reviewed_commit_on_main_is_accepted(self):
         self.assertEqual(release_source.require_reviewed(ROSTER), ROSTER)
         self.assertEqual(release_source.require_reviewed(REVIEWED), REVIEWED)
+
+    def test_the_roster_tree_rejects_itself_and_downstream_jobs_use_the_trusted_guard(self):
+        old = subprocess.check_output(["git", "show", ROSTER + ":companion/release_source.py"], text=True)
+        self.assertIn('REVIEWED_BRANCH = "cursor/companion-report-keep-f675"', old)
+        env = os.environ.copy()
+        env.update({
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_SHA": CALLER,
+            "JOB_WORKFLOW_SHA": "e" * 40,
+            "SCRIPTS_INPUT": "e" * 40,
+            "SOURCE_REF": ROSTER,
+        })
+        env.pop("GITHUB_OUTPUT", None)
+        with tempfile.TemporaryDirectory() as temp:
+            path = Path(temp) / "release_source.py"
+            path.write_text(old, encoding="utf-8")
+            run = subprocess.run(
+                [sys.executable, str(path)],
+                text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, check=False,
+            )
+        self.assertNotEqual(run.returncode, 0)
+        self.assertIn(ROSTER + " is not on cursor/companion-report-keep-f675.", run.stderr)
+        with patch.dict(os.environ, {
+            "GITHUB_EVENT_NAME": "workflow_dispatch",
+            "GITHUB_SHA": CALLER,
+            "JOB_WORKFLOW_SHA": "e" * 40,
+            "SCRIPTS_INPUT": "e" * 40,
+            "SOURCE_REF": ROSTER,
+        }, clear=False):
+            os.environ.pop("GITHUB_OUTPUT", None)
+            self.assertEqual(release_source.main(), 0)
+        workflow = (ROOT / ".github/workflows/companion.yml").read_text(encoding="utf-8")
+        api = workflow.split("  api:", 1)[1].split("  windows:", 1)[0]
+        windows = workflow.split("  windows:", 1)[1].split("  release:", 1)[0]
+        for job in (api, windows):
+            trusted_at = job.index("- name: Check out the trusted release scripts")
+            resolve_at = job.index("- name: Resolve the selected source")
+            self.assertLess(trusted_at, resolve_at)
+            body = job[resolve_at:].split("\n      - name:", 1)[0]
+            self.assertIn("working-directory: trusted", body)
+            self.assertIn("python companion/release_source.py", body)
+            self.assertNotIn("needs.guard.outputs.commit", body)
+            self.assertEqual(job.count("ref: ${{ needs.guard.outputs.commit }}"), 1)
+        publish = windows.split("- name: Publish the WPF companion", 1)[1].split("\n      - name:", 1)[0]
+        self.assertIn("dotnet publish companion/Ironkeep.Companion/Ironkeep.Companion.csproj", publish)
+        self.assertNotIn("working-directory: trusted", publish)
 
     def test_a_commit_that_is_not_on_main_is_rejected(self):
         with self.assertRaises(SystemExit) as raised:

@@ -14,6 +14,23 @@ def fail(message):
     raise SystemExit(message)
 
 
+def require_trusted_resolution(job, label):
+    """The source tree can carry an older guard. Resolution uses the trusted copy."""
+    trusted_at = job.find("- name: Check out the trusted release scripts")
+    marker = "- name: Resolve the selected source"
+    resolve_at = job.find(marker)
+    if trusted_at < 0 or resolve_at < trusted_at:
+        fail(label + " resolves the source before the trusted release scripts are checked out.")
+    body = job[resolve_at + len(marker):]
+    nxt = body.find("\n      - name:")
+    if nxt >= 0:
+        body = body[:nxt]
+    if "working-directory: trusted" not in body or "companion/release_source.py" not in body:
+        fail(label + " resolves the source with the selected commit's release guard.")
+    if "needs.guard.outputs.commit" in body:
+        fail(label + " resolves the source from the selected commit.")
+
+
 def main():
     workflow = (ROOT / ".github/workflows/companion.yml").read_text(encoding="utf-8")
     notes = (ROOT / "companion/release-notes.md").read_text(encoding="utf-8")
@@ -70,6 +87,14 @@ def main():
     attendance = api.split("- name: Test the attendance route", 1)[1]
     if "working-directory: trusted" in attendance:
         fail("Application tests run from the trusted workflow checkout.")
+    windows = workflow.split("  windows:", 1)[1].split("  release:", 1)[0]
+    require_trusted_resolution(api, "The API job")
+    require_trusted_resolution(windows, "The Windows job")
+    if api.count("ref: ${{ needs.guard.outputs.commit }}") != 1 or windows.count("ref: ${{ needs.guard.outputs.commit }}") != 1:
+        fail("Application jobs do not keep one checkout of the selected source.")
+    publish = windows.split("- name: Publish the WPF companion", 1)[1].split("\n      - name:", 1)[0]
+    if "dotnet publish companion/Ironkeep.Companion/Ironkeep.Companion.csproj" not in publish or "working-directory: trusted" in publish:
+        fail("The Windows build does not publish the selected source.")
     scan_at = workflow.find("Scan with Microsoft Defender")
     upload_at = workflow.find("name: companion-wpf-release")
     if scan_at < 0 or upload_at < 0 or scan_at > upload_at:

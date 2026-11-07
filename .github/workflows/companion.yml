@@ -111,14 +111,6 @@ jobs:
           if [ "${#expected}" -ne 40 ]; then echo "The guarded commit is not a full SHA."; exit 1; fi
           head=$(git rev-parse HEAD)
           if [ "$head" != "$expected" ]; then echo "Checked out $head instead of $expected."; exit 1; fi
-      - name: Resolve the selected source
-        env:
-          SOURCE_REF: ${{ inputs.source }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
-          GITHUB_SHA: ${{ github.sha }}
-          SCRIPTS_INPUT: ${{ inputs.scripts }}
-          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
-        run: python companion/release_source.py
       - name: Check out the trusted release scripts
         uses: actions/checkout@v4
         with:
@@ -135,6 +127,15 @@ jobs:
           if [ "${#expected}" -ne 40 ]; then echo "The workflow file commit is not a full SHA."; exit 1; fi
           head=$(git -C trusted rev-parse HEAD)
           if [ "$head" != "$expected" ]; then echo "Trusted scripts are $head instead of $expected."; exit 1; fi
+      - name: Resolve the selected source
+        working-directory: trusted
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
       - name: Check the release workflow
         working-directory: trusted
         run: |
@@ -181,8 +182,22 @@ jobs:
           if ($expected -notmatch '^[0-9a-fA-F]{40}$') { Write-Error "The guarded commit is not a full SHA."; exit 1 }
           $head = (git rev-parse HEAD).Trim()
           if ($head -ne $expected) { Write-Error "Checked out $head instead of $expected."; exit 1 }
+      - name: Check out the trusted release scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
+          ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
+          path: trusted
+          fetch-depth: 0
+      - name: Confirm the trusted release scripts
+        run: |
+          $expected = "${{ github.event_name == 'push' && github.sha || job.workflow_sha }}"
+          if ($expected -notmatch '^[0-9a-fA-F]{40}$') { Write-Error "The workflow file commit is not a full SHA."; exit 1 }
+          $head = (git -C trusted rev-parse HEAD).Trim()
+          if ($head -ne $expected) { Write-Error "Trusted scripts are $head instead of $expected."; exit 1 }
       - name: Resolve the selected source
         id: source
+        working-directory: trusted
         env:
           SOURCE_REF: ${{ inputs.source }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
