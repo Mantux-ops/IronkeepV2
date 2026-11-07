@@ -135,13 +135,13 @@ namespace Ironkeep
         public void Reconcile()
         {
             string folder = Folder;
-            string guild = GuildId;
             if (folder == null || folder.Trim().Length == 0 || !Directory.Exists(folder)) return;
-            if (guild == null || guild.Trim().Length == 0) return;
-            foreach (string file in Saved.AllSaved(folder)) SnapshotFile(guild, file);
             List<string> rosters = Saved.AllRoster(folder);
             _rosterFiles = rosters.Count;
             _rosterStatus = RosterPayload.StatusForCount(rosters.Count);
+            string guild = GuildId;
+            if (guild == null || guild.Trim().Length == 0) return;
+            foreach (string file in Saved.AllSaved(folder)) SnapshotFile(guild, file);
             if (rosters.Count == 1) SnapshotRoster(guild, rosters[0]);
         }
 

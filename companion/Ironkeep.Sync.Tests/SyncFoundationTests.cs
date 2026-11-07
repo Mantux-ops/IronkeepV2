@@ -651,6 +651,57 @@ namespace Ironkeep.Tests
         }
 
         [Fact]
+        public void OneRosterFileIsVisibleWithoutAGuildAndNothingIsQueued()
+        {
+            WriteRoster("125458546#1", 1794011429);
+            _sync.GuildId = "";
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            Assert.Equal("1 IronkeepRoster.lua file found.", _sync.Snapshot().RosterStatus);
+            Assert.Empty(_queue.Due(DateTime.UtcNow));
+            Assert.Empty(_queue.History(10));
+        }
+
+        [Fact]
+        public void OneRosterFileInAHashedAccountIsQueuedForTheGuild()
+        {
+            WriteRoster("125458546#1", 1794011429);
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            QueueItem item = Assert.Single(_queue.Due(DateTime.UtcNow));
+            Assert.Equal(RosterPayload.Kind, item.Kind);
+            Assert.Equal("guild-a", item.GuildId);
+            Assert.Contains("125458546#1", item.SourcePath);
+            Assert.Equal("1 IronkeepRoster.lua file found.", _sync.Snapshot().RosterStatus);
+        }
+
+        [Fact]
+        public void TwoRosterFilesIncludingAHashedAccountAreNotUploaded()
+        {
+            WriteRoster("125458546#1", 1794011429);
+            WriteRoster("Second", 1794013045);
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            Assert.Contains("More than one IronkeepRoster.lua", _sync.Snapshot().RosterStatus);
+            _uploader.Handler = delegate { return Ok(false); };
+            _sync.Pump(DateTime.UtcNow);
+            Assert.Empty(_uploader.Sent);
+            Assert.Empty(_queue.Due(DateTime.UtcNow));
+        }
+
+        [Fact]
+        public void AMissingRosterFileIsReportedAndAttendanceStillQueues()
+        {
+            WriteAccount("125458546#1", Sample("Hall of Thanes"));
+            _sync.Folder = WowRoot();
+            _sync.Reconcile();
+            Assert.Equal("No IronkeepRoster.lua found.", _sync.Snapshot().RosterStatus);
+            QueueItem item = Assert.Single(_queue.Due(DateTime.UtcNow));
+            Assert.Equal("attendance", item.Kind);
+            Assert.Contains("format: ironkeep-group 1", item.Body);
+        }
+
+        [Fact]
         public void OneRosterFileIsQueuedAndTwoAccountsAreNot()
         {
             WriteRoster("One", 1794011429);
