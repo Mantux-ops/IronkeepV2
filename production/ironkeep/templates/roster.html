@@ -4,33 +4,358 @@
 {% block title %}Roster · {{ guild.name }} · Ironkeep{% endblock %}
 
 {% block main %}
+<style>
+  .roster-facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0 0 18px;
+  }
+
+  .roster-fact {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    min-width: 0;
+  }
+
+  .roster-fact__label {
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .roster-fact__value {
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .roster-fact__value--mono {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .roster-page .section-head {
+    align-items: flex-end;
+  }
+
+  .roster-page .select {
+    width: auto;
+    min-width: 11rem;
+    background-color: var(--panel);
+  }
+
+  .roster-match {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .roster-class {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .roster-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--swatch);
+    box-shadow: inset 0 0 0 1px rgba(12, 14, 18, 0.45);
+  }
+
+  .roster-page .table {
+    min-width: 640px;
+  }
+
+  .roster-page .table th:first-child,
+  .roster-page .table td:first-child {
+    position: sticky;
+    left: 0;
+  }
+
+  .roster-page .table th:first-child {
+    z-index: 2;
+    background: var(--panel-2);
+  }
+
+  .roster-page .table td:first-child {
+    z-index: 1;
+    background: var(--panel);
+  }
+
+  .roster-page .table tbody tr:hover td:first-child {
+    background: var(--panel-2);
+  }
+
+  @media (max-width: 800px) {
+    .roster-facts {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .roster-page .toolbar {
+      width: 100%;
+    }
+
+    .roster-page .search,
+    .roster-page .search input {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .roster-facts {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
 <header class="page-header">
   <div>
     <h1 class="page-title">Guild roster</h1>
-    <p class="page-subtitle">{{ guild.name }} · the snapshot the companion read from WoW Forever.</p>
+    <p class="page-subtitle">{{ guild.name }}</p>
   </div>
 </header>
 
-<article class="card measure-card">
-  {% if roster %}
-  <div class="card__head">
-    <div>
-      <h2 class="card__title">{{ roster.wow_guild_name }}</h2>
-      <p class="card__desc">{{ roster.members|length }} members · captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
-    </div>
+{% if not roster %}
+<section class="empty-state">
+  {{ icon("users", 28) }}
+  <h2>No guild roster yet</h2>
+  <p>Run <span class="mono">/ikroster</span> in WoW Forever, then upload it from the Ironkeep Companion.</p>
+</section>
+{% else %}
+{% set member_list = roster.members if roster.members is sequence and roster.members is not string and roster.members is not mapping else none %}
+{% set received_raw = roster.received_at if roster.received_at is string else "" %}
+{% set received_label = received_raw[:-1].replace("T", " ") ~ " UTC" if received_raw.endswith("Z") else received_raw %}
+{% set captured_label = roster.captured_label if roster.captured_label is string else "" %}
+{% set guild_label = roster.wow_guild_name if roster.wow_guild_name is string and roster.wow_guild_name.strip() else "—" %}
+<section class="roster-facts" aria-label="Roster snapshot">
+  <div class="roster-fact">
+    <div class="roster-fact__label">WoW guild</div>
+    <div class="roster-fact__value">{{ guild_label }}</div>
   </div>
-  <div class="raid-list">
-    {% for member in roster.members %}
-    <div class="raid-row">
-      <span class="raid-row__name">
-        <span class="raid-row__title">{{ member.name }}</span>
-        <span class="raid-row__sub">{{ member.className }} · {{ member.classToken }} · level {{ member.level }} · {{ member.rankName }} · {{ member.guid }}</span>
-      </span>
-    </div>
-    {% endfor %}
+  <div class="roster-fact">
+    <div class="roster-fact__label">Members</div>
+    <div class="roster-fact__value">{{ member_list|length if member_list is not none else "—" }}</div>
   </div>
-  {% else %}
-  <p class="muted">No guild roster yet. Run /ikroster, log out of the game, and leave the companion open.</p>
+  <div class="roster-fact">
+    <div class="roster-fact__label">Captured</div>
+    <div class="roster-fact__value roster-fact__value--mono">{{ captured_label if captured_label else "—" }}</div>
+  </div>
+  <div class="roster-fact">
+    <div class="roster-fact__label">Received</div>
+    <div class="roster-fact__value roster-fact__value--mono">{{ received_label if received_label else "—" }}</div>
+  </div>
+</section>
+
+{% if member_list is none %}
+<section class="empty-state">
+  {{ icon("alert", 28) }}
+  <h2>This roster cannot be shown</h2>
+  <p>The saved snapshot does not contain a character list.</p>
+</section>
+{% else %}
+{% set rows = [] %}
+{% set class_names = [] %}
+{% set rank_names = [] %}
+{% for member in member_list if member is mapping %}
+  {% set _ = rows.append(member) %}
+  {% if member.className is string and member.className.strip() and member.className not in class_names %}
+    {% set _ = class_names.append(member.className) %}
   {% endif %}
-</article>
+  {% if member.rankName is string and member.rankName.strip() and member.rankName not in rank_names %}
+    {% set _ = rank_names.append(member.rankName) %}
+  {% endif %}
+{% endfor %}
+{% if not rows %}
+<section class="empty-state">
+  {{ icon("users", 28) }}
+  <h2>No characters in this roster</h2>
+  <p>The latest snapshot has no characters that can be shown.</p>
+</section>
+{% else %}
+{% set class_colors = {
+  "WARRIOR": "#C69B6D",
+  "PALADIN": "#F48CBA",
+  "HUNTER": "#AAD372",
+  "ROGUE": "#FFF468",
+  "PRIEST": "#F0F0F0",
+  "DEATHKNIGHT": "#C41E3A",
+  "SHAMAN": "#0070DD",
+  "MAGE": "#3FC7EB",
+  "WARLOCK": "#8788EE",
+  "MONK": "#00FF98",
+  "DRUID": "#FF7C0A",
+  "DEMONHUNTER": "#A330C9",
+  "EVOKER": "#33937F"
+} %}
+<section class="roster-page">
+  <div class="section-head">
+    <h2 class="section-title">Characters</h2>
+    <div class="toolbar">
+      <label class="search">
+        {{ icon("search", 16) }}
+        <input type="search" id="roster-search" placeholder="Search character name" autocomplete="off" aria-label="Search character name">
+      </label>
+      <select id="roster-class" class="input select" aria-label="Class">
+        <option value="">All classes</option>
+        {% for class_name in class_names|sort(case_sensitive=False) %}
+        <option value="{{ class_name }}">{{ class_name }}</option>
+        {% endfor %}
+      </select>
+      <select id="roster-rank" class="input select" aria-label="Guild rank">
+        <option value="">All ranks</option>
+        {% for rank_name in rank_names|sort(case_sensitive=False) %}
+        <option value="{{ rank_name }}">{{ rank_name }}</option>
+        {% endfor %}
+      </select>
+      <p class="roster-match" id="roster-match" hidden></p>
+    </div>
+  </div>
+  <noscript><p class="roster-match">Search, filters, and sorting need JavaScript. Every character in this snapshot is listed below.</p></noscript>
+  <div class="table-wrap">
+    <table class="table" id="roster-table" aria-label="Guild characters">
+      <thead>
+        <tr>
+          <th data-sort="character" aria-sort="none" title="Sort by character name">Character</th>
+          <th data-sort="className" aria-sort="none" title="Sort by class">Class</th>
+          <th data-sort="level" aria-sort="none" title="Sort by level">Level</th>
+          <th data-sort="rankName" aria-sort="none" title="Sort by guild rank name">Guild rank</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for member in rows %}
+        {% set character = member.name if member.name is string else "" %}
+        {% set class_name = member.className if member.className is string else "" %}
+        {% set rank_name = member.rankName if member.rankName is string else "" %}
+        {% set level = member.level if member.level is integer and member.level is not boolean else none %}
+        {% set token = member.classToken if member.classToken is string else "" %}
+        {% set color = class_colors[token] if token in class_colors else "" %}
+        <tr data-character="{{ character }}" data-class-name="{{ class_name }}" data-rank-name="{{ rank_name }}" data-level="{{ level if level is not none else '' }}">
+          <td>{{ character if character.strip() else "—" }}</td>
+          <td>
+            <span class="roster-class">
+              {% if color %}<span class="roster-swatch" style="--swatch: {{ color }}" aria-hidden="true"></span>{% endif %}
+              <span>{{ class_name if class_name.strip() else "—" }}</span>
+            </span>
+          </td>
+          <td class="num">{{ level if level is not none else "—" }}</td>
+          <td>{{ rank_name if rank_name.strip() else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="table-empty" id="roster-empty" hidden>No characters match this search.</p>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if roster and roster.members is sequence and roster.members is not string and roster.members is not mapping %}
+<script>
+(function () {
+  const table = document.getElementById("roster-table");
+  if (!table) return;
+  const body = table.tBodies[0];
+  const search = document.getElementById("roster-search");
+  const classFilter = document.getElementById("roster-class");
+  const rankFilter = document.getElementById("roster-rank");
+  const match = document.getElementById("roster-match");
+  const empty = document.getElementById("roster-empty");
+  const headers = Array.from(table.querySelectorAll("th[data-sort]"));
+  const sort = { key: "", dir: 1 };
+  const textKey = { character: "character", className: "className", rankName: "rankName" };
+
+  function fold(value) {
+    return (value || "").toLocaleLowerCase();
+  }
+
+  function compare(a, b) {
+    if (sort.key === "level") {
+      const blank = (row) => row.dataset.level === "";
+      if (blank(a) || blank(b)) {
+        if (blank(a) && blank(b)) return 0;
+        return blank(a) ? 1 : -1;
+      }
+      return (Number(a.dataset.level) - Number(b.dataset.level)) * sort.dir;
+    }
+    const attr = textKey[sort.key];
+    const left = a.dataset[attr] || "";
+    const right = b.dataset[attr] || "";
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: "accent" }) * sort.dir;
+  }
+
+  function paintSort() {
+    headers.forEach((th) => {
+      const on = th.dataset.sort === sort.key;
+      th.classList.toggle("is-sorted", on);
+      if (on) {
+        th.dataset.dir = sort.dir > 0 ? "asc" : "desc";
+        th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+      } else {
+        th.removeAttribute("data-dir");
+        th.setAttribute("aria-sort", "none");
+      }
+    });
+  }
+
+  function apply() {
+    const query = fold(search.value.trim());
+    const className = classFilter.value;
+    const rankName = rankFilter.value;
+    const filtering = query !== "" || className !== "" || rankName !== "";
+    let shown = 0;
+    Array.from(body.rows).forEach((row) => {
+      const visible = (!query || fold(row.dataset.character).includes(query))
+        && (!className || row.dataset.className === className)
+        && (!rankName || row.dataset.rankName === rankName);
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+    if (filtering) {
+      match.hidden = false;
+      match.textContent = shown + " of " + body.rows.length + " characters";
+    } else {
+      match.hidden = true;
+      match.textContent = "";
+    }
+    empty.hidden = shown !== 0;
+  }
+
+  function sortBy(key) {
+    sort.dir = sort.key === key ? sort.dir * -1 : 1;
+    sort.key = key;
+    Array.from(body.rows).sort(compare).forEach((row) => body.appendChild(row));
+    paintSort();
+  }
+
+  headers.forEach((th) => {
+    th.tabIndex = 0;
+    th.addEventListener("click", () => sortBy(th.dataset.sort));
+    th.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        sortBy(th.dataset.sort);
+      }
+    });
+  });
+  search.addEventListener("input", apply);
+  classFilter.addEventListener("change", apply);
+  rankFilter.addEventListener("change", apply);
+  sortBy("character");
+  apply();
+})();
+</script>
+{% endif %}
 {% endblock %}
