@@ -342,20 +342,50 @@ def mark_bot_left(discord_id):
 
 
 def delete_guild(slug):
+    """Remove one guild and the rows that belong to it.
+
+    The Discord id is reused when that server adds the bot again. Attendance
+    hashes and Companion tokens are keyed by that id, and none of these tables
+    declare a foreign key, so they have to be deleted here. Companion tables
+    are created on first login; a guild that never connected still deletes.
+    """
     with _LOCK:
         conn = connect()
-        row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
-        if row is None:
+        try:
+            row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
+            if row is None:
+                return
+            guild_id = row["id"]
+            conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM attendance_reports WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM attendance_hashes WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
+            present = {
+                item[0]
+                for item in conn.execute(
+                    """SELECT name FROM sqlite_master
+                       WHERE type = 'table'
+                         AND name IN ('companion_connect', 'companion_credentials')"""
+                )
+            }
+            if "companion_connect" in present:
+                conn.execute(
+                    "DELETE FROM companion_connect WHERE guild_id = ? OR guild_slug = ?",
+                    (guild_id, slug),
+                )
+            if "companion_credentials" in present:
+                conn.execute(
+                    "DELETE FROM companion_credentials WHERE guild_id = ? OR guild_slug = ?",
+                    (guild_id, slug),
+                )
+            conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
             conn.close()
-            return
-        guild_id = row["id"]
-        conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM attendance_reports WHERE guild_id = ?", (guild_id,))
-        conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
-        conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
-        conn.commit()
-        conn.close()
 
 
 def mark_missing_guilds(present_ids):

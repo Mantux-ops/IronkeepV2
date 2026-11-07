@@ -203,6 +203,68 @@ class AttendanceTests(unittest.TestCase):
             config.BOT_TOKEN, config.CLIENT_ID, config.CLIENT_SECRET, config.DB_PATH = old
             shutil.rmtree(tmp)
 
+    def test_deleting_a_guild_clears_its_attendance_and_a_rejoin_can_store_it_again(self):
+        tmp = tempfile.mkdtemp()
+        old = (config.BOT_TOKEN, config.CLIENT_ID, config.CLIENT_SECRET, config.DB_PATH)
+        try:
+            config.BOT_TOKEN = "bot"
+            config.CLIENT_ID = "id"
+            config.CLIENT_SECRET = "secret"
+            config.DB_PATH = os.path.join(tmp, "ik.db")
+            db.init()
+            db.upsert_guild("4242", "Forever Guild", [], [])
+            guild = db.guild_by_slug("foreverguild")
+            db.upsert_guild("7777", "Other Keep", [], [])
+            other = db.guild_by_slug("otherkeep")
+            item = {
+                "place": "Hall of Thanes",
+                "started": "2026-11-01 12:00",
+                "received_at": "2026-11-04T19:00:00+00:00",
+                "people": [{"name": "Ada Smith"}],
+                "digest": attendance.digest(REPORT),
+            }
+            self.assertTrue(db.add_attendance(guild["id"], item))
+            self.assertFalse(db.add_attendance(guild["id"], item))
+            self.assertTrue(db.add_attendance(other["id"], item))
+            db.create_trial(guild, "9", "Ada", "ada", start="2026-11-01", content_roles=[], albion_name=None, text="joined")
+            db.store_roles("9", guild["id"], ["1101"])
+            db.store_roles("8", other["id"], ["1101"])
+            db.set_last_error(guild["id"], "could not leave")
+            db.set_last_error(other["id"], "keep this")
+
+            conn = db.connect()
+            hash_sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'attendance_hashes'").fetchone()[0]
+            conn.close()
+            self.assertNotIn("FOREIGN KEY", hash_sql.upper())
+
+            db.delete_guild("foreverguild")
+            db.delete_guild("foreverguild")
+            self.assertIsNone(db.guild_by_id("4242"))
+            self.assertEqual(db.count_attendance("4242"), 0)
+            self.assertEqual(db.count_attendance_hashes("4242"), 0)
+            conn = db.connect()
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM trials WHERE guild_id = '4242'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM member_cache WHERE guild_id = '4242'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM errors WHERE guild = 'foreverguild'").fetchone()[0], 0)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM errors WHERE guild = 'otherkeep'").fetchone()[0], 1)
+            self.assertEqual(conn.execute("SELECT COUNT(*) FROM member_cache WHERE guild_id = '7777'").fetchone()[0], 1)
+            conn.close()
+            self.assertIsNotNone(db.guild_by_id("7777"))
+            self.assertFalse(db.add_attendance(other["id"], item))
+            self.assertEqual(db.count_attendance_hashes("7777"), 1)
+
+            db.upsert_guild("4242", "Forever Guild", [], [])
+            reborn = db.guild_by_id("4242")
+            self.assertEqual(reborn["slug"], "foreverguild")
+            self.assertTrue(db.add_attendance(reborn["id"], item))
+            self.assertFalse(db.add_attendance(reborn["id"], item))
+            self.assertEqual(db.count_attendance("4242"), 1)
+            self.assertEqual(db.count_attendance_hashes("4242"), 1)
+            self.assertEqual(db.count_attendance_hashes("7777"), 1)
+        finally:
+            config.BOT_TOKEN, config.CLIENT_ID, config.CLIENT_SECRET, config.DB_PATH = old
+            shutil.rmtree(tmp)
+
     def _guild_id(self, slug):
         from ironkeep import mock_data as data
 

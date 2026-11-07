@@ -1,0 +1,34 @@
+name: Companion release
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA on cursor/companion-report-keep-f675"
+        required: true
+        type: string
+      publish:
+        description: "Publish the immutable companion-vX.Y.Z release"
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: "Type publish to confirm. Leave empty for a dry run."
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  dispatch:
+    permissions:
+      actions: read
+      contents: write
+    uses: Mantux-ops/IronkeepV2/.github/workflows/companion.yml@ceff401a54bfbd52dad9482b32b11f1ab454ff94
+    with:
+      source: ${{ inputs.source }}
+      publish: ${{ inputs.publish }}
+      confirm: ${{ inputs.confirm }}
+      scripts: ceff401a54bfbd52dad9482b32b11f1ab454ff94

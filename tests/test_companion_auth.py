@@ -641,6 +641,98 @@ class CompanionAuthTests(unittest.TestCase):
         self.assertIn('data-picker="companion_roles"', page.text)
         self.assertIn("recruitment role does not include this", page.text)
 
+    def test_deleting_a_guild_rejects_its_companion_tokens_and_rejoining_starts_clean(self):
+        guild, website, body, _location = self.connect()
+        access = body["access_token"]
+        refresh = body["refresh_token"]
+        headers = {"Authorization": "Bearer " + access}
+        posted = self.client.post("/api/companion/guilds/%s/attendance" % guild["slug"], content=REPORT, headers=headers)
+        self.assertEqual(posted.status_code, 200)
+        self.assertFalse(posted.json()["duplicate"])
+        db.upsert_guild("7777", "Other Keep", [], [])
+        other = db.guild_by_slug("otherkeep")
+        kept = {
+            "place": "Other Hall",
+            "started": "2026-11-02 12:00",
+            "received_at": "2026-11-04T19:00:00+00:00",
+            "people": [],
+            "digest": "other-digest",
+        }
+        self.assertTrue(db.add_attendance(other["id"], kept))
+        pending_state = "pending-state-0123456789"
+        page = self.start(website, state=pending_state)
+        approved = self.approve(website, page, guild["slug"], state=pending_state)
+        self.assertEqual(approved.status_code, 303)
+        pending_code = urllib.parse.parse_qs(urllib.parse.urlparse(approved.headers["location"]).query)["code"][0]
+        conn = sqlite3.connect(config.DB_PATH)
+        for name in ("companion_connect", "companion_credentials"):
+            sql = conn.execute("SELECT sql FROM sqlite_master WHERE name = ?", (name,)).fetchone()[0]
+            self.assertNotIn("FOREIGN KEY", sql.upper())
+        conn.execute(
+            """INSERT INTO companion_credentials
+               (token_hash, family_id, kind, user_id, name, username, guild_id, guild_slug, created_at, expires_at)
+               VALUES ('other-hash', 'other-family', 'refresh', '1001', 'Other', 'other', '7777', 'otherkeep',
+                       '2026-11-01T00:00:00', '2099-01-01T00:00:00')"""
+        )
+        conn.commit()
+        conn.close()
+        db.create_trial(guild, "9", "Ada", "ada", start="2026-11-01", content_roles=[], albion_name=None, text="joined")
+
+        db.delete_guild(guild["slug"])
+        self.assertIsNone(db.guild_by_id(guild["id"]))
+        self.assertEqual(db.count_attendance(guild["id"]), 0)
+        self.assertEqual(db.count_attendance_hashes(guild["id"]), 0)
+        self.assertEqual(self.bound("companion_credentials", guild["id"], guild["slug"]), 0)
+        self.assertEqual(self.bound("companion_connect", guild["id"], guild["slug"]), 0)
+        self.assertEqual(self.bound("companion_credentials", "7777", "otherkeep"), 1)
+        self.assertFalse(db.add_attendance(other["id"], kept))
+
+        stale_refresh = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": refresh},
+        )
+        self.assertEqual(stale_refresh.status_code, 401)
+        stale_upload = self.client.post(
+            "/api/companion/guilds/%s/attendance" % guild["slug"],
+            content=REPORT,
+            headers=headers,
+        )
+        self.assertEqual(stale_upload.status_code, 401)
+        self.assertEqual(self.exchange(pending_code).status_code, 401)
+
+        db.upsert_guild(guild["id"], "Forever Guild", [], [])
+        revived = self.client.post(
+            "/api/companion/token",
+            json={"grant_type": "refresh_token", "refresh_token": refresh},
+        )
+        self.assertEqual(revived.status_code, 401)
+        reborn, _website, fresh, _location = self.connect()
+        self.assertEqual(reborn["id"], guild["id"])
+        uploaded = self.client.post(
+            "/api/companion/guilds/%s/attendance" % reborn["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + fresh["access_token"]},
+        )
+        self.assertEqual(uploaded.status_code, 200)
+        self.assertFalse(uploaded.json()["duplicate"])
+        duplicate = self.client.post(
+            "/api/companion/guilds/%s/attendance" % reborn["slug"],
+            content=REPORT,
+            headers={"Authorization": "Bearer " + fresh["access_token"]},
+        )
+        self.assertTrue(duplicate.json()["duplicate"])
+        self.assertEqual(db.count_attendance_hashes(other["id"]), 1)
+        self.assertEqual(self.bound("companion_credentials", "7777", "otherkeep"), 1)
+
+    def bound(self, table, guild_id, slug):
+        conn = sqlite3.connect(config.DB_PATH)
+        found = conn.execute(
+            "SELECT COUNT(*) FROM %s WHERE guild_id = ? OR guild_slug = ?" % table,
+            (guild_id, slug),
+        ).fetchone()[0]
+        conn.close()
+        return found
+
     def tables(self):
         conn = sqlite3.connect(config.DB_PATH)
         names = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}

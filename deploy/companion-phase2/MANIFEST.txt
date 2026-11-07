@@ -3,8 +3,9 @@
 # before_sha256 '-' means the file may be absent.
 # companion_auth.py before is the Phase 1 file from commit 8cc056c (PR #39).
 # companion_reports.py may already be the first Phase 2 file from commit 9521a79.
-# db.py before is the Phase 1 file, hash 74f41dbc.
+# db.py before is the Phase 1 file, hash 74f41dbc, or the previous Phase 2 file, hash 5763c4de.
 companion_auth.py 1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4 8799e163f0db6123605671c8b5db4b12d472af130c845b64f5523cbcf20ef6ca
 companion_reports.py - 9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4
 companion_reports.py 51726eed1fa54aa0c05d395d671a1160400b5ae5c864d5c6ea6f5f6824ee42b2 9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4
-db.py 74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54 5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502
+db.py 74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54 98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80
+db.py 5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502 98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80

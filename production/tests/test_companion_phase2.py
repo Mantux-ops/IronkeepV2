@@ -294,6 +294,90 @@ class UploadTests(unittest.TestCase):
         self.assertTrue(any("RaiderAA" in row[0] for row in stored))
         self.assertTrue(any("RaiderAY" in row[0] for row in stored))
 
+    def token_request(self, body):
+        return self.client.post("/api/companion/token", json=body)
+
+    def login_rows(self, guild_id):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            codes = conn.execute(
+                "SELECT COUNT(*) FROM companion_connect WHERE guild_id = ? OR guild_slug = ?",
+                (guild_id, "keep" if guild_id == "1" else "other"),
+            ).fetchone()[0]
+            credentials = conn.execute(
+                "SELECT COUNT(*) FROM companion_credentials WHERE guild_id = ?",
+                (guild_id,),
+            ).fetchone()[0]
+            return codes, credentials
+        finally:
+            conn.close()
+
+    def test_deleting_a_guild_rejects_old_credentials_even_after_an_eligible_rejoin(self):
+        self.enable()
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.guild("2", "other", self.wow_settings(["88"]))
+        self.member_roles[("100", "1")] = ["77"]
+        self.member_roles[("100", "2")] = ["88"]
+        self.member_roles[("200", "2")] = ["88"]
+        issued = self.issue()
+        access = issued["access_token"]
+        refresh = issued["refresh_token"]
+        self.assertEqual(self.post_report(access).status_code, 200)
+        self.session("100")
+        pending_code, _state = self.allow("keep", state="state-value-pending-code")
+        self.session("200")
+        other_code, _state = self.allow("other", state="state-value-other-login")
+        other = self.exchange(other_code)
+        self.session("200")
+        other_pending, _state = self.allow("other", state="state-value-other-pending")
+        self.assertGreater(self.login_rows("1")[1], 0)
+        self.assertGreater(self.login_rows("2")[1], 0)
+
+        db.delete_guild("keep")
+        self.assertIsNone(db.guild_by_slug("keep"))
+        self.assertEqual(self.login_rows("1"), (0, 0))
+        self.assertEqual(self.report_count("1"), (0, 0, 0))
+        self.assertGreater(self.login_rows("2")[1], 0)
+        self.assertEqual(self.post_report(access).status_code, 401)
+        self.assertEqual(self.token_request({"grant_type": "refresh_token", "refresh_token": refresh}).status_code, 401)
+        refused = self.token_request({
+            "grant_type": "authorization_code",
+            "code": pending_code,
+            "code_verifier": phase1.VERIFIER,
+            "redirect_uri": phase1.LOOPBACK,
+        })
+        self.assertEqual(refused.status_code, 401)
+
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        self.assertEqual(self.post_report(access).status_code, 401)
+        self.assertEqual(self.token_request({"grant_type": "refresh_token", "refresh_token": refresh}).status_code, 401)
+        refused_again = self.token_request({
+            "grant_type": "authorization_code",
+            "code": pending_code,
+            "code_verifier": phase1.VERIFIER,
+            "redirect_uri": phase1.LOOPBACK,
+        })
+        self.assertEqual(refused_again.status_code, 401)
+        fresh = self.issue(state="state-value-after-rejoin")
+        posted = self.post_report(fresh["access_token"])
+        self.assertEqual(posted.status_code, 200, posted.text)
+        self.assertEqual(posted.json(), {"ok": True})
+
+        other_upload = self.post_report(other["access_token"], slug="other", body=named_report(4))
+        self.assertEqual(other_upload.status_code, 200, other_upload.text)
+        other_refresh = self.token_request({"grant_type": "refresh_token", "refresh_token": other["refresh_token"]})
+        self.assertEqual(other_refresh.status_code, 200, other_refresh.text)
+        other_code_use = self.token_request({
+            "grant_type": "authorization_code",
+            "code": other_pending,
+            "code_verifier": phase1.VERIFIER,
+            "redirect_uri": phase1.LOOPBACK,
+        })
+        self.assertEqual(other_code_use.status_code, 200, other_code_use.text)
+        self.assertEqual(other_code_use.json()["guild_slug"], "other")
+        self.assertEqual(self.report_count("2"), (1, 1, 0))
+
     def test_deleting_a_guild_removes_its_reports_and_a_rejoin_starts_clean(self):
         self.enable()
         self.guild("1", "keep", self.wow_settings(["77"]))
