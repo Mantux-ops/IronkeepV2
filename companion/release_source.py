@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 TAG = re.compile(r"^companion-v[0-9]+\.[0-9]+\.[0-9]+$")
 VERSION = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
-REVIEWED_BRANCH = "cursor/companion-report-keep-f675"
+REVIEWED_BRANCH = "main"
 
 
 def invocation(event_name, github_sha="", job_workflow_sha=""):

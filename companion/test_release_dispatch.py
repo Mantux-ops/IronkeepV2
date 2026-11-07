@@ -12,7 +12,8 @@ import release_source
 
 ROOT = Path(__file__).resolve().parents[1]
 REVIEWED = "4e6955dd24d79469612eabbba185a2eb160b4426"
-MAIN = "a70c8363f6f5db3d299258c3ee354e2b57582705"
+ROSTER = "73624d35efaf5b407d6ce5d8ddbf5f4725f8285b"
+UNMERGED = "460875b3e2f81fae4a86f031c582da4c9650ac34"
 CALLER = "b" * 40
 
 
@@ -23,11 +24,19 @@ class SourceSelectionTest(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 release_source.classify(requested, "workflow_call")
 
-    def test_reviewed_commit_is_on_the_development_branch_and_main_is_not(self):
+    def test_a_reviewed_commit_on_main_is_accepted(self):
+        self.assertEqual(release_source.require_reviewed(ROSTER), ROSTER)
         self.assertEqual(release_source.require_reviewed(REVIEWED), REVIEWED)
+
+    def test_a_commit_that_is_not_on_main_is_rejected(self):
         with self.assertRaises(SystemExit) as raised:
-            release_source.require_reviewed(MAIN)
-        self.assertIn("is not on", str(raised.exception))
+            release_source.require_reviewed(UNMERGED)
+        self.assertIn("is not on main", str(raised.exception))
+
+    def test_abbreviated_and_invalid_shas_are_rejected(self):
+        for requested in ("73624d3", "adbb07d", "main", "0" * 39, "g" * 40):
+            with self.assertRaises(SystemExit):
+                release_source.require_reviewed(requested)
 
     def test_missing_commit_is_rejected_before_a_build(self):
         with self.assertRaises(SystemExit):
