@@ -117,6 +117,18 @@ class ProductionRosterTests(unittest.TestCase):
         self.assertEqual(again.status_code, 200, again.text)
         self.assertNotIn("duplicate", again.json())
 
+    def test_a_dutch_class_name_is_stored(self):
+        payload = snapshot(1794011429)
+        payload["members"][0]["classToken"] = "MAGE"
+        payload["members"][0]["className"] = "Magiër"
+        payload["members"][0]["name"] = "José"
+        posted = self.post(payload)
+        self.assertEqual(posted.status_code, 200, posted.text)
+        row = roster.current("11")["members"][0]
+        self.assertEqual(row["className"], "Magiër")
+        self.assertEqual(row["name"], "José")
+        self.assertEqual(row["classToken"], "MAGE")
+
     def test_the_officer_page_lists_the_member(self):
         from unittest.mock import patch
         from ironkeep.discord_api import DiscordError

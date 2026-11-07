@@ -8,6 +8,7 @@ it. An older or same-time different body does not.
 import hashlib
 import json
 import re
+import unicodedata
 from datetime import datetime, timezone
 
 from . import db
@@ -30,6 +31,33 @@ class RosterError(Exception):
 
 def digest(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def _display_text(value, limit):
+    """NFC text for a player name, localized class, or guild rank.
+
+    Printable ASCII stays valid. Any other character must be a letter, or a
+    combining mark attached to a preceding base. The stored text is at most
+    `limit` characters and is not blank.
+    """
+    if not isinstance(value, str):
+        return None
+    text = unicodedata.normalize("NFC", value)
+    if len(text) > limit or text.strip() == "":
+        return None
+    base = False
+    for char in text:
+        if "\x20" <= char <= "\x7e":
+            base = char != " "
+            continue
+        category = unicodedata.category(char)
+        if category.startswith("L"):
+            base = True
+            continue
+        if category.startswith("M") and base:
+            continue
+        return None
+    return text
 
 
 def canonical(snapshot):
@@ -76,27 +104,24 @@ def parse_body(text):
         if not isinstance(member, dict) or set(member) != set(_MEMBER_KEYS):
             raise RosterError("This roster could not be read.")
         guid = member.get("guid")
-        person = member.get("name")
         level = member.get("level")
         token = member.get("classToken")
-        class_name = member.get("className")
-        rank = member.get("rankName")
+        person = _display_text(member.get("name"), 48)
+        class_name = _display_text(member.get("className"), 48)
+        rank = _display_text(member.get("rankName"), 48)
         if not isinstance(guid, str) or _GUID.fullmatch(guid) is None:
             raise RosterError("This roster could not be read.")
-        if not isinstance(person, str) or _LABEL.fullmatch(person) is None or person.strip() == "":
+        if person is None or class_name is None or rank is None:
             raise RosterError("This roster could not be read.")
         if type(level) is not int or isinstance(level, bool) or level < 0 or level > 999:
             raise RosterError("This roster could not be read.")
         if not isinstance(token, str) or _LABEL.fullmatch(token) is None or token.strip() == "":
             raise RosterError("This roster could not be read.")
-        if not isinstance(class_name, str) or _LABEL.fullmatch(class_name) is None or class_name.strip() == "":
-            raise RosterError("This roster could not be read.")
-        if not isinstance(rank, str) or _LABEL.fullmatch(rank) is None or rank.strip() == "":
-            raise RosterError("This roster could not be read.")
-        if guid in guids or person.casefold() in names:
+        folded = person.casefold()
+        if guid in guids or folded in names:
             raise RosterError("This roster could not be read.")
         guids.add(guid)
-        names.add(person.casefold())
+        names.add(folded)
         parsed.append(
             {
                 "guid": guid,

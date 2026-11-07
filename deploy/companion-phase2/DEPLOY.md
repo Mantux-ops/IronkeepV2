@@ -31,7 +31,7 @@ The live `companion_auth.py` must be the Phase 1 file `1d7002587fc4bfc92f1d340c7
 | `companion_reports.py` | absent, or `51726eed1fa54aa0c05d395d671a1160400b5ae5c864d5c6ea6f5f6824ee42b2` | `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4` |
 | `db.py` | `74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54`, `5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502`, or `98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80` | `189145ec7b328cf387565cd1dd00e28abcaf360a23e37702a9f6e88bf5a9308a` |
 | `main.py` | `f527479bb12ba29fe296504360191f79885db62c4cd4704aca9dcd5077c8c126` | `0738ed6ae99b1db01c08fb7bff5139dbf84fa70ab40e5d3b0fde98a633bab41a` |
-| `roster.py` | absent | `24c5d0cb2c9f51f9213f70fdb608910e15c376d018825e8681d40dcec52d4fa2` |
+| `roster.py` | absent, or `24c5d0cb2c9f51f9213f70fdb608910e15c376d018825e8681d40dcec52d4fa2` | `d7b0fcb2b526f8d6b42e09fbf417ed993d80572e43bd3e056ec6949258f16209` |
 | `templates/roster.html` | absent | `fefc7eb77e68993c513f8efd16a4c3f050c745a3046b1a866efc98a178c8f4d8` |
 
 ## Dry-run
@@ -112,7 +112,7 @@ Take a database backup before that drop. Dropping them does not affect raids.
 
 Use a guild whose profile is World of Warcraft, with the signed-in Discord account in the guild and holding a Companion role. No Companion or addon update is required.
 
-1. Confirm the running site is this package: `companion_auth.py` hash `16ce7bec747d964b69b47190b20873e103c58918abc04b22583656646360206b`, `companion_reports.py` hash `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4`, `db.py` hash `189145ec7b328cf387565cd1dd00e28abcaf360a23e37702a9f6e88bf5a9308a`, `main.py` hash `0738ed6ae99b1db01c08fb7bff5139dbf84fa70ab40e5d3b0fde98a633bab41a`, and `roster.py` hash `24c5d0cb2c9f51f9213f70fdb608910e15c376d018825e8681d40dcec52d4fa2`.
+1. Confirm the running site is this package: `companion_auth.py` hash `16ce7bec747d964b69b47190b20873e103c58918abc04b22583656646360206b`, `companion_reports.py` hash `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4`, `db.py` hash `189145ec7b328cf387565cd1dd00e28abcaf360a23e37702a9f6e88bf5a9308a`, `main.py` hash `0738ed6ae99b1db01c08fb7bff5139dbf84fa70ab40e5d3b0fde98a633bab41a`, and `roster.py` hash `d7b0fcb2b526f8d6b42e09fbf417ed993d80572e43bd3e056ec6949258f16209`.
 2. Open the Companion, signed in with Discord, and select that guild. The site address stays `https://ironkeep.gg` unless settings say otherwise.
 3. Log out of WoW once so `WTF/Account/<account>/SavedVariables/Ironkeep.lua` contains a group. Click **Sync now**.
 4. The client posts `text/plain; charset=utf-8` to `POST /api/companion/guilds/<slug>/attendance` with `Authorization: Bearer ika.…`. A new report is HTTP 200 and `{"ok":true}`. The Failed count stays at 0. Pending returns to 0.
