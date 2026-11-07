@@ -87,6 +87,11 @@ def guild_member(access_token, guild_id):
     return _api("GET", f"/users/@me/guilds/{guild_id}/member", token=access_token)
 
 
+def bot_member(guild_id, user_id):
+    """Current guild member, using the bot token. The Companion does not hold the user's Discord token."""
+    return _api("GET", f"/guilds/{guild_id}/members/{user_id}", token=config.BOT_TOKEN, bot=True)
+
+
 def add_role(guild_id, user_id, role_id):
     _api("PUT", f"/guilds/{guild_id}/members/{user_id}/roles/{role_id}", token=config.BOT_TOKEN, bot=True)
 

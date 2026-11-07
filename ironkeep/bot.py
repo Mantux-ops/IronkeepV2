@@ -21,27 +21,24 @@ def _content_ids(member, settings):
     return [role_id for role_id in wanted if role_id in {str(role.id) for role in member.roles}]
 
 
-def _has_role(member, role_id):
-    return bool(role_id) and str(role_id) in {str(role.id) for role in member.roles}
-
-
 def consider_member(guild_row, member, *, known_new, before_ids=None):
     if member.bot:
         return
     settings = guild_row["settings"]
-    trial_role = settings.get("trial_role")
-    if not trial_role:
+    trial_ids = db.trial_role_ids(settings)
+    if not trial_ids:
         return
-    has_trial = _has_role(member, trial_role)
-    before_ids = before_ids or set()
-    just_added = known_new and trial_role not in before_ids and has_trial
+    member_ids = {str(role.id) for role in member.roles}
+    has_trial = any(role_id in member_ids for role_id in trial_ids)
+    before_ids = {str(role_id) for role_id in (before_ids or set())}
+    just_added = known_new and has_trial and not any(role_id in before_ids for role_id in trial_ids)
     content = _content_ids(member, settings)
     existing = db.open_trial(guild_row["id"], member.id)
     nickname = member.nick if settings.get("albion", {}).get("name_source") != "manual" else None
 
     if has_trial and existing is None:
         start = db.guild_today(settings).isoformat() if just_added else None
-        text = "Trial role given" if just_added else "Already had the Trial role when Ironkeep started following this server. Start date unknown."
+        text = "A trial role was given" if just_added else "Already had a trial role when Ironkeep started following this server. Start date unknown."
         db.create_trial(
             guild_row,
             member.id,
@@ -103,11 +100,16 @@ def _send_template(guild_row, key, member, start=None):
 
 def _sync_guild(guild, *, rejoin=False, added_by=None, added_by_id=None):
     me = guild.me
-    trial_role_id = None
     row = db.guild_by_id(guild.id)
+    trial_roles = []
     if row:
-        trial_role_id = (row["settings"] or {}).get("trial_role")
-    trial_role = guild.get_role(int(trial_role_id)) if trial_role_id else None
+        for role_id in db.trial_role_ids(row["settings"]):
+            try:
+                role = guild.get_role(int(role_id))
+            except (TypeError, ValueError):
+                role = None
+            if role:
+                trial_roles.append(role)
     roles = []
     for role in guild.roles:
         roles.append(
@@ -129,7 +131,7 @@ def _sync_guild(guild, *, rejoin=False, added_by=None, added_by_id=None):
                 "name": channel.name,
                 "category": channel.category.name if channel.category else "Channels",
                 "bot_can_send": channel.permissions_for(me).send_messages,
-                "trial_visible": channel.permissions_for(trial_role).view_channel if trial_role else True,
+                "trial_visible": all(channel.permissions_for(role).view_channel for role in trial_roles) if trial_roles else True,
             }
         )
     db.upsert_guild(

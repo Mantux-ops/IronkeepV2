@@ -71,8 +71,9 @@ def default_settings():
         "trial_days": 14,
         "reminder_day": 7,
         "recruitment_roles": [],
-        "trial_role": None,
+        "trial_roles": [],
         "content_roles": [],
+        "companion_roles": [],
         "channels": {"perms": None, "trial_info": None, "recruiter_overview": None},
         "messages": messages,
         "accept": {"add": [], "remove": []},
@@ -89,10 +90,27 @@ def default_settings():
     }
 
 
+def companion_role_ids(settings):
+    """Roles that may upload attendance from the Companion. Missing means none."""
+    chosen = (settings or {}).get("companion_roles")
+    if not isinstance(chosen, list):
+        return []
+    return [str(role_id) for role_id in chosen if isinstance(role_id, str) and role_id.strip()]
+
+
+def trial_role_ids(settings):
+    settings = settings or {}
+    chosen = settings.get("trial_roles")
+    if not isinstance(chosen, list) or not chosen:
+        legacy = settings.get("trial_role")
+        chosen = legacy if isinstance(legacy, list) else ([legacy] if legacy else [])
+    return [str(role_id) for role_id in chosen if role_id]
+
+
 def setup_complete(settings):
     channels = settings.get("channels") or {}
     return bool(
-        settings.get("trial_role")
+        trial_role_ids(settings)
         and settings.get("recruitment_roles")
         and channels.get("perms")
         and channels.get("trial_info")
@@ -182,7 +200,33 @@ def init():
                 detail TEXT NOT NULL,
                 resolved INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS attendance_reports (
+                id INTEGER PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                place TEXT NOT NULL,
+                started TEXT NOT NULL,
+                received_at TEXT NOT NULL,
+                people_json TEXT NOT NULL,
+                body_hash TEXT NOT NULL DEFAULT ''
+            );
+            CREATE INDEX IF NOT EXISTS attendance_guild ON attendance_reports (guild_id, id);
+            CREATE INDEX IF NOT EXISTS attendance_hash ON attendance_reports (guild_id, body_hash);
+            CREATE TABLE IF NOT EXISTS attendance_hashes (
+                guild_id TEXT NOT NULL,
+                body_hash TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                PRIMARY KEY (guild_id, body_hash)
+            );
             """
+        )
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(attendance_reports)")]
+        if "body_hash" not in columns:
+            conn.execute("ALTER TABLE attendance_reports ADD COLUMN body_hash TEXT NOT NULL DEFAULT ''")
+        conn.execute(
+            """INSERT OR IGNORE INTO attendance_hashes (guild_id, body_hash, first_seen)
+               SELECT guild_id, body_hash, MIN(received_at) FROM attendance_reports
+               WHERE body_hash != ''
+               GROUP BY guild_id, body_hash"""
         )
         conn.commit()
         conn.close()
@@ -196,6 +240,9 @@ def _loads(value, fallback):
 
 def _guild_from_row(row, trials=None):
     settings = _loads(row["settings_json"], default_settings())
+    settings["trial_roles"] = trial_role_ids(settings)
+    settings.pop("trial_role", None)
+    settings["companion_roles"] = companion_role_ids(settings)
     return {
         "id": row["id"],
         "slug": row["slug"],
@@ -292,6 +339,53 @@ def mark_bot_left(discord_id):
         conn.execute("UPDATE guilds SET bot_present = 0 WHERE id = ?", (str(discord_id),))
         conn.commit()
         conn.close()
+
+
+def delete_guild(slug):
+    """Remove one guild and the rows that belong to it.
+
+    The Discord id is reused when that server adds the bot again. Attendance
+    hashes and Companion tokens are keyed by that id, and none of these tables
+    declare a foreign key, so they have to be deleted here. Companion tables
+    are created on first login; a guild that never connected still deletes.
+    """
+    with _LOCK:
+        conn = connect()
+        try:
+            row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
+            if row is None:
+                return
+            guild_id = row["id"]
+            conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM attendance_reports WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM attendance_hashes WHERE guild_id = ?", (guild_id,))
+            conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
+            present = {
+                item[0]
+                for item in conn.execute(
+                    """SELECT name FROM sqlite_master
+                       WHERE type = 'table'
+                         AND name IN ('companion_connect', 'companion_credentials')"""
+                )
+            }
+            if "companion_connect" in present:
+                conn.execute(
+                    "DELETE FROM companion_connect WHERE guild_id = ? OR guild_slug = ?",
+                    (guild_id, slug),
+                )
+            if "companion_credentials" in present:
+                conn.execute(
+                    "DELETE FROM companion_credentials WHERE guild_id = ? OR guild_slug = ?",
+                    (guild_id, slug),
+                )
+            conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
 
 def mark_missing_guilds(present_ids):
@@ -642,6 +736,113 @@ def cached_roles(user_id, guild_id, max_age_seconds=600):
     if (datetime.utcnow() - checked).total_seconds() > max_age_seconds:
         return None
     return _loads(row["role_ids_json"], [])
+
+
+def add_attendance(guild_id, item):
+    """Insert one report. The same body for this guild is kept once.
+
+    The hash row is inserted in the same transaction as the report. The unique
+    key stays after the visible list is trimmed to 20 reports.
+    """
+    if not config.DB_PATH:
+        return False
+    guild_id = str(guild_id)
+    body_hash = str(item.get("digest") or "")
+    with _LOCK:
+        conn = connect()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            if body_hash:
+                try:
+                    conn.execute(
+                        "INSERT INTO attendance_hashes (guild_id, body_hash, first_seen) VALUES (?, ?, ?)",
+                        (guild_id, body_hash, item["received_at"]),
+                    )
+                except sqlite3.IntegrityError:
+                    conn.rollback()
+                    return False
+            conn.execute(
+                """INSERT INTO attendance_reports (guild_id, place, started, received_at, people_json, body_hash)
+                   VALUES (?, ?, ?, ?, ?, ?)""",
+                (guild_id, item["place"], item["started"], item["received_at"], json.dumps(item["people"]), body_hash),
+            )
+            conn.execute(
+                """DELETE FROM attendance_reports WHERE guild_id = ? AND id NOT IN (
+                       SELECT id FROM attendance_reports WHERE guild_id = ? ORDER BY id DESC LIMIT 20
+                   )""",
+                (guild_id, guild_id),
+            )
+            conn.commit()
+            return True
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+
+def _attendance_from_row(row):
+    return {
+        "place": row["place"],
+        "started": row["started"],
+        "received_at": row["received_at"],
+        "people": json.loads(row["people_json"]),
+        "digest": row["body_hash"],
+    }
+
+
+def latest_attendance(guild_id):
+    if not config.DB_PATH:
+        return None
+    conn = connect()
+    row = conn.execute(
+        """SELECT place, started, received_at, people_json, body_hash FROM attendance_reports
+           WHERE guild_id = ? ORDER BY id DESC LIMIT 1""",
+        (str(guild_id),),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return _attendance_from_row(row)
+
+
+def attendance_by_hash(guild_id, body_hash):
+    if not config.DB_PATH or not body_hash:
+        return None
+    conn = connect()
+    row = conn.execute(
+        """SELECT place, started, received_at, people_json, body_hash FROM attendance_reports
+           WHERE guild_id = ? AND body_hash = ? ORDER BY id DESC LIMIT 1""",
+        (str(guild_id), body_hash),
+    ).fetchone()
+    conn.close()
+    if row is None:
+        return None
+    return _attendance_from_row(row)
+
+
+def count_attendance(guild_id):
+    if not config.DB_PATH:
+        return 0
+    conn = connect()
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM attendance_reports WHERE guild_id = ?",
+        (str(guild_id),),
+    ).fetchone()
+    conn.close()
+    return int(row["n"])
+
+
+def count_attendance_hashes(guild_id):
+    if not config.DB_PATH:
+        return 0
+    conn = connect()
+    row = conn.execute(
+        "SELECT COUNT(*) AS n FROM attendance_hashes WHERE guild_id = ?",
+        (str(guild_id),),
+    ).fetchone()
+    conn.close()
+    return int(row["n"])
 
 
 def store_roles(user_id, guild_id, role_ids):

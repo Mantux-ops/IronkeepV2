@@ -10,7 +10,7 @@
   <aside class="sidebar" id="sidebar">
     <div class="sidebar__brand">
       <a class="brand" href="{{ '/admin' if viewer.superadmin else '/trial' }}">
-        <span class="brand__mark">{{ icon("logo", 26) }}</span>
+        <img class="brand__logo" src="{{ asset('logo.png') }}" alt="" width="32" height="32">
         <span class="brand__name">Ironkeep</span>
       </a>
       {% if viewer.superadmin %}<span class="badge-superadmin">Superadmin</span>{% endif %}
@@ -51,6 +51,7 @@
       {% if guild %}
       <div class="nav__section">{{ guild.name }}</div>
       <a class="nav__item {% if nav == 'trials' %}is-active{% endif %}" href="/{{ guild.slug }}/trial">{{ icon("scale") }}<span>Trials</span></a>
+      <a class="nav__item {% if nav == 'raids' %}is-active{% endif %}" href="/{{ guild.slug }}/raids">{{ icon("users") }}<span>Raids</span></a>
       <a class="nav__item {% if nav == 'settings' %}is-active{% endif %}" href="/{{ guild.slug }}/settings">{{ icon("settings") }}<span>Settings</span></a>
       {% elif not viewer.superadmin %}
       <a class="nav__item" href="/trial">{{ icon("scale") }}<span>Trials</span></a>

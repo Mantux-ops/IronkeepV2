@@ -7,7 +7,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import config, db, discord_api
+from . import attendance, companion_auth, config, db, discord_api
 from . import mock_data as data
 from pathlib import Path
 
@@ -112,6 +112,7 @@ def visible_guilds(request: Request):
         return data.GUILDS
     person = viewer(request)
     rows = db.list_guilds(with_trials=True)
+    rows = [guild for guild in rows if guild["approval"] != "rejected"]
     if person["superadmin"]:
         return rows
     session = _session(request)
@@ -119,6 +120,11 @@ def visible_guilds(request: Request):
 
 
 def render(request: Request, template: str, status_code: int = 200, **context):
+    guild = context.get("guild")
+    if isinstance(guild, dict) and guild.get("settings"):
+        shown = dict(guild)
+        shown["settings"] = attendance.without_secret(guild["settings"])
+        context["guild"] = shown
     context.setdefault("viewer", viewer(request))
     context.setdefault("guilds", visible_guilds(request))
     if config.live():
@@ -275,6 +281,7 @@ def admin(request: Request):
     else:
         rows = [{**g, **data.guild_summary(g)} for g in data.GUILDS]
         error_rows = data.ERRORS
+    rows = [row for row in rows if row["approval"] != "rejected"]
     totals = {
         "guilds": len(rows),
         "open": sum(r["open"] for r in rows),
@@ -305,12 +312,12 @@ async def guild_decision(slug: str, request: Request):
             except discord_api.DiscordError:
                 db.set_last_error(guild["id"], "Could not message the person who added the bot")
     elif decision == "reject":
-        db.set_approval(slug, "rejected")
         try:
             discord_api.leave_guild(guild["id"])
-        except discord_api.DiscordError:
-            db.set_last_error(guild["id"], "Could not leave the Discord server")
-        db.mark_bot_left(guild["id"])
+        except discord_api.DiscordError as error:
+            if error.status != 404:
+                db.set_last_error(guild["id"], "Could not leave the Discord server")
+                return JSONResponse({"error": "could not leave"}, status_code=502)
         reason = (body.get("reason") or "").strip()
         if guild.get("added_by_id"):
             text = f"Ironkeep was not approved for {guild['name']} and has left the server."
@@ -320,6 +327,7 @@ async def guild_decision(slug: str, request: Request):
                 discord_api.send_dm(guild["added_by_id"], text[:2000])
             except discord_api.DiscordError:
                 pass
+        db.delete_guild(slug)
     else:
         return JSONResponse({"error": "bad decision"}, status_code=400)
     return {"ok": True}
@@ -464,8 +472,19 @@ async def save_settings(slug: str, request: Request):
             return JSONResponse({"error": "That address is not available."}, status_code=400)
     else:
         new_slug = None
-    saved = dict(body)
+    saved = attendance.keep_token(guild.get("settings"), body)
     saved.pop("slug", None)
+    saved["trial_roles"] = db.trial_role_ids(saved)
+    saved.pop("trial_role", None)
+    if "companion_roles" not in body:
+        saved["companion_roles"] = db.companion_role_ids(guild.get("settings"))
+    else:
+        chosen = body.get("companion_roles")
+        if chosen is None:
+            chosen = []
+        if not isinstance(chosen, list) or any(not isinstance(item, str) or not item.strip() for item in chosen):
+            return JSONResponse({"error": "bad companion roles"}, status_code=400)
+        saved["companion_roles"] = [item.strip() for item in chosen]
     db.save_settings(slug, saved, new_slug)
     target = new_slug or slug
     if db.setup_complete(saved):
@@ -487,3 +506,99 @@ def setup(slug: str, request: Request):
     if error:
         return error
     return render(request, "settings.html", guild=guild, nav="settings", setup_mode=True)
+
+
+def _guild_by_slug(slug):
+    if config.live():
+        return db.guild_by_slug(slug)
+    return data.guild_by_slug(slug)
+
+
+async def _report_body(request: Request):
+    declared = request.headers.get("content-length")
+    if declared is not None:
+        try:
+            if int(declared) > attendance.MAX_BYTES:
+                return None
+        except ValueError:
+            raise attendance.ReportError("This report could not be read.")
+    chunks = []
+    size = 0
+    async for chunk in request.stream():
+        size += len(chunk)
+        if size > attendance.MAX_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+@app.get("/{slug}/raids", response_class=HTMLResponse)
+def raids(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    stored = attendance.latest(guild)
+    report = attendance.present(stored, guild.get("settings")) if stored else None
+    return render(
+        request,
+        "raids.html",
+        guild=guild,
+        nav="raids",
+        report=report,
+        companion_key=attendance.token_for(guild),
+    )
+
+
+@app.post("/api/{slug}/attendance")
+async def receive_attendance(slug: str, request: Request):
+    """The companion posts the group list here. The key is the only login it has."""
+    guild = _guild_by_slug(slug)
+    if guild is None:
+        return JSONResponse({"ok": False, "error": "Unknown guild."}, status_code=404)
+    header = request.headers.get("authorization", "")
+    if len(header) < 7 or header[:7].lower() != "bearer ":
+        return JSONResponse({"ok": False, "error": "Unknown companion key."}, status_code=401)
+    if not attendance.token_matches(guild, header[7:].strip()):
+        return JSONResponse({"ok": False, "error": "Unknown companion key."}, status_code=401)
+    try:
+        raw = await _report_body(request)
+    except attendance.ReportError as error:
+        return JSONResponse({"ok": False, "error": error.args[0]}, status_code=400)
+    if raw is None:
+        return JSONResponse({"ok": False, "error": "This report is too large."}, status_code=413)
+    try:
+        text = raw.decode("utf-8")
+        report = attendance.parse_text(text)
+        body_hash = attendance.digest(text)
+    except UnicodeDecodeError:
+        return JSONResponse({"ok": False, "error": "This report could not be read."}, status_code=400)
+    except attendance.ReportError as error:
+        return JSONResponse({"ok": False, "error": error.args[0]}, status_code=400)
+    stored, duplicate = attendance.store(guild, report, body_hash)
+    return {
+        "ok": True,
+        "duplicate": duplicate,
+        "place": stored["place"],
+        "people": len(stored["people"]),
+    }
+
+
+@app.post("/api/{slug}/attendance/token")
+def rotate_attendance_token(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    attendance.token_for(guild, rotate=True)
+    return RedirectResponse(f"/{slug}/raids", status_code=303)
+
+
+@app.middleware("http")
+async def _companion_routes_stay_off(request: Request, call_next):
+    # The new companion routes answer 404 until IRONKEEP_COMPANION_AUTH is set.
+    hidden = companion_auth.hidden(request)
+    if hidden is not None:
+        return hidden
+    return await call_next(request)
+
+
+app.include_router(companion_auth.router)

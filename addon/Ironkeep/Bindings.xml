@@ -1,0 +1,5 @@
+<Bindings>
+	<Binding name="IRONKEEP_TOGGLE" header="IRONKEEP" category="ADDON_LIST">
+		Ironkeep.Toggle()
+	</Binding>
+</Bindings>

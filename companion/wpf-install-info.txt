@@ -1,0 +1,5 @@
+Ironkeep Companion signs in with Discord. The website login stays in the browser.
+
+Choose the WoW Forever folder in the app. The companion reads Ironkeep.lua from that folder's account SavedVariables and uploads the group list for the guild you select.
+
+It does not change the game.

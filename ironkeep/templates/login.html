@@ -6,7 +6,7 @@
 {% block content %}
 {% set adding = request.query_params.get("add") %}
 <div class="login-card">
-  <span class="brand__mark" style="display:inline-grid">{{ icon("logo", 40) }}</span>
+  <img class="brand__logo brand__logo--lg" src="{{ asset('logo.png') }}" alt="" width="64" height="64">
   {% if error %}
   <div class="callout callout--red"><div><p>{{ error }}</p></div></div>
   {% endif %}

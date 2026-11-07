@@ -1,0 +1,482 @@
+name: Companion
+
+on:
+  push:
+    paths:
+      - "companion/**"
+      - "ironkeep/**"
+      - "requirements.txt"
+      - "tests/test_attendance.py"
+      - "tests/test_website_login.py"
+      - "tests/test_companion_auth.py"
+      - ".github/workflows/companion.yml"
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA or existing companion-vX.Y.Z tag"
+        required: true
+        type: string
+      publish:
+        description: "Publish companion-vX.Y.Z after the tests, build, and Defender scan pass"
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: "Type publish to confirm publication. Leave empty for a dry run."
+        required: false
+        type: string
+        default: ""
+  workflow_call:
+    inputs:
+      source:
+        description: "Reviewed full commit SHA"
+        required: true
+        type: string
+      publish:
+        description: "Publish the versioned release"
+        required: true
+        type: boolean
+        default: false
+      confirm:
+        description: "Type publish to confirm publication"
+        required: false
+        type: string
+        default: ""
+      scripts:
+        description: "Full SHA of the trusted workflow file"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      commit: ${{ steps.select.outputs.commit }}
+      version: ${{ steps.select.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
+          ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
+          fetch-depth: 0
+      - name: Validate the selected source
+        id: select
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
+
+  rejected:
+    needs: [guard]
+    if: github.event_name != 'push' && inputs.publish == true && inputs.confirm != 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Refuse an unconfirmed publication
+        run: echo "Publication requires confirm=publish. Leave publish off for a dry run." && exit 1
+
+  api:
+    needs: [guard]
+    if: needs.guard.result == 'success' && (github.event_name == 'push' || inputs.publish != true || inputs.confirm == 'publish')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Confirm the guarded checkout
+        run: |
+          expected="${{ needs.guard.outputs.commit }}"
+          case "$expected" in
+            *[!0-9a-fA-F]*|"") echo "The guarded commit is not a full SHA."; exit 1 ;;
+          esac
+          if [ "${#expected}" -ne 40 ]; then echo "The guarded commit is not a full SHA."; exit 1; fi
+          head=$(git rev-parse HEAD)
+          if [ "$head" != "$expected" ]; then echo "Checked out $head instead of $expected."; exit 1; fi
+      - name: Resolve the selected source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
+      - name: Check out the trusted release scripts
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ github.event_name == 'push' && github.repository || job.workflow_repository }}
+          ref: ${{ github.event_name == 'push' && github.sha || job.workflow_sha }}
+          path: trusted
+          fetch-depth: 0
+      - name: Confirm the trusted release scripts
+        run: |
+          expected="${{ github.event_name == 'push' && github.sha || job.workflow_sha }}"
+          case "$expected" in
+            *[!0-9a-fA-F]*|"") echo "The workflow file commit is not a full SHA."; exit 1 ;;
+          esac
+          if [ "${#expected}" -ne 40 ]; then echo "The workflow file commit is not a full SHA."; exit 1; fi
+          head=$(git -C trusted rev-parse HEAD)
+          if [ "$head" != "$expected" ]; then echo "Trusted scripts are $head instead of $expected."; exit 1; fi
+      - name: Check the release workflow
+        working-directory: trusted
+        run: |
+          python companion/check_release_workflow.py
+          python -m unittest discover -s companion -p 'test_release_dispatch.py'
+      - name: Test the attendance route
+        run: |
+          python -m pip install -r requirements.txt httpx
+          python -m unittest tests.test_attendance tests.test_website_login tests.test_companion_auth
+      - name: Test the sync library
+        run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
+      - name: Test the WPF companion core
+        run: dotnet test companion/Ironkeep.Companion.Core.Tests/Ironkeep.Companion.Core.Tests.csproj -c Release
+
+  windows:
+    needs: [guard]
+    if: needs.guard.result == 'success' && (github.event_name == 'push' || inputs.publish != true || inputs.confirm == 'publish')
+    runs-on: windows-latest
+    permissions:
+      contents: read
+    defaults:
+      run:
+        shell: pwsh
+    outputs:
+      commit: ${{ steps.source.outputs.commit }}
+      version: ${{ steps.source.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.guard.outputs.commit }}
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+
+      - name: Confirm the guarded checkout
+        run: |
+          $expected = "${{ needs.guard.outputs.commit }}"
+          if ($expected -notmatch '^[0-9a-fA-F]{40}$') { Write-Error "The guarded commit is not a full SHA."; exit 1 }
+          $head = (git rev-parse HEAD).Trim()
+          if ($head -ne $expected) { Write-Error "Checked out $head instead of $expected."; exit 1 }
+      - name: Resolve the selected source
+        id: source
+        env:
+          SOURCE_REF: ${{ inputs.source }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+        run: python companion/release_source.py
+
+      - name: Test the sync library
+        run: dotnet test companion/Ironkeep.Sync.Tests/Ironkeep.Sync.Tests.csproj -c Release
+
+      - name: Test the WPF companion core
+        run: dotnet test companion/Ironkeep.Companion.Core.Tests/Ironkeep.Companion.Core.Tests.csproj -c Release
+
+      - name: Build the window and the tests
+        working-directory: companion
+        run: |
+          $csc = Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+          New-Item -ItemType Directory -Force out | Out-Null
+          & $csc /nologo /target:winexe /platform:anycpu /optimize+ /out:out\IronkeepCompanion.exe /main:Ironkeep.App /win32manifest:app.manifest /win32icon:icon.ico /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /resource:logo.png,logo.png /reference:System.Windows.Forms.dll /reference:System.Drawing.dll /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs Window.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $csc /nologo /target:exe /platform:anycpu /optimize+ /out:out\CompanionConsole.exe /main:Ironkeep.Program /resource:sample-Ironkeep.lua,sample-Ironkeep.lua AssemblyInfo.cs Saved.cs Program.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $csc /nologo /target:exe /out:out\CompanionTests.exe /main:Ironkeep.SavedTests /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs Program.cs SavedTests.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & $csc /nologo /target:exe /out:out\SendCheck.exe /main:Ironkeep.SendCheck /resource:sample-Ironkeep.lua,sample-Ironkeep.lua /reference:System.Security.dll AssemblyInfo.cs Saved.cs Site.cs SendCheck.cs
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+      - name: Test
+        working-directory: companion
+        run: |
+          .\out\CompanionTests.exe
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          powershell.exe -NoProfile -ExecutionPolicy Bypass -File test.ps1
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = (.\out\CompanionConsole.exe --sample 2>$null) -join "`n"
+          $ps = (powershell.exe -NoProfile -ExecutionPolicy Bypass -File IronkeepCompanion.ps1 --sample 2>$null) -join "`n"
+          Write-Output $exe
+          if ($exe -ne $ps) { Write-Error 'The reader and the script print different lists.'; exit 1 }
+
+          python -m pip install -r ..\requirements.txt httpx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          # discover adds tests\ to sys.path. ironkeep lives in the repository root.
+          $env:PYTHONPATH = (Resolve-Path ..).Path
+          python -m unittest tests.test_attendance tests.test_website_login tests.test_companion_auth
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+
+          $server = Start-Process python -ArgumentList '-m','uvicorn','ironkeep.main:app','--host','127.0.0.1','--port','8765' -WorkingDirectory .. -PassThru -WindowStyle Hidden
+          try {
+            $page = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $page = Invoke-WebRequest http://127.0.0.1:8765/dutchchaos/raids -UseBasicParsing
+                if ($page.StatusCode -eq 200) { break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $page -or $page.StatusCode -ne 200) { Write-Error 'The site did not start.'; exit 1 }
+            if ($page.Content -notmatch 'id="companion-key"[^>]*value="([^"]+)"') { Write-Error 'The raids page has no companion key.'; exit 1 }
+            $key = $Matches[1]
+            & .\out\SendCheck.exe http://127.0.0.1:8765 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            $again = & .\out\SendCheck.exe http://127.0.0.1:8765 dutchchaos $key sample-Ironkeep.lua
+            if ($LASTEXITCODE) { exit $LASTEXITCODE }
+            if (($again -join "`n") -notmatch '"duplicate":true') { Write-Error "A second send was stored again.`n$($again -join "`n")"; exit 1 }
+            $shown = Invoke-WebRequest http://127.0.0.1:8765/dutchchaos/raids -UseBasicParsing
+            if ($shown.Content -notmatch 'Hall of Thanes' -or $shown.Content -notmatch 'Ada Smith') { Write-Error 'The raids page did not show the list the companion posted.'; exit 1 }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Build the installer
+        working-directory: companion
+        run: |
+          choco install innosetup -y --no-progress
+          if ($LASTEXITCODE -ne 0 -and $LASTEXITCODE -ne 3010) { exit $LASTEXITCODE }
+          $iscc = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Error 'Inno Setup compiler was not found.'; exit 1 }
+          & $iscc setup.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Set-Content -Path out\BUILD.txt -Encoding ascii -Value "${{ needs.guard.outputs.commit }}"
+
+      - name: Publish the WPF companion
+        run: |
+          dotnet publish companion/Ironkeep.Companion/Ironkeep.Companion.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:PublishTrimmed=false -o companion/out/wpf
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $exe = Get-Item companion/out/wpf/IronkeepCompanion.exe
+          Set-Content -Path companion/out/wpf/SIZE.txt -Encoding ascii -Value $exe.Length
+          Write-Output "WPF published size $($exe.Length) bytes"
+
+      - name: Launch the published WPF companion by itself
+        working-directory: companion
+        run: |
+          $source = Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe'
+          if (-not (Test-Path $source)) { Write-Error 'The published companion is missing.'; exit 1 }
+          $isolated = Join-Path (Get-Location) 'out\wpf-alone'
+          New-Item -ItemType Directory -Force $isolated | Out-Null
+          Copy-Item $source (Join-Path $isolated 'IronkeepCompanion.exe')
+          $extra = @(Get-ChildItem $isolated -File | Where-Object { $_.Name -ne 'IronkeepCompanion.exe' })
+          if ($extra.Count -gt 0) { Write-Error 'The launch folder must contain only the executable.'; exit 1 }
+          $log = Join-Path $env:LOCALAPPDATA 'Ironkeep\Logs\startup.log'
+          $queue = Join-Path $env:APPDATA 'Ironkeep\companion-queue.sqlite'
+          if (Test-Path $log) { Remove-Item $log -Force }
+          $hadQueue = Test-Path $queue
+          $proc = Start-Process -FilePath (Join-Path $isolated 'IronkeepCompanion.exe') -WorkingDirectory $isolated -PassThru
+          $ready = $false
+          $deadline = (Get-Date).AddSeconds(45)
+          try {
+            while ((Get-Date) -lt $deadline) {
+              if ($proc.HasExited) { break }
+              if (Test-Path $log) {
+                $lines = @(Get-Content $log)
+                if ($lines | Where-Object { $_ -match ' ready$' }) { $ready = $true; break }
+              }
+              Start-Sleep -Milliseconds 400
+            }
+            $lines = @()
+            if (Test-Path $log) { $lines = @(Get-Content $log); Write-Output $lines }
+            if ($proc.HasExited) { Write-Error "The companion exited with $($proc.ExitCode) before it was ready."; exit 1 }
+            if (-not $ready) { Write-Error 'The companion did not finish startup.'; exit 1 }
+            if ($lines | Where-Object { $_ -match ' fatal( |$)' }) { Write-Error 'Startup recorded a fatal exception.'; exit 1 }
+            if (-not (Test-Path $queue)) { Write-Error 'A first launch did not create the queue.'; exit 1 }
+            if ($hadQueue) { Write-Output 'The queue file was already present.' } else { Write-Output 'First launch created the queue.' }
+          } finally {
+            if ($proc -and -not $proc.HasExited) { Stop-Process -Id $proc.Id -Force }
+          }
+
+      - name: Capture the WPF dashboard
+        working-directory: companion
+        run: |
+          New-Item -ItemType Directory -Force out\wpf\preview | Out-Null
+          $preview = Join-Path (Get-Location) 'out\wpf\preview'
+          $proc = Start-Process -FilePath (Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe') -ArgumentList @('--capture', $preview) -Wait -PassThru
+          Write-Output "capture exit $($proc.ExitCode)"
+          $trace = Join-Path $env:TEMP 'ironkeep-wpf-start.txt'
+          if (Test-Path $trace) { Get-Content $trace | Write-Output }
+          $errorLog = Join-Path $preview 'capture-error.txt'
+          if (Test-Path $errorLog) { Get-Content $errorLog | Write-Output }
+          if ($proc.ExitCode -ne 0) { exit $proc.ExitCode }
+          foreach ($name in @('dashboard.png', 'settings.png', 'pending.png', 'dashboard-125.png', 'dashboard-150.png', 'settings-125.png', 'settings-150.png', 'connected.png', 'connected-125.png', 'connected-150.png')) {
+            if (-not (Test-Path (Join-Path $preview $name))) { Write-Error "The capture is missing: $name"; exit 1 }
+          }
+
+      - name: Exercise the published WPF companion
+        working-directory: companion
+        run: |
+          python -m pip install -r ..\requirements.txt httpx
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $env:PYTHONPATH = (Resolve-Path ..).Path
+          $server = Start-Process python -ArgumentList '-m','uvicorn','ironkeep.main:app','--host','127.0.0.1','--port','8766' -WorkingDirectory .. -PassThru -WindowStyle Hidden
+          try {
+            $page = $null
+            for ($i = 0; $i -lt 30; $i++) {
+              try {
+                $page = Invoke-WebRequest http://127.0.0.1:8766/dutchchaos/raids -UseBasicParsing
+                if ($page.StatusCode -eq 200) { break }
+              } catch { Start-Sleep -Seconds 1 }
+            }
+            if (-not $page -or $page.StatusCode -ne 200) { Write-Error 'The site did not start for the WPF companion.'; exit 1 }
+            if ($page.Content -notmatch 'id="companion-key"[^>]*value="([^"]+)"') { Write-Error 'The raids page has no companion key.'; exit 1 }
+            $key = $Matches[1]
+            $exe = Join-Path (Get-Location) 'out\wpf\IronkeepCompanion.exe'
+            $lua = (Resolve-Path .\sample-Ironkeep.lua).Path
+            $firstOut = Join-Path (Get-Location) 'out\wpf\send-1.txt'
+            $firstErr = Join-Path (Get-Location) 'out\wpf\send-1.err'
+            $first = Start-Process -FilePath $exe -ArgumentList @('--send-check', 'http://127.0.0.1:8766', 'dutchchaos', $key, $lua) -Wait -PassThru -RedirectStandardOutput $firstOut -RedirectStandardError $firstErr
+            Get-Content $firstOut, $firstErr | Write-Output
+            if ($first.ExitCode -ne 0) { exit $first.ExitCode }
+            $secondOut = Join-Path (Get-Location) 'out\wpf\send-2.txt'
+            $secondErr = Join-Path (Get-Location) 'out\wpf\send-2.err'
+            $second = Start-Process -FilePath $exe -ArgumentList @('--send-check', 'http://127.0.0.1:8766', 'dutchchaos', $key, $lua) -Wait -PassThru -RedirectStandardOutput $secondOut -RedirectStandardError $secondErr
+            $again = Get-Content $secondOut, $secondErr
+            $again | Write-Output
+            if ($second.ExitCode -ne 0) { exit $second.ExitCode }
+            if (($again -join "`n") -notmatch '"duplicate":true') { Write-Error "The WPF companion did not recognize a duplicate.`n$($again -join "`n")"; exit 1 }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
+          }
+
+      - name: Build the WPF installer
+        working-directory: companion
+        run: |
+          $iscc = @(
+            (Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'),
+            (Join-Path $env:ProgramFiles 'Inno Setup 6\ISCC.exe')
+          ) | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $iscc) { Write-Error 'Inno Setup compiler was not found.'; exit 1 }
+          $version = "${{ needs.guard.outputs.version }}"
+          if ($version -notmatch '^\d+\.\d+\.\d+$') { Write-Error "Version '$version' cannot be built."; exit 1 }
+          & $iscc "/DAppVersion=$version" wpf-setup.iss
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -ItemType Directory -Force out\release | Out-Null
+          Copy-Item out\wpf\IronkeepCompanion.exe out\release\IronkeepCompanion.exe -Force
+          if (-not (Test-Path out\release\IronkeepCompanionSetup.exe)) { Write-Error 'The WPF installer was not created.'; exit 1 }
+          $staged = Get-Item out\release\IronkeepCompanion.exe
+          $built = Get-Item out\wpf\IronkeepCompanion.exe
+          if ($staged.Length -ne $built.Length) { Write-Error 'The staged executable does not match the published executable.'; exit 1 }
+
+      - name: Scan with Microsoft Defender
+        working-directory: companion
+        run: |
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          try { Set-MpPreference -MAPSReporting Advanced -SubmitSamplesConsent SendAllSamples -CloudBlockLevel High } catch { Write-Output "Cloud settings: $_" }
+          & $mp -SignatureUpdate | Out-Host
+          Get-MpComputerStatus | Format-List AMProductVersion, AntivirusSignatureVersion, AntivirusSignatureLastUpdated | Out-Host
+
+          $flagged = $false
+          foreach ($file in @('out\IronkeepCompanion.exe', 'out\IronkeepCompanionSetup.exe', 'out\release\IronkeepCompanion.exe', 'out\release\IronkeepCompanionSetup.exe')) {
+            $path = (Resolve-Path $file).Path
+            & $mp -Scan -ScanType 3 -File $path -DisableRemediation | Out-Host
+            $code = $LASTEXITCODE
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash
+            Write-Output "$file  exit $code  sha256 $hash"
+            if ($code -ne 0) { $flagged = $true }
+          }
+          try { Get-MpThreatDetection | Format-List | Out-Host } catch { }
+          if ($flagged) { Write-Error 'Defender flagged the new build.'; exit 1 }
+
+          $commit = "${{ needs.guard.outputs.commit }}"
+          $version = "${{ needs.guard.outputs.version }}"
+          if ($commit -notmatch '^[0-9a-fA-F]{40}$') { Write-Error 'The source commit is not a full SHA.'; exit 1 }
+          $sums = @()
+          foreach ($name in @('IronkeepCompanionSetup.exe', 'IronkeepCompanion.exe')) {
+            $path = Join-Path (Join-Path (Get-Location) 'out\release') $name
+            $hash = (Get-FileHash $path -Algorithm SHA256).Hash.ToLowerInvariant()
+            $sums += "$hash  $name"
+          }
+          Set-Content -Path out\release\SHA256SUMS.txt -Encoding ascii -Value ($sums -join "`n")
+          Set-Content -Path out\release\BUILD.txt -Encoding ascii -Value "version=$version`ncommit=$($commit.ToLowerInvariant())`n"
+          Set-Content -Path out\release\SCANNED.txt -Encoding ascii -Value "defender=pass`ncommit=$($commit.ToLowerInvariant())`n"
+          Copy-Item release-notes.md out\release\release-notes.md -Force
+          exit 0
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: companion-wpf-release
+          if-no-files-found: error
+          path: |
+            companion/out/release/IronkeepCompanionSetup.exe
+            companion/out/release/IronkeepCompanion.exe
+            companion/out/release/SHA256SUMS.txt
+            companion/out/release/BUILD.txt
+            companion/out/release/SCANNED.txt
+            companion/out/release/release-notes.md
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IronkeepCompanion-preview-${{ steps.source.outputs.commit }}
+          path: |
+            companion/out/wpf/SIZE.txt
+            companion/out/wpf/preview/dashboard.png
+            companion/out/wpf/preview/settings.png
+            companion/out/wpf/preview/pending.png
+            companion/out/wpf/preview/dashboard-125.png
+            companion/out/wpf/preview/dashboard-150.png
+            companion/out/wpf/preview/settings-125.png
+            companion/out/wpf/preview/settings-150.png
+            companion/out/wpf/preview/connected.png
+            companion/out/wpf/preview/connected-125.png
+            companion/out/wpf/preview/connected-150.png
+
+  release:
+    needs: [guard, api, windows]
+    if: success() && github.event_name != 'push' && inputs.publish == true && inputs.confirm == 'publish'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ job.workflow_repository }}
+          ref: ${{ job.workflow_sha }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/download-artifact@v4
+        with:
+          name: companion-wpf-release
+          path: release
+      - name: Publish the immutable release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMIT: ${{ needs.guard.outputs.commit }}
+          EXPECTED_VERSION: ${{ needs.guard.outputs.version }}
+          SOURCE_REF: ${{ inputs.source }}
+          PUBLISH_REQUESTED: ${{ inputs.publish }}
+          PUBLISH_CONFIRM: ${{ inputs.confirm }}
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_SHA: ${{ github.sha }}
+          SCRIPTS_INPUT: ${{ inputs.scripts }}
+          JOB_WORKFLOW_SHA: ${{ job.workflow_sha }}
+          RELEASE_DIR: release
+        run: python companion/publish_release.py --publish
