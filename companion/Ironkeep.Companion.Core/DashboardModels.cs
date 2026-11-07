@@ -17,6 +17,7 @@ namespace Ironkeep.Companion
         string _folder = "Not selected";
         string _folderStatus = "Choose the WoW Forever folder in Settings.";
         string _savedStatus = "SavedVariables have not been checked.";
+        string _rosterStatus = "Roster file has not been checked.";
         string _syncState = "Idle";
         string _lastUpload = "None yet";
         string _pending = "0";
@@ -36,6 +37,7 @@ namespace Ironkeep.Companion
         public string Folder { get { return _folder; } }
         public string FolderStatus { get { return _folderStatus; } }
         public string SavedStatus { get { return _savedStatus; } }
+        public string RosterStatus { get { return _rosterStatus; } }
         public string SyncState { get { return _syncState; } }
         public string LastUpload { get { return _lastUpload; } }
         public string Pending { get { return _pending; } }
@@ -88,6 +90,7 @@ namespace Ironkeep.Companion
             else if (savedFiles > 0) Set(ref _folderStatus, "Forever SavedVariables layout found.", "FolderStatus");
             else Set(ref _folderStatus, "Folder found, but no Ironkeep.lua was found in a supported SavedVariables layout.", "FolderStatus");
             Set(ref _savedStatus, savedFiles == 0 ? "No Ironkeep.lua found." : savedFiles + " Ironkeep.lua file" + (savedFiles == 1 ? "" : "s") + " found.", "SavedStatus");
+            Set(ref _rosterStatus, snap.RosterStatus == null || snap.RosterStatus.Length == 0 ? "No IronkeepRoster.lua found." : snap.RosterStatus, "RosterStatus");
             Set(ref _pending, snap.Pending.ToString(), "Pending");
             Set(ref _retry, snap.RetryScheduled.ToString(), "Retry");
             Set(ref _failed, snap.FailedPermanent.ToString(), "Failed");

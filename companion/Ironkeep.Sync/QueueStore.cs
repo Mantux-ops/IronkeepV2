@@ -33,6 +33,7 @@ namespace Ironkeep
         public string CreatedAt;
         public string UpdatedAt;
         public string ConfirmedAt;
+        public string Kind = "attendance";
     }
 
     public static class SyncPaths
@@ -122,25 +123,31 @@ namespace Ironkeep
 
         public QueueItem Enqueue(string guildId, string sourcePath, string body)
         {
+            return Enqueue(guildId, sourcePath, body, "attendance");
+        }
+
+        public QueueItem Enqueue(string guildId, string sourcePath, string body, string kind)
+        {
             if (guildId == null || guildId.Trim().Length == 0) throw new ArgumentException("Guild is required.");
             if (body == null) throw new ArgumentException("Snapshot is required.");
+            if (kind == null || kind.Trim().Length == 0) kind = "attendance";
             string hash = ReportHash.Of(body);
             string now = Stamp(DateTime.UtcNow);
             lock (_gate)
             {
-                QueueItem existing = InsertOrFind(guildId, sourcePath, body, hash, now);
+                QueueItem existing = InsertOrFind(guildId, sourcePath, body, hash, now, kind);
                 if (existing != null) return existing;
-                existing = InsertOrFind(guildId, sourcePath, body, hash, now);
+                existing = InsertOrFind(guildId, sourcePath, body, hash, now, kind);
                 if (existing == null) throw new InvalidOperationException("Could not store the snapshot.");
                 return existing;
             }
         }
 
-        QueueItem InsertOrFind(string guildId, string sourcePath, string body, string hash, string now)
+        QueueItem InsertOrFind(string guildId, string sourcePath, string body, string hash, string now, string kind)
         {
             using (var tx = _connection.BeginTransaction())
             {
-                QueueItem existing = Find(guildId, hash, tx);
+                QueueItem existing = Find(guildId, hash, kind, tx);
                 if (existing != null)
                 {
                     tx.Commit();
@@ -152,20 +159,22 @@ namespace Ironkeep
                 item.Body = body;
                 item.BodyHash = hash;
                 item.SourcePath = sourcePath ?? "";
+                item.Kind = kind;
                 item.State = SyncState.Pending;
                 item.Attempts = 0;
                 using (var cmd = _connection.CreateCommand())
                 {
                     cmd.Transaction = tx;
                     cmd.CommandText = @"INSERT INTO items
-                        (id, guild_id, body, body_hash, source_path, state, attempts, next_attempt_at, last_error, created_at, updated_at, confirmed_at)
-                        VALUES ($id, $guild, $body, $hash, $path, $state, 0, NULL, NULL, $now, $now, NULL)";
+                        (id, guild_id, body, body_hash, source_path, state, attempts, next_attempt_at, last_error, created_at, updated_at, confirmed_at, kind)
+                        VALUES ($id, $guild, $body, $hash, $path, $state, 0, NULL, NULL, $now, $now, NULL, $kind)";
                     cmd.Parameters.AddWithValue("$id", item.Id);
                     cmd.Parameters.AddWithValue("$guild", item.GuildId);
                     cmd.Parameters.AddWithValue("$body", item.Body);
                     cmd.Parameters.AddWithValue("$hash", item.BodyHash);
                     cmd.Parameters.AddWithValue("$path", item.SourcePath);
                     cmd.Parameters.AddWithValue("$state", item.State);
+                    cmd.Parameters.AddWithValue("$kind", item.Kind);
                     cmd.Parameters.AddWithValue("$now", now);
                     try
                     {
@@ -388,20 +397,56 @@ namespace Ironkeep
                         created_at TEXT NOT NULL,
                         updated_at TEXT NOT NULL,
                         confirmed_at TEXT
-                    );
-                    CREATE UNIQUE INDEX IF NOT EXISTS items_guild_hash ON items (guild_id, body_hash);";
+                    );";
                 cmd.ExecuteNonQuery();
+            }
+            EnsureKind();
+        }
+
+        void EnsureKind()
+        {
+            bool hasKind = false;
+            using (var info = _connection.CreateCommand())
+            {
+                info.CommandText = "PRAGMA table_info(items)";
+                using (var reader = info.ExecuteReader())
+                {
+                    while (reader.Read())
+                    {
+                        if (string.Equals(reader.GetString(1), "kind", StringComparison.OrdinalIgnoreCase))
+                            hasKind = true;
+                    }
+                }
+            }
+            if (!hasKind)
+            {
+                using (var alter = _connection.CreateCommand())
+                {
+                    alter.CommandText = "ALTER TABLE items ADD COLUMN kind TEXT NOT NULL DEFAULT 'attendance'";
+                    alter.ExecuteNonQuery();
+                }
+            }
+            using (var drop = _connection.CreateCommand())
+            {
+                drop.CommandText = "DROP INDEX IF EXISTS items_guild_hash";
+                drop.ExecuteNonQuery();
+            }
+            using (var index = _connection.CreateCommand())
+            {
+                index.CommandText = "CREATE UNIQUE INDEX IF NOT EXISTS items_guild_kind_hash ON items (guild_id, kind, body_hash)";
+                index.ExecuteNonQuery();
             }
         }
 
-        QueueItem Find(string guildId, string hash, SqliteTransaction tx)
+        QueueItem Find(string guildId, string hash, string kind, SqliteTransaction tx)
         {
             using (var cmd = _connection.CreateCommand())
             {
                 cmd.Transaction = tx;
-                cmd.CommandText = "SELECT * FROM items WHERE guild_id = $guild AND body_hash = $hash";
+                cmd.CommandText = "SELECT * FROM items WHERE guild_id = $guild AND body_hash = $hash AND kind = $kind";
                 cmd.Parameters.AddWithValue("$guild", guildId);
                 cmd.Parameters.AddWithValue("$hash", hash);
+                cmd.Parameters.AddWithValue("$kind", kind ?? "attendance");
                 using (var reader = cmd.ExecuteReader())
                 {
                     if (!reader.Read()) return null;
@@ -427,6 +472,15 @@ namespace Ironkeep
             item.CreatedAt = Optional(reader, "created_at");
             item.UpdatedAt = Optional(reader, "updated_at");
             item.ConfirmedAt = Optional(reader, "confirmed_at");
+            try
+            {
+                item.Kind = Optional(reader, "kind");
+            }
+            catch (ArgumentException)
+            {
+                item.Kind = "attendance";
+            }
+            if (item.Kind == null || item.Kind.Length == 0) item.Kind = "attendance";
             return item;
         }
 

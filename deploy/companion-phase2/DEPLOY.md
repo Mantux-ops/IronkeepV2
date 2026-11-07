@@ -17,7 +17,7 @@ Do not copy `production/ironkeep/` onto the server. Do not run the Phase 1 insta
 | `DEPLOY.md` | This procedure |
 | `test_install.sh` | Local only. Do not copy it to the server. |
 
-The live `companion_auth.py` must be the Phase 1 file `1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4` or this package's copy. The live `db.py` must be `74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54`, the previous Phase 2 file `5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502`, or this package's copy. Any other hash is refused. `install.sh` does not patch `main.py`.
+The live `companion_auth.py` must be the Phase 1 file `1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4` or this package's copy. The live `db.py` must be `74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54`, the previous Phase 2 file `5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502`, the credential-cleanup file `98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80`, or this package's copy. Any other hash is refused. `install.sh` does not patch `main.py`.
 
 ## Hashes
 
@@ -25,7 +25,7 @@ The live `companion_auth.py` must be the Phase 1 file `1d7002587fc4bfc92f1d340c7
 |---|---|---|
 | `companion_auth.py` | `1d7002587fc4bfc92f1d340c71b955c33bd0038715c1e6f94489f1f018bc08d4` | `8799e163f0db6123605671c8b5db4b12d472af130c845b64f5523cbcf20ef6ca` |
 | `companion_reports.py` | absent, or `51726eed1fa54aa0c05d395d671a1160400b5ae5c864d5c6ea6f5f6824ee42b2` | `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4` |
-| `db.py` | `74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54`, or `5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502` | `98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80` |
+| `db.py` | `74f41dbc2c55f87143ad37fa987e8c35657ab8e325611dc36c53f6948b9cae54`, `5763c4de000dae2fe1aae0e567014a9ac886290f12dfcd67567ac81dd5315502`, or `98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80` | `189145ec7b328cf387565cd1dd00e28abcaf360a23e37702a9f6e88bf5a9308a` |
 
 ## Dry-run
 
@@ -68,7 +68,7 @@ No migration script runs. The first accepted upload creates two tables if they a
 - `companion_reports` stores the parsed place, start time, receipt time, people, and body hash. Accepted reports are kept.
 - `companion_report_hashes` stores every accepted hash. The same normalized text returns `{"ok":true,"duplicate":true}` and the stored report stays in place.
 
-`CREATE TABLE IF NOT EXISTS` is safe on a database that does not have these tables. There is no migration of existing rows. Raid tables, including `raid_attendance`, are not read or written by an upload. The tables are not created while the Companion flag is off, and they are not created for a rejected upload. Deleting a guild deletes that guild's rows from both tables in the same transaction as the guild row. The same delete removes `companion_connect` and `companion_credentials` for that guild when those tables exist. If the tables were never created, guild deletion still removes the guild and does not create them.
+`CREATE TABLE IF NOT EXISTS` is safe on a database that does not have these tables. There is no migration of existing rows. Raid tables, including `raid_attendance`, are not read or written by an upload. The tables are not created while the Companion flag is off, and they are not created for a rejected upload. Deleting a guild deletes that guild's rows from both tables in the same transaction as the guild row. The same delete removes `companion_connect` and `companion_credentials` for that guild when those tables exist. It also removes `roster_snapshots` and `roster_hashes` when those tables exist. If the tables were never created, guild deletion still removes the guild and does not create them.
 
 A database that already ran the earlier 20-row trim cannot get those removed report bodies back. That trim was not deployed. Hashes left without a report row would still count as duplicates; this package does not rewrite existing hash rows.
 
@@ -102,7 +102,7 @@ Take a database backup before that drop. Dropping them does not affect raids.
 
 Use a guild whose profile is World of Warcraft, with the signed-in Discord account in the guild and holding a Companion role. No Companion or addon update is required.
 
-1. Confirm the running site is this package: `companion_auth.py` hash `8799e163f0db6123605671c8b5db4b12d472af130c845b64f5523cbcf20ef6ca`, `companion_reports.py` hash `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4`, and `db.py` hash `98a2ec96be0ef3db7e35134f265c784a649568e54547e2da678571d0e90a4b80`.
+1. Confirm the running site is this package: `companion_auth.py` hash `8799e163f0db6123605671c8b5db4b12d472af130c845b64f5523cbcf20ef6ca`, `companion_reports.py` hash `9029173db99e1a2921f710b279529e7fe94a768852025617146d40d0efb7bab4`, and `db.py` hash `189145ec7b328cf387565cd1dd00e28abcaf360a23e37702a9f6e88bf5a9308a`.
 2. Open the Companion, signed in with Discord, and select that guild. The site address stays `https://ironkeep.gg` unless settings say otherwise.
 3. Log out of WoW once so `WTF/Account/<account>/SavedVariables/Ironkeep.lua` contains a group. Click **Sync now**.
 4. The client posts `text/plain; charset=utf-8` to `POST /api/companion/guilds/<slug>/attendance` with `Authorization: Bearer ika.…`. A new report is HTTP 200 and `{"ok":true}`. The Failed count stays at 0. Pending returns to 0.

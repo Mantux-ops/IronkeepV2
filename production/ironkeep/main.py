@@ -12,7 +12,7 @@ from starlette.background import BackgroundTask
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from . import companion_auth, config, db, discord_api, forever_companion, tickets, warcraft_forever, wow
+from . import companion_auth, config, db, discord_api, forever_companion, roster, tickets, warcraft_forever, wow
 from . import mock_data as data
 from pathlib import Path
 
@@ -723,6 +723,31 @@ def members(slug: str, request: Request):
     source = db.list_members(guild["id"]) if config.live() else data.DEMO_MEMBERS.get(guild["slug"], [])
     prepared = prepare_members(guild, source)
     return render(request, "members.html", guild=guild, nav="members", **prepared)
+
+
+@app.get("/{slug}/roster", response_class=HTMLResponse)
+def guild_roster(slug: str, request: Request):
+    guild, error = guild_or_404(request, slug)
+    if error:
+        return error
+    if db.guild_game(guild.get("settings")) != "wow":
+        return render(
+            request,
+            "forbidden.html",
+            status_code=404,
+            message="This guild has no roster page.",
+            guild=None,
+            nav=None,
+        )
+    if config.live() and not can_edit_settings(_session(request), guild):
+        return forbidden(request, "Your roles don't include this page.")
+    return render(
+        request,
+        "roster.html",
+        guild=guild,
+        nav="roster",
+        roster=roster.current(guild["id"]),
+    )
 
 
 CHARACTER_ERRORS = {

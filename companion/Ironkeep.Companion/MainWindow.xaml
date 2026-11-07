@@ -133,6 +133,7 @@
             <TextBlock Text="WoW Forever" Style="{StaticResource CardTitle}"/>
             <TextBlock Text="{Binding FolderStatus}" Style="{StaticResource CardDesc}"/>
             <TextBlock Text="{Binding SavedStatus}" Style="{StaticResource FieldHint}"/>
+            <TextBlock Text="{Binding RosterStatus}" Style="{StaticResource FieldHint}"/>
           </StackPanel>
         </Border>
 
