@@ -201,6 +201,18 @@ class RosterHttpTests(unittest.TestCase):
         refused = self.client.get("/dutchchaos/roster", cookies={"ik_session": outsider})
         self.assertEqual(refused.status_code, 403, refused.text)
 
+    def test_a_dutch_class_name_is_stored(self):
+        payload = snapshot(1794011429)
+        payload["members"][0]["classToken"] = "MAGE"
+        payload["members"][0]["className"] = "Magiër"
+        payload["members"][0]["rankName"] = "Officier"
+        posted = self.post(payload)
+        self.assertEqual(posted.status_code, 200, posted.text)
+        from ironkeep import roster
+
+        self.assertEqual(roster.current("4242")["members"][0]["className"], "Magiër")
+        self.assertEqual(roster.current("4242")["members"][0]["classToken"], "MAGE")
+
     def test_guild_deletion_then_rejoin_starts_empty(self):
         self.assertEqual(self.post(snapshot(1794011429)).status_code, 200)
         db.delete_guild("dutchchaos")
