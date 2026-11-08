@@ -156,6 +156,9 @@ class RosterHttpTests(unittest.TestCase):
         self.assertEqual(page.status_code, 200, page.text)
         self.assertIn("Herberg", page.text)
         self.assertIn("Ada Smith", page.text)
+        self.assertIn("All classes", page.text)
+        self.assertIn("Guild rank", page.text)
+        self.assertNotIn("Player-1", page.text)
         self.assertNotIn("Bea Stone", page.text)
 
     def test_attendance_route_still_accepts_its_report(self):

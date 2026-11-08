@@ -4,33 +4,553 @@
 {% block title %}Roster · {{ guild.name }} · Ironkeep{% endblock %}
 
 {% block main %}
+<style>
+  .roster-facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 12px;
+    margin: 0 0 18px;
+  }
+
+  .roster-fact {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    min-width: 0;
+  }
+
+  .roster-fact__label {
+    color: var(--muted);
+    font-size: 11.5px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  .roster-fact__value {
+    margin-top: 4px;
+    font-size: 15px;
+    font-weight: 600;
+    overflow-wrap: anywhere;
+  }
+
+  .roster-fact__value--mono {
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .roster-page .section-head {
+    align-items: flex-end;
+  }
+
+  .roster-page .select {
+    width: auto;
+    min-width: 11rem;
+    background-color: var(--panel);
+  }
+
+  .roster-match {
+    color: var(--muted);
+    font-size: 13px;
+  }
+
+  .roster-class {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .roster-swatch {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--swatch);
+    box-shadow: inset 0 0 0 1px rgba(12, 14, 18, 0.45);
+  }
+
+  .roster-page {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+  }
+
+  .roster-page .table-wrap {
+    flex: 1 1 0%;
+    min-height: 0;
+    overflow: auto;
+  }
+
+  .roster-page .table {
+    min-width: 0;
+  }
+
+  .roster-page .table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    background: var(--panel-2);
+    box-shadow: inset 0 -1px 0 var(--border);
+  }
+
+  .roster-page .table th:first-child,
+  .roster-page .table td:first-child {
+    position: sticky;
+    left: 0;
+  }
+
+  .roster-page .table thead th:first-child {
+    left: 0;
+    top: 0;
+    z-index: 3;
+    background: var(--panel-2);
+  }
+
+  .roster-page .table td:first-child {
+    z-index: 1;
+    background: var(--panel);
+  }
+
+  .roster-page .table tbody tr:hover td:first-child {
+    background: var(--panel-2);
+  }
+
+  .roster-page .table th[data-sort="level"],
+  .roster-page .table td[data-label="Level"] {
+    text-align: left;
+  }
+
+  .roster-page .table th[data-sort]:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+    color: var(--text);
+  }
+
+  .roster-page .button:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+  }
+
+  .roster-sr {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  @media (min-width: 721px) and (min-height: 640px) {
+    .main:has(.roster-layout) {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      height: 100dvh;
+      max-height: 100dvh;
+      overflow: hidden;
+      box-sizing: border-box;
+      padding-bottom: 20px;
+    }
+
+    .main:has(.roster-layout) > .menu-button,
+    .main:has(.roster-layout) > .banner,
+    .main:has(.roster-layout) > .page-header {
+      flex: none;
+    }
+
+    .roster-layout {
+      display: flex;
+      flex-direction: column;
+      flex: 1 1 auto;
+      min-height: 0;
+    }
+  }
+
+  @media (max-width: 800px) {
+    .roster-facts {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    .roster-page .toolbar,
+    .roster-page .search,
+    .roster-page .search input {
+      width: 100%;
+    }
+  }
+
+  @media (max-width: 720px) {
+    .main:has(.roster-layout) {
+      height: auto;
+      max-height: none;
+      overflow: visible;
+    }
+
+    .roster-layout,
+    .roster-page,
+    .roster-page .table-wrap {
+      display: block;
+      overflow: visible;
+      max-height: none;
+    }
+
+    .roster-page .section-head {
+      position: sticky;
+      top: 0;
+      z-index: 4;
+      background: var(--bg);
+      padding-top: 8px;
+      padding-bottom: 8px;
+    }
+
+    .roster-page .table {
+      display: block;
+      min-width: 0;
+    }
+
+    .roster-page .table thead {
+      display: none;
+    }
+
+    .roster-page .table tbody {
+      display: block;
+    }
+
+    .roster-page .table tbody tr {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      grid-template-areas:
+        "name level"
+        "class rank";
+      gap: 2px 12px;
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .roster-page .table td,
+    .roster-page .table td:first-child,
+    .roster-page .table thead th:first-child {
+      display: block;
+      position: static;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      text-align: left;
+    }
+
+    .roster-page .table td:nth-child(1) {
+      grid-area: name;
+      font-weight: 600;
+      font-size: 15px;
+    }
+
+    .roster-page .table td:nth-child(2) {
+      grid-area: class;
+      color: var(--text-2);
+      min-width: 0;
+    }
+
+    .roster-page .table td:nth-child(3) {
+      grid-area: level;
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+      text-align: right;
+    }
+
+    .roster-page .table td:nth-child(4) {
+      grid-area: rank;
+      color: var(--text-2);
+      text-align: right;
+      min-width: 0;
+    }
+  }
+
+  @media (max-width: 520px) {
+    .roster-facts {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 420px) {
+    .roster-page .toolbar {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    }
+
+    .roster-page .search,
+    .roster-page #roster-clear,
+    .roster-page #roster-match {
+      grid-column: 1 / -1;
+    }
+
+    .roster-page .select {
+      min-width: 0;
+      width: 100%;
+    }
+  }
+</style>
+
 <header class="page-header">
   <div>
     <h1 class="page-title">Guild roster</h1>
-    <p class="page-subtitle">{{ guild.name }} · the snapshot the companion read from WoW Forever.</p>
+    <p class="page-subtitle">{{ guild.name }}</p>
   </div>
 </header>
 
-<article class="card measure-card">
-  {% if roster %}
-  <div class="card__head">
-    <div>
-      <h2 class="card__title">{{ roster.wow_guild_name }}</h2>
-      <p class="card__desc">{{ roster.members|length }} members · captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
-    </div>
+{% if not roster %}
+<section class="empty-state">
+  {{ icon("users", 28) }}
+  <h2>No guild roster yet</h2>
+  <p>Run <span class="mono">/ikroster</span> in WoW Forever, then upload it from the Ironkeep Companion.</p>
+</section>
+{% else %}
+<div class="roster-layout">
+{% set member_list = roster.members if roster.members is sequence and roster.members is not string and roster.members is not mapping else none %}
+{% set received_raw = roster.received_at if roster.received_at is string else "" %}
+{% set received_label = received_raw[:-1].replace("T", " ") ~ " UTC" if received_raw.endswith("Z") else received_raw %}
+{% set captured_label = roster.captured_label if roster.captured_label is string else "" %}
+{% set guild_label = roster.wow_guild_name if roster.wow_guild_name is string and roster.wow_guild_name.strip() else "—" %}
+<section class="roster-facts" aria-label="Roster snapshot">
+  <div class="roster-fact">
+    <div class="roster-fact__label">WoW guild</div>
+    <div class="roster-fact__value">{{ guild_label }}</div>
   </div>
-  <div class="raid-list">
-    {% for member in roster.members %}
-    <div class="raid-row">
-      <span class="raid-row__name">
-        <span class="raid-row__title">{{ member.name }}</span>
-        <span class="raid-row__sub">{{ member.className }} · {{ member.classToken }} · level {{ member.level }} · {{ member.rankName }} · {{ member.guid }}</span>
-      </span>
-    </div>
-    {% endfor %}
+  <div class="roster-fact">
+    <div class="roster-fact__label">Members</div>
+    <div class="roster-fact__value">{{ member_list|length if member_list is not none else "—" }}</div>
   </div>
-  {% else %}
-  <p class="muted">No guild roster yet. Run /ikroster, log out of the game, and leave the companion open.</p>
+  <div class="roster-fact">
+    <div class="roster-fact__label">Captured</div>
+    <div class="roster-fact__value roster-fact__value--mono">{{ captured_label if captured_label else "—" }}</div>
+  </div>
+  <div class="roster-fact">
+    <div class="roster-fact__label">Received</div>
+    <div class="roster-fact__value roster-fact__value--mono">{{ received_label if received_label else "—" }}</div>
+  </div>
+</section>
+
+{% if member_list is none %}
+<section class="empty-state">
+  {{ icon("alert", 28) }}
+  <h2>This roster cannot be shown</h2>
+  <p>The saved snapshot does not contain a character list.</p>
+</section>
+{% else %}
+{% set wow_classes = {
+  "WARRIOR": {"name": "Warrior", "color": "#C69B6D"},
+  "PALADIN": {"name": "Paladin", "color": "#F48CBA"},
+  "HUNTER": {"name": "Hunter", "color": "#AAD372"},
+  "ROGUE": {"name": "Rogue", "color": "#FFF468"},
+  "PRIEST": {"name": "Priest", "color": "#F0F0F0"},
+  "DEATHKNIGHT": {"name": "Death Knight", "color": "#C41E3A"},
+  "SHAMAN": {"name": "Shaman", "color": "#0070DD"},
+  "MAGE": {"name": "Mage", "color": "#3FC7EB"},
+  "WARLOCK": {"name": "Warlock", "color": "#8788EE"},
+  "MONK": {"name": "Monk", "color": "#00FF98"},
+  "DRUID": {"name": "Druid", "color": "#FF7C0A"},
+  "DEMONHUNTER": {"name": "Demon Hunter", "color": "#A330C9"},
+  "EVOKER": {"name": "Evoker", "color": "#33937F"}
+} %}
+{% set rows = [] %}
+{% set class_names = [] %}
+{% set rank_names = [] %}
+{% for member in member_list if member is mapping %}
+  {% set token = member.classToken.strip().upper() if member.classToken is string else "" %}
+  {% set localized = member.className.strip() if member.className is string else "" %}
+  {% set class_label = wow_classes[token].name if token in wow_classes else localized %}
+  {% set _ = rows.append({
+    "character": member.name if member.name is string else "",
+    "class_label": class_label,
+    "token": token,
+    "rank_name": member.rankName if member.rankName is string else "",
+    "level": member.level if member.level is integer and member.level is not boolean else none
+  }) %}
+  {% if class_label and class_label not in class_names %}
+    {% set _ = class_names.append(class_label) %}
   {% endif %}
-</article>
+  {% if member.rankName is string and member.rankName.strip() and member.rankName not in rank_names %}
+    {% set _ = rank_names.append(member.rankName) %}
+  {% endif %}
+{% endfor %}
+{% if not rows %}
+<section class="empty-state">
+  {{ icon("users", 28) }}
+  <h2>No characters in this roster</h2>
+  <p>The latest snapshot has no characters that can be shown.</p>
+</section>
+{% else %}
+<section class="roster-page">
+  <div class="section-head">
+    <h2 class="section-title">Characters</h2>
+    <div class="toolbar">
+      <label class="search">
+        {{ icon("search", 16) }}
+        <input type="search" id="roster-search" placeholder="Search character name" autocomplete="off" aria-label="Search character name">
+      </label>
+      <select id="roster-class" class="input select" aria-label="Class">
+        <option value="">All classes</option>
+        {% for class_name in class_names|sort(case_sensitive=False) %}
+        <option value="{{ class_name }}">{{ class_name }}</option>
+        {% endfor %}
+      </select>
+      <select id="roster-rank" class="input select" aria-label="Guild rank">
+        <option value="">All ranks</option>
+        {% for rank_name in rank_names|sort(case_sensitive=False) %}
+        <option value="{{ rank_name }}">{{ rank_name }}</option>
+        {% endfor %}
+      </select>
+      <p class="roster-match" id="roster-match" hidden></p>
+      <button class="button button--ghost" type="button" id="roster-clear" hidden>Clear filters</button>
+    </div>
+  </div>
+  <noscript><p class="roster-match">Search, filters, and sorting need JavaScript. Every character in this snapshot is listed below.</p></noscript>
+  <div class="table-wrap">
+    <table class="table" id="roster-table" aria-label="Guild characters">
+      <thead>
+        <tr>
+          <th scope="col" data-sort="character" aria-sort="none" title="Sort by character name">Character</th>
+          <th scope="col" data-sort="className" aria-sort="none" title="Sort by class">Class</th>
+          <th scope="col" data-sort="level" aria-sort="none" title="Sort by level">Level</th>
+          <th scope="col" data-sort="rankName" aria-sort="none" title="Sort by guild rank name">Guild rank</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for member in rows %}
+        {% set color = wow_classes[member.token].color if member.token in wow_classes else "" %}
+        <tr data-character="{{ member.character }}" data-class-name="{{ member.class_label }}" data-rank-name="{{ member.rank_name }}" data-level="{{ member.level if member.level is not none else '' }}">
+          <td data-label="Character"><span class="roster-sr">Character</span>{{ member.character if member.character.strip() else "—" }}</td>
+          <td data-label="Class">
+            <span class="roster-sr">Class</span>
+            <span class="roster-class">
+              {% if color %}<span class="roster-swatch" style="--swatch: {{ color }}" aria-hidden="true"></span>{% endif %}
+              <span>{{ member.class_label if member.class_label else "—" }}</span>
+            </span>
+          </td>
+          <td data-label="Level"><span class="roster-sr">Level</span>{{ member.level if member.level is not none else "—" }}</td>
+          <td data-label="Guild rank"><span class="roster-sr">Guild rank</span>{{ member.rank_name if member.rank_name.strip() else "—" }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="table-empty" id="roster-empty" hidden>No characters match your current search or filters.</p>
+  </div>
+</section>
+{% endif %}
+{% endif %}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if roster and roster.members is sequence and roster.members is not string and roster.members is not mapping %}
+<script>
+(function () {
+  const table = document.getElementById("roster-table");
+  if (!table) return;
+  const body = table.tBodies[0];
+  const search = document.getElementById("roster-search");
+  const classFilter = document.getElementById("roster-class");
+  const rankFilter = document.getElementById("roster-rank");
+  const match = document.getElementById("roster-match");
+  const clearButton = document.getElementById("roster-clear");
+  const empty = document.getElementById("roster-empty");
+  const headers = Array.from(table.querySelectorAll("th[data-sort]"));
+  const sort = { key: "", dir: 1 };
+  const textKey = { character: "character", className: "className", rankName: "rankName" };
+
+  function fold(value) {
+    return (value || "").toLocaleLowerCase();
+  }
+
+  function compare(a, b) {
+    if (sort.key === "level") {
+      const blank = (row) => row.dataset.level === "";
+      if (blank(a) || blank(b)) {
+        if (blank(a) && blank(b)) return 0;
+        return blank(a) ? 1 : -1;
+      }
+      return (Number(a.dataset.level) - Number(b.dataset.level)) * sort.dir;
+    }
+    const attr = textKey[sort.key];
+    const left = a.dataset[attr] || "";
+    const right = b.dataset[attr] || "";
+    return left.localeCompare(right, undefined, { numeric: true, sensitivity: "accent" }) * sort.dir;
+  }
+
+  function paintSort() {
+    headers.forEach((th) => {
+      const on = th.dataset.sort === sort.key;
+      th.classList.toggle("is-sorted", on);
+      if (on) {
+        th.dataset.dir = sort.dir > 0 ? "asc" : "desc";
+        th.setAttribute("aria-sort", sort.dir > 0 ? "ascending" : "descending");
+      } else {
+        th.removeAttribute("data-dir");
+        th.setAttribute("aria-sort", "none");
+      }
+    });
+  }
+
+  function apply() {
+    const query = fold(search.value.trim());
+    const className = classFilter.value;
+    const rankName = rankFilter.value;
+    const filtering = query !== "" || className !== "" || rankName !== "";
+    let shown = 0;
+    Array.from(body.rows).forEach((row) => {
+      const visible = (!query || fold(row.dataset.character).includes(query))
+        && (!className || row.dataset.className === className)
+        && (!rankName || row.dataset.rankName === rankName);
+      row.hidden = !visible;
+      if (visible) shown += 1;
+    });
+    if (filtering) {
+      match.hidden = false;
+      match.textContent = shown + " of " + body.rows.length + " characters";
+    } else {
+      match.hidden = true;
+      match.textContent = "";
+    }
+    clearButton.hidden = !filtering;
+    empty.hidden = shown !== 0;
+  }
+
+  function sortBy(key) {
+    sort.dir = sort.key === key ? sort.dir * -1 : 1;
+    sort.key = key;
+    Array.from(body.rows).sort(compare).forEach((row) => body.appendChild(row));
+    paintSort();
+  }
+
+  headers.forEach((th) => {
+    th.tabIndex = 0;
+    th.addEventListener("click", () => sortBy(th.dataset.sort));
+    th.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        sortBy(th.dataset.sort);
+      }
+    });
+  });
+  search.addEventListener("input", apply);
+  classFilter.addEventListener("change", apply);
+  rankFilter.addEventListener("change", apply);
+  clearButton.addEventListener("click", () => {
+    search.value = "";
+    classFilter.value = "";
+    rankFilter.value = "";
+    apply();
+    search.focus();
+  });
+  sortBy("character");
+  apply();
+})();
+</script>
+{% endif %}
 {% endblock %}
