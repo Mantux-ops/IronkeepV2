@@ -356,6 +356,51 @@ for i = 1, #frames do
 end
 if box._text ~= expected then fail("Cancel changed the report") end
 
+local function expectFocusError(action, needle)
+	local ok, err = pcall(action)
+	if ok then fail(needle .. " error was swallowed") end
+	if not tostring(err):find(needle, 1, true) then
+		fail(needle .. " error was hidden: " .. tostring(err))
+	end
+end
+
+local function assertUpdateStillRuns(marker)
+	local place = Ironkeep.db.session.place
+	Ironkeep.db.session.place = marker
+	Ironkeep.Window.Update()
+	local found = false
+	for i = 1, #frames do
+		if frames[i]._text == marker then found = true end
+	end
+	Ironkeep.db.session.place = place
+	Ironkeep.Window.Update()
+	if not found then fail("a focus error left the window unable to update") end
+end
+
+if not clickLabel("Hide") then fail("Hide failed before the focus-lock checks") end
+local originalHighlight = box.HighlightText
+box.HighlightText = function() error("highlight failed") end
+expectFocusError(function() clickLabel("Copy list") end, "highlight failed")
+box.HighlightText = originalHighlight
+assertUpdateStillRuns("AfterHighlight")
+
+if not clickLabel("Hide") then fail("Hide failed before SetFocus check") end
+local originalSetFocus = box.SetFocus
+box.SetFocus = function() error("setfocus failed") end
+expectFocusError(function() clickLabel("Copy list") end, "setfocus failed")
+box.SetFocus = originalSetFocus
+assertUpdateStillRuns("AfterSetFocus")
+
+if box:HasFocus() then box:ClearFocus() end
+if not clickLabel("Hide") then fail("Hide failed before reopening for ClearFocus") end
+if not clickLabel("Copy list") then fail("Copy list failed before ClearFocus check") end
+local originalClear = box.ClearFocus
+box.ClearFocus = function() error("clearfocus failed") end
+expectFocusError(function() clickLabel("Hide") end, "clearfocus failed")
+box.ClearFocus = originalClear
+assertUpdateStillRuns("AfterClearFocus")
+if Ironkeep.db.session.place ~= "Hall of Thanes" then fail("the focus-lock checks changed the place") end
+
 if SlashCmdList.IRONKEEP == SlashCmdList.IKROSTER then fail("the roster command replaced the group command") end
 if SLASH_IRONKEEP1 ~= "/ironkeep" or SLASH_IKROSTER1 ~= "/ikroster" then
 	fail("slash commands were not registered separately")

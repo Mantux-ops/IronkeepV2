@@ -56,6 +56,21 @@ local function reportFocused()
 	return reportBox and reportBox.HasFocus and reportBox:HasFocus() and true or false
 end
 
+-- Drop the lock before the error is shown again. A failure must not freeze Update.
+local function underFocusLock(body)
+	reportFocusLock = true
+	local ok, err = xpcall(body, function(message)
+		local text = tostring(message)
+		if type(debug) == "table" and type(debug.traceback) == "function" then
+			local traced, stack = pcall(debug.traceback, text, 2)
+			if traced and type(stack) == "string" and stack ~= "" then return stack end
+		end
+		return text
+	end)
+	reportFocusLock = false
+	if not ok then error(err, 0) end
+end
+
 local function face(widget, size, semi)
 	local ok = widget.SetFont and widget:SetFont(semi and FONT_SEMI or FONT, size, "")
 	if not ok and widget.SetFontObject then
@@ -576,9 +591,7 @@ function Ironkeep.Window.Update()
 	if not window.reportOpen then
 		window.reportSelect = false
 		if reportFocused() and reportBox.ClearFocus then
-			reportFocusLock = true
-			reportBox:ClearFocus()
-			reportFocusLock = false
+			underFocusLock(function() reportBox:ClearFocus() end)
 		end
 		return
 	end
@@ -594,13 +607,13 @@ function Ironkeep.Window.Update()
 	reportBox:SetHeight(math.max(REPORT_HEIGHT, (breaks + 1) * 14))
 	if window.reportSelect then
 		window.reportSelect = false
-		reportFocusLock = true
-		reportBox:SetText(text)
-		reportBox._last = text
-		if reportBox.SetFocus then reportBox:SetFocus() end
-		if reportBox.HighlightText then reportBox:HighlightText() end
-		if window.reportScroll.SetVerticalScroll then window.reportScroll:SetVerticalScroll(0) end
-		reportFocusLock = false
+		underFocusLock(function()
+			reportBox:SetText(text)
+			reportBox._last = text
+			if reportBox.SetFocus then reportBox:SetFocus() end
+			if reportBox.HighlightText then reportBox:HighlightText() end
+			if window.reportScroll.SetVerticalScroll then window.reportScroll:SetVerticalScroll(0) end
+		end)
 		return
 	end
 	if not reportFocused() and reportBox._last ~= text then
