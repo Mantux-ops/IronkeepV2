@@ -143,7 +143,8 @@ class RosterPageTests(unittest.TestCase):
         self.assertIn("Ada &lt;Smith&gt;", page.text)
         self.assertNotIn("Ada <Smith>", page.text)
         self.assertIn("Raider &amp;", page.text)
-        self.assertIn("Magiër", page.text)
+        self.assertIn(">Mage<", page.text)
+        self.assertNotIn("Magiër", page.text)
         self.assertIn("--swatch: #3FC7EB", page.text)
         self.assertIn("Peasant", page.text)
         self.assertNotIn("PEASANT", page.text)
@@ -154,7 +155,7 @@ class RosterPageTests(unittest.TestCase):
         self.assertNotIn('data-level="True"', page.text)
         self.assertNotIn('data-level="1"', page.text)
         self.assertIn(">All classes<", page.text)
-        self.assertIn(">Magiër<", page.text)
+        self.assertIn(">Mage<", page.text)
         self.assertIn(">Recruit<", page.text)
 
     def test_a_snapshot_without_a_character_list_stays_on_the_page(self):
@@ -202,8 +203,10 @@ class RosterPageTests(unittest.TestCase):
         self.assertIn(">238<", page.text)
         for name in names:
             self.assertIn(name, page.text)
-        self.assertIn("Magiër", page.text)
-        self.assertIn("Druïde", page.text)
+        self.assertIn(">Mage<", page.text)
+        self.assertIn(">Druid<", page.text)
+        self.assertNotIn("Magiër", page.text)
+        self.assertNotIn("Druïde", page.text)
         self.assertIn("Рыцарь", page.text)
         self.assertIn("--swatch: #C69B6D", page.text)
         self.assertNotIn("Player-", page.text)
@@ -215,6 +218,78 @@ class RosterPageTests(unittest.TestCase):
         self.assertIn('data-label="Guild rank"', page.text)
         self.assertIn("th[data-sort]:focus-visible", page.text)
         self.assertIn('id="roster-match" hidden', page.text)
+
+    def test_localized_class_names_are_shown_in_english(self):
+        from ironkeep import roster
+
+        localized = [
+            ("WARRIOR", "Krijger", "Warrior", "#C69B6D"),
+            ("PALADIN", "Paladijn", "Paladin", "#F48CBA"),
+            ("HUNTER", "Jager", "Hunter", "#AAD372"),
+            ("ROGUE", "Schurk", "Rogue", "#FFF468"),
+            ("PRIEST", "Priester", "Priest", "#F0F0F0"),
+            ("DEATHKNIGHT", "Doodsridder", "Death Knight", "#C41E3A"),
+            ("SHAMAN", "Sjamaan", "Shaman", "#0070DD"),
+            ("MAGE", "Magiër", "Mage", "#3FC7EB"),
+            ("WARLOCK", "Heksenmeester", "Warlock", "#8788EE"),
+            ("MONK", "Monnik", "Monk", "#00FF98"),
+            ("DRUID", "Druïde", "Druid", "#FF7C0A"),
+            ("DEMONHUNTER", "Demonjager", "Demon Hunter", "#A330C9"),
+            ("EVOKER", "Ontwaker", "Evoker", "#33937F"),
+            ("mage", "Magiër", "Mage", "#3FC7EB"),
+        ]
+        members = []
+        for index, (token, local_name, _english, _color) in enumerate(localized):
+            members.append({
+                "guid": "Player-%s" % (index + 1),
+                "name": "Hero %s" % (index + 1),
+                "level": 60,
+                "classToken": token,
+                "className": local_name,
+                "rankName": "Member",
+            })
+        members.append({
+            "guid": "Player-unknown",
+            "name": "Bea",
+            "level": 10,
+            "classToken": "PEASANT",
+            "className": "Peasant",
+            "rankName": "Recruit",
+        })
+        payload = snapshot(1794011429)
+        payload["members"] = members
+        posted = self.post(payload)
+        self.assertEqual(posted.status_code, 200, posted.text)
+        stored = {row["guid"]: (row["classToken"], row["className"]) for row in roster.current("11")["members"]}
+        self.assertEqual(stored["Player-1"], ("WARRIOR", "Krijger"))
+        self.assertEqual(stored["Player-8"], ("MAGE", "Magiër"))
+        self.assertEqual(stored["Player-14"], ("mage", "Magiër"))
+        members.append({
+            "guid": "Player-blank",
+            "name": "Cedric",
+            "level": 12,
+            "classToken": " ",
+            "className": "Onbekend",
+            "rankName": "Alt",
+        })
+        self.replace_members(members)
+        page = self.open_page()
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertEqual(page.text.count("data-character="), len(members))
+        for _token, local_name, english, color in localized:
+            self.assertIn(">%s<" % english, page.text)
+            self.assertNotIn(local_name, page.text)
+            self.assertIn("--swatch: %s" % color, page.text)
+        self.assertEqual(page.text.count('data-class-name="Mage"'), 2)
+        self.assertIn('value="Death Knight"', page.text)
+        self.assertIn('value="Demon Hunter"', page.text)
+        self.assertNotIn('value="Magiër"', page.text)
+        self.assertNotIn('value="Doodsridder"', page.text)
+        self.assertIn(">Peasant<", page.text)
+        self.assertIn(">Onbekend<", page.text)
+        self.assertNotIn("PEASANT", page.text)
+        self.assertIn("Bea", page.text)
+        self.assertIn("Cedric", page.text)
 
 
 class RosterBrowserTests(unittest.TestCase):
@@ -270,7 +345,7 @@ class RosterBrowserTests(unittest.TestCase):
             self.assertEqual(browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).filter(row => !row.hidden).map(row => row.dataset.character)"), ["Łukasz"])
             browser.eval("document.getElementById('roster-search').value = ''; document.getElementById('roster-search').dispatchEvent(new Event('input'))")
             self.assertEqual(browser.eval("document.getElementById('roster-match').hidden"), True)
-            browser.eval("document.getElementById('roster-class').value = 'Magiër'; document.getElementById('roster-class').dispatchEvent(new Event('change'))")
+            browser.eval("document.getElementById('roster-class').value = 'Mage'; document.getElementById('roster-class').dispatchEvent(new Event('change'))")
             self.assertEqual(browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).filter(row => !row.hidden).map(row => row.dataset.character)"), ["José"])
             browser.eval("document.getElementById('roster-rank').value = 'Member'; document.getElementById('roster-rank').dispatchEvent(new Event('change'))")
             self.assertEqual(browser.eval("document.getElementById('roster-match').textContent"), "0 of 5 characters")
@@ -298,8 +373,17 @@ class RosterBrowserTests(unittest.TestCase):
                 browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).map(row => Number(row.dataset.level))"),
                 [80, 70, 60, 45, 10],
             )
+            self.assertEqual(
+                browser.eval("Array.from(document.querySelectorAll('#roster-class option')).map(option => option.textContent.trim())"),
+                ["All classes", "Druid", "Hunter", "Mage", "Priest", "Warrior"],
+            )
+            self.assertEqual(browser.eval("document.body.innerText.includes('Magiër')"), False)
             browser.eval("document.querySelector('th[data-sort=\"className\"]').click()")
             self.assertEqual(browser.eval(_sorted_as("className")), True)
+            self.assertEqual(
+                browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).map(row => row.dataset.className)"),
+                ["Druid", "Hunter", "Mage", "Priest", "Warrior"],
+            )
             browser.eval("document.querySelector('th[data-sort=\"rankName\"]').click()")
             first = browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).map(row => row.dataset.rankName)")
             browser.eval("document.querySelector('th[data-sort=\"rankName\"]').click()")
@@ -316,6 +400,8 @@ class RosterBrowserTests(unittest.TestCase):
             self.assertLessEqual(browser.eval("document.documentElement.scrollWidth"), browser.eval("document.documentElement.clientWidth"))
             self.assertLessEqual(browser.eval("document.querySelector('#roster-table td[data-label=\"Level\"]').getBoundingClientRect().right"), 390)
             self.assertLessEqual(browser.eval("document.querySelector('#roster-table td[data-label=\"Guild rank\"]').getBoundingClientRect().right"), 390)
+            self.assertEqual(browser.eval("document.body.innerText.includes('Mage')"), True)
+            self.assertEqual(browser.eval("document.body.innerText.includes('Magiër')"), False)
             browser.screenshot("roster-narrow.png")
             browser.resize(320, 720)
             time.sleep(0.2)

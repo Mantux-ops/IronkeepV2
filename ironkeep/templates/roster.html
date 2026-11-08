@@ -342,13 +342,37 @@
   <p>The saved snapshot does not contain a character list.</p>
 </section>
 {% else %}
+{% set wow_classes = {
+  "WARRIOR": {"name": "Warrior", "color": "#C69B6D"},
+  "PALADIN": {"name": "Paladin", "color": "#F48CBA"},
+  "HUNTER": {"name": "Hunter", "color": "#AAD372"},
+  "ROGUE": {"name": "Rogue", "color": "#FFF468"},
+  "PRIEST": {"name": "Priest", "color": "#F0F0F0"},
+  "DEATHKNIGHT": {"name": "Death Knight", "color": "#C41E3A"},
+  "SHAMAN": {"name": "Shaman", "color": "#0070DD"},
+  "MAGE": {"name": "Mage", "color": "#3FC7EB"},
+  "WARLOCK": {"name": "Warlock", "color": "#8788EE"},
+  "MONK": {"name": "Monk", "color": "#00FF98"},
+  "DRUID": {"name": "Druid", "color": "#FF7C0A"},
+  "DEMONHUNTER": {"name": "Demon Hunter", "color": "#A330C9"},
+  "EVOKER": {"name": "Evoker", "color": "#33937F"}
+} %}
 {% set rows = [] %}
 {% set class_names = [] %}
 {% set rank_names = [] %}
 {% for member in member_list if member is mapping %}
-  {% set _ = rows.append(member) %}
-  {% if member.className is string and member.className.strip() and member.className not in class_names %}
-    {% set _ = class_names.append(member.className) %}
+  {% set token = member.classToken.strip().upper() if member.classToken is string else "" %}
+  {% set localized = member.className.strip() if member.className is string else "" %}
+  {% set class_label = wow_classes[token].name if token in wow_classes else localized %}
+  {% set _ = rows.append({
+    "character": member.name if member.name is string else "",
+    "class_label": class_label,
+    "token": token,
+    "rank_name": member.rankName if member.rankName is string else "",
+    "level": member.level if member.level is integer and member.level is not boolean else none
+  }) %}
+  {% if class_label and class_label not in class_names %}
+    {% set _ = class_names.append(class_label) %}
   {% endif %}
   {% if member.rankName is string and member.rankName.strip() and member.rankName not in rank_names %}
     {% set _ = rank_names.append(member.rankName) %}
@@ -361,21 +385,6 @@
   <p>The latest snapshot has no characters that can be shown.</p>
 </section>
 {% else %}
-{% set class_colors = {
-  "WARRIOR": "#C69B6D",
-  "PALADIN": "#F48CBA",
-  "HUNTER": "#AAD372",
-  "ROGUE": "#FFF468",
-  "PRIEST": "#F0F0F0",
-  "DEATHKNIGHT": "#C41E3A",
-  "SHAMAN": "#0070DD",
-  "MAGE": "#3FC7EB",
-  "WARLOCK": "#8788EE",
-  "MONK": "#00FF98",
-  "DRUID": "#FF7C0A",
-  "DEMONHUNTER": "#A330C9",
-  "EVOKER": "#33937F"
-} %}
 <section class="roster-page">
   <div class="section-head">
     <h2 class="section-title">Characters</h2>
@@ -413,23 +422,18 @@
       </thead>
       <tbody>
         {% for member in rows %}
-        {% set character = member.name if member.name is string else "" %}
-        {% set class_name = member.className if member.className is string else "" %}
-        {% set rank_name = member.rankName if member.rankName is string else "" %}
-        {% set level = member.level if member.level is integer and member.level is not boolean else none %}
-        {% set token = member.classToken if member.classToken is string else "" %}
-        {% set color = class_colors[token] if token in class_colors else "" %}
-        <tr data-character="{{ character }}" data-class-name="{{ class_name }}" data-rank-name="{{ rank_name }}" data-level="{{ level if level is not none else '' }}">
-          <td data-label="Character"><span class="roster-sr">Character</span>{{ character if character.strip() else "—" }}</td>
+        {% set color = wow_classes[member.token].color if member.token in wow_classes else "" %}
+        <tr data-character="{{ member.character }}" data-class-name="{{ member.class_label }}" data-rank-name="{{ member.rank_name }}" data-level="{{ member.level if member.level is not none else '' }}">
+          <td data-label="Character"><span class="roster-sr">Character</span>{{ member.character if member.character.strip() else "—" }}</td>
           <td data-label="Class">
             <span class="roster-sr">Class</span>
             <span class="roster-class">
               {% if color %}<span class="roster-swatch" style="--swatch: {{ color }}" aria-hidden="true"></span>{% endif %}
-              <span>{{ class_name if class_name.strip() else "—" }}</span>
+              <span>{{ member.class_label if member.class_label else "—" }}</span>
             </span>
           </td>
-          <td data-label="Level"><span class="roster-sr">Level</span>{{ level if level is not none else "—" }}</td>
-          <td data-label="Guild rank"><span class="roster-sr">Guild rank</span>{{ rank_name if rank_name.strip() else "—" }}</td>
+          <td data-label="Level"><span class="roster-sr">Level</span>{{ member.level if member.level is not none else "—" }}</td>
+          <td data-label="Guild rank"><span class="roster-sr">Guild rank</span>{{ member.rank_name if member.rank_name.strip() else "—" }}</td>
         </tr>
         {% endfor %}
       </tbody>
