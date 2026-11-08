@@ -210,6 +210,10 @@ class RosterPageTests(unittest.TestCase):
         self.assertIn(">All classes<", page.text)
         self.assertIn(">All ranks<", page.text)
         self.assertIn('id="roster-empty" hidden', page.text)
+        self.assertIn("No characters match your current search or filters.", page.text)
+        self.assertIn('id="roster-clear" hidden', page.text)
+        self.assertIn('data-label="Guild rank"', page.text)
+        self.assertIn("th[data-sort]:focus-visible", page.text)
         self.assertIn('id="roster-match" hidden', page.text)
 
 
@@ -270,6 +274,14 @@ class RosterBrowserTests(unittest.TestCase):
             self.assertEqual(browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).filter(row => !row.hidden).map(row => row.dataset.character)"), ["José"])
             browser.eval("document.getElementById('roster-rank').value = 'Member'; document.getElementById('roster-rank').dispatchEvent(new Event('change'))")
             self.assertEqual(browser.eval("document.getElementById('roster-match').textContent"), "0 of 5 characters")
+            self.assertEqual(browser.eval("document.getElementById('roster-empty').textContent.trim()"), "No characters match your current search or filters.")
+            self.assertEqual(browser.eval("document.getElementById('roster-clear').hidden"), False)
+            browser.eval("document.getElementById('roster-clear').click()")
+            self.assertEqual(browser.eval("document.getElementById('roster-search').value"), "")
+            self.assertEqual(browser.eval("document.getElementById('roster-class').value"), "")
+            self.assertEqual(browser.eval("document.getElementById('roster-rank').value"), "")
+            self.assertEqual(browser.eval("document.getElementById('roster-clear').hidden"), True)
+            self.assertEqual(browser.eval("document.getElementById('roster-match').hidden"), True)
             browser.eval("document.getElementById('roster-class').value = ''; document.getElementById('roster-rank').value = 'Officier'; document.getElementById('roster-rank').dispatchEvent(new Event('change'))")
             self.assertEqual(
                 set(browser.eval("Array.from(document.querySelectorAll('#roster-table tbody tr')).filter(row => !row.hidden).map(row => row.dataset.character)")),
@@ -297,14 +309,19 @@ class RosterBrowserTests(unittest.TestCase):
             browser.resize(1280, 800)
             browser.screenshot("roster-desktop.png")
             wide = browser.eval("document.getElementById('roster-table').getBoundingClientRect().width")
-            browser.resize(390, 800)
+            browser.resize(390, 844)
             time.sleep(0.35)
             self.assertEqual(browser.eval("window.innerWidth"), 390)
             self.assertLessEqual(browser.eval("document.querySelector('.sidebar').getBoundingClientRect().right"), 0)
+            self.assertLessEqual(browser.eval("document.documentElement.scrollWidth"), browser.eval("document.documentElement.clientWidth"))
+            self.assertLessEqual(browser.eval("document.querySelector('#roster-table td[data-label=\"Level\"]').getBoundingClientRect().right"), 390)
+            self.assertLessEqual(browser.eval("document.querySelector('#roster-table td[data-label=\"Guild rank\"]').getBoundingClientRect().right"), 390)
             browser.screenshot("roster-narrow.png")
-            narrow = browser.eval("document.getElementById('roster-table').closest('.table-wrap').scrollWidth > document.getElementById('roster-table').closest('.table-wrap').clientWidth")
+            browser.resize(320, 720)
+            time.sleep(0.2)
+            self.assertLessEqual(browser.eval("document.documentElement.scrollWidth"), browser.eval("Math.max(document.documentElement.clientWidth, 320)"))
+            self.assertLessEqual(browser.eval("document.querySelector('#roster-table td[data-label=\"Guild rank\"]').getBoundingClientRect().right"), 321)
             self.assertGreater(wide, 600)
-            self.assertEqual(narrow, True)
             many = snapshot(1794013000)
             many["members"] = [
                 {
@@ -324,6 +341,23 @@ class RosterBrowserTests(unittest.TestCase):
             browser.open("many", 1280, 800)
             self.assertEqual(browser.eval("document.body.innerText.includes('238')"), True)
             self.assertEqual(browser.eval("document.querySelectorAll('#roster-table tbody tr').length"), 238)
+            scrolled = json.loads(browser.eval(
+                "(() => { const wrap = document.querySelector('.table-wrap'); const head = document.querySelector('#roster-table thead th'); const search = document.getElementById('roster-search'); const before = search.getBoundingClientRect().top; wrap.scrollTop = 480; const headTop = head.getBoundingClientRect().top; const wrapTop = wrap.getBoundingClientRect().top; return JSON.stringify({scroll: wrap.scrollTop, stuck: Math.abs(headTop - wrapTop) < 3, filterStill: Math.abs(search.getBoundingClientRect().top - before) < 2, page: document.scrollingElement.scrollTop}); })()"
+            ))
+            self.assertGreater(scrolled["scroll"], 100)
+            self.assertEqual(scrolled["stuck"], True)
+            self.assertEqual(scrolled["filterStill"], True)
+            self.assertEqual(scrolled["page"], 0)
+            browser.eval("document.getElementById('roster-rank').focus()")
+            browser.call("Input.dispatchKeyEvent", type="keyDown", key="Tab", code="Tab", windowsVirtualKeyCode=9, nativeVirtualKeyCode=9)
+            browser.call("Input.dispatchKeyEvent", type="keyUp", key="Tab", code="Tab", windowsVirtualKeyCode=9, nativeVirtualKeyCode=9)
+            focused = json.loads(browser.eval(
+                "(() => { const th = document.activeElement; const style = getComputedStyle(th); const before = th.getAttribute('aria-sort'); th.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})); return JSON.stringify({id: th.id || '', sort: th.dataset.sort || '', outline: style.outlineStyle, width: style.outlineWidth, visible: th.matches(':focus-visible'), before: before, after: th.getAttribute('aria-sort')}); })()"
+            ))
+            self.assertEqual(focused["sort"], "character", focused)
+            self.assertEqual(focused["visible"], True, focused)
+            self.assertEqual(focused["outline"], "solid", focused)
+            self.assertNotEqual(focused["before"], focused["after"], focused)
             browser.screenshot("roster-many.png")
             browser.open("empty", 1280, 800)
             self.assertEqual(browser.eval("document.body.innerText.includes('No guild roster yet')"), True)
