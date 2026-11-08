@@ -26,6 +26,14 @@ local RED_BORDER = { 0.949, 0.427, 0.427, 0.40 }
 local RED_TEXT = { 1, 0.612, 0.612, 1 }
 
 local ROW_CAP = 200
+local REPORT_HEIGHT = 140
+local REPORT_BOTTOM = 48
+local REPORT_LABEL_Y = REPORT_BOTTOM + REPORT_HEIGHT + 6
+local LIST_BOTTOM_CLOSED = 52
+-- The hint can wrap onto a second line. Keep the group list above it.
+local LIST_BOTTOM_OPEN = REPORT_LABEL_Y + 44
+local COPY_HINT = "The report is selected. Press Ctrl+C to copy. It stays on this computer."
+local PREVIOUS_HINT = "Previous list. The report is selected. Press Ctrl+C to copy."
 
 local CLASS_COLOR = {
 	WARRIOR = { 0.78, 0.61, 0.43 },
@@ -42,6 +50,26 @@ local CLASS_COLOR = {
 local window
 local rows = {}
 local reportBox
+local reportFocusLock = false
+
+local function reportFocused()
+	return reportBox and reportBox.HasFocus and reportBox:HasFocus() and true or false
+end
+
+-- Drop the lock before the error is shown again. A failure must not freeze Update.
+local function underFocusLock(body)
+	reportFocusLock = true
+	local ok, err = xpcall(body, function(message)
+		local text = tostring(message)
+		if type(debug) == "table" and type(debug.traceback) == "function" then
+			local traced, stack = pcall(debug.traceback, text, 2)
+			if traced and type(stack) == "string" and stack ~= "" then return stack end
+		end
+		return text
+	end)
+	reportFocusLock = false
+	if not ok then error(err, 0) end
+end
 
 local function face(widget, size, semi)
 	local ok = widget.SetFont and widget:SetFont(semi and FONT_SEMI or FONT, size, "")
@@ -282,7 +310,7 @@ local function layoutChrome()
 	window.reportBorder:SetShown(open)
 	window.scroll:ClearAllPoints()
 	window.scroll:SetPoint("TOPLEFT", 12, -80)
-	window.scroll:SetPoint("BOTTOMRIGHT", -12, open and 168 or 52)
+	window.scroll:SetPoint("BOTTOMRIGHT", -12, open and LIST_BOTTOM_OPEN or LIST_BOTTOM_CLOSED)
 	window.copy:SetText(open and "Hide" or "Copy list")
 	if Ironkeep.showingPrevious then
 		window.previous:SetText("Current")
@@ -347,7 +375,7 @@ function Ironkeep.Window.Build()
 
 	local scroll = CreateFrame("ScrollFrame", nil, window)
 	scroll:SetPoint("TOPLEFT", 12, -80)
-	scroll:SetPoint("BOTTOMRIGHT", -12, 52)
+	scroll:SetPoint("BOTTOMRIGHT", -12, LIST_BOTTOM_CLOSED)
 	scroll:EnableMouseWheel(true)
 	scroll:SetScript("OnMouseWheel", function(self, delta)
 		local nextScroll = self:GetVerticalScroll() - delta * 44
@@ -373,7 +401,11 @@ function Ironkeep.Window.Build()
 	copy:SetScript("OnClick", function()
 		setConfirm(false)
 		window.reportOpen = not window.reportOpen
-		if not window.reportOpen then Ironkeep.showingPrevious = false end
+		if window.reportOpen then
+			window.reportSelect = true
+		else
+			Ironkeep.showingPrevious = false
+		end
 		Ironkeep.Window.Update()
 	end)
 
@@ -383,6 +415,7 @@ function Ironkeep.Window.Build()
 		setConfirm(false)
 		Ironkeep.showingPrevious = not Ironkeep.showingPrevious
 		window.reportOpen = true
+		window.reportSelect = true
 		Ironkeep.Window.Update()
 	end)
 
@@ -418,14 +451,17 @@ function Ironkeep.Window.Build()
 	confirmYes:Hide()
 
 	local reportLabel = face(window:CreateFontString(nil, "OVERLAY"), 11, false)
-	reportLabel:SetPoint("BOTTOMLEFT", 16, 112)
+	reportLabel:SetPoint("BOTTOMLEFT", 16, REPORT_LABEL_Y)
+	reportLabel:SetWidth(388)
+	reportLabel:SetJustifyH("LEFT")
+	reportLabel:SetWordWrap(true)
 	reportLabel:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-	reportLabel:SetText("Click the text, then copy. It stays on this computer.")
+	reportLabel:SetText(COPY_HINT)
 	reportLabel:Hide()
 
 	local reportScroll = CreateFrame("ScrollFrame", nil, window)
-	reportScroll:SetPoint("BOTTOMLEFT", 16, 48)
-	reportScroll:SetSize(388, 58)
+	reportScroll:SetPoint("BOTTOMLEFT", 16, REPORT_BOTTOM)
+	reportScroll:SetSize(388, REPORT_HEIGHT)
 	reportScroll:Hide()
 	local reportBorder = frameWithBackdrop(nil, window)
 	reportBorder:SetPoint("TOPLEFT", reportScroll, "TOPLEFT", -4, 4)
@@ -445,11 +481,26 @@ function Ironkeep.Window.Build()
 	face(reportBox, 11, false)
 	reportBox:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
 	reportBox:SetWidth(372)
-	reportBox:SetMaxLetters(8000)
+	-- Forever treats 0 as no letter cap. A positive value truncates SetText.
+	reportBox:SetMaxLetters(0)
 	if reportBox.SetTextInsets then reportBox:SetTextInsets(8, 8, 4, 4) end
+	local function scrollReport(_, delta)
+		local nextScroll = reportScroll:GetVerticalScroll() - delta * 28
+		local maxScroll = reportScroll:GetVerticalScrollRange()
+		if nextScroll < 0 then nextScroll = 0 end
+		if nextScroll > maxScroll then nextScroll = maxScroll end
+		reportScroll:SetVerticalScroll(nextScroll)
+	end
+	reportScroll:EnableMouseWheel(true)
+	reportScroll:SetScript("OnMouseWheel", scrollReport)
+	reportBox:EnableMouseWheel(true)
+	reportBox:SetScript("OnMouseWheel", scrollReport)
 	reportBox:SetScript("OnEscapePressed", function(self) self:ClearFocus() end)
 	reportBox:SetScript("OnEditFocusGained", function(self) self:HighlightText() end)
-	reportBox:SetScript("OnEditFocusLost", function() Ironkeep.Window.Update() end)
+	reportBox:SetScript("OnEditFocusLost", function()
+		if reportFocusLock then return end
+		Ironkeep.Window.Update()
+	end)
 	reportScroll:SetScrollChild(reportBox)
 
 	window.reportLabel = reportLabel
@@ -481,7 +532,7 @@ function Ironkeep.Window.Hide()
 end
 
 function Ironkeep.Window.Update()
-	if not window then return end
+	if not window or reportFocusLock then return end
 	local db = Ironkeep.db
 	local session = db and db.session
 	if not session then setConfirm(false) end
@@ -537,19 +588,35 @@ function Ironkeep.Window.Update()
 	window.list:SetHeight(math.max(y, 1))
 
 	layoutChrome()
-	if not window.reportOpen then return end
-	if reportBox.HasFocus and reportBox:HasFocus() then return end
+	if not window.reportOpen then
+		window.reportSelect = false
+		if reportFocused() and reportBox.ClearFocus then
+			underFocusLock(function() reportBox:ClearFocus() end)
+		end
+		return
+	end
 	local text
 	if Ironkeep.showingPrevious then
 		text = (db and db.lastReport) or "Ironkeep group\n\nNo previous list."
-		window.reportLabel:SetText("Previous list. Click the text, then copy.")
+		window.reportLabel:SetText(PREVIOUS_HINT)
 	else
 		text = Ironkeep.Group.Report(session, time and time() or 0)
-		window.reportLabel:SetText("Click the text, then copy. It stays on this computer.")
+		window.reportLabel:SetText(COPY_HINT)
 	end
 	local _, breaks = text:gsub("\n", "\n")
-	reportBox:SetHeight(math.max(58, (breaks + 1) * 14))
-	if reportBox._last ~= text then
+	reportBox:SetHeight(math.max(REPORT_HEIGHT, (breaks + 1) * 14))
+	if window.reportSelect then
+		window.reportSelect = false
+		underFocusLock(function()
+			reportBox:SetText(text)
+			reportBox._last = text
+			if reportBox.SetFocus then reportBox:SetFocus() end
+			if reportBox.HighlightText then reportBox:HighlightText() end
+			if window.reportScroll.SetVerticalScroll then window.reportScroll:SetVerticalScroll(0) end
+		end)
+		return
+	end
+	if not reportFocused() and reportBox._last ~= text then
 		reportBox:SetText(text)
 		reportBox._last = text
 	end

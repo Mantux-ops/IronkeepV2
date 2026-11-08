@@ -16,7 +16,51 @@ local function widget(kind)
 		_h = 0,
 		_scripts = {},
 	}
-	function w:SetText(value) self._text = tostring(value or "") end
+	function w:SetText(value)
+		local text = tostring(value or "")
+		-- A positive letter cap truncates, matching the Forever edit box. Zero does not.
+		if self._maxLetters and self._maxLetters > 0 and #text > self._maxLetters then
+			text = text:sub(1, self._maxLetters)
+		end
+		self._text = text
+	end
+	function w:SetMaxLetters(value) self._maxLetters = value end
+	function w:HasFocus() return self._focus and true or false end
+	function w:SetFocus()
+		self._focusCount = (self._focusCount or 0) + 1
+		if self._focusCount > 12 then error("focus loop") end
+		if self._focus and self._scripts.OnEditFocusLost then
+			self._scripts.OnEditFocusLost(self)
+		end
+		self._focus = true
+		if self._scripts.OnEditFocusGained then
+			self._scripts.OnEditFocusGained(self)
+		end
+	end
+	function w:ClearFocus()
+		self._clearCount = (self._clearCount or 0) + 1
+		if self._clearCount > 12 then error("focus loop") end
+		if not self._focus then return end
+		-- Fire while focus is still held, which is the loop the window must survive.
+		if self._scripts.OnEditFocusLost then
+			self._scripts.OnEditFocusLost(self)
+		end
+		self._focus = false
+	end
+	function w:HighlightText()
+		self._highlights = (self._highlights or 0) + 1
+		self._highlighted = self._text
+	end
+	function w:SetPoint(...)
+		local point = {}
+		for i = 1, select("#", ...) do point[i] = select(i, ...) end
+		self._points = self._points or {}
+		self._points[#self._points + 1] = point
+	end
+	function w:ClearAllPoints()
+		self._points = {}
+	end
+	function w:SetVerticalScroll(value) self._scroll = value end
 	function w:GetStringWidth() return #self._text * 7 end
 	function w:SetWidth(value) self._w = value end
 	function w:SetHeight(value) self._h = value end
@@ -29,10 +73,14 @@ local function widget(kind)
 	function w:SetFont() return true end
 	function w:SetScript(name, fn) self._scripts[name] = fn end
 	function w:GetPoint() return "CENTER", nil, "CENTER", 0, 40 end
-	function w:GetVerticalScroll() return 0 end
-	function w:GetVerticalScrollRange() return 0 end
+	function w:GetVerticalScroll() return self._scroll or 0 end
+	function w:GetVerticalScrollRange() return self._scrollMax or 0 end
 	function w:GetFrameLevel() return 1 end
-	function w:CreateFontString() return widget("FontString") end
+	function w:CreateFontString()
+		local font = widget("FontString")
+		frames[#frames + 1] = font
+		return font
+	end
 	function w:CreateTexture() return widget("Texture") end
 	function w:SetBackdrop() end
 	return setmetatable(w, {
@@ -144,6 +192,214 @@ for i = 1, #frames do
 end
 if not report then fail("Copy list did not produce the report") end
 if not report:find("Dain Frost", 1, true) then fail("the report dropped someone who left") end
+
+-- The stand-in records focus and applies a positive letter cap. It does not press Ctrl+C.
+local function clickLabel(text)
+	for i = 1, #frames do
+		local click = frames[i]._scripts.OnClick
+		local labelWidget = rawget(frames[i], "label")
+		local label = labelWidget and labelWidget._text
+		if click and label == text then
+			click(frames[i])
+			return true
+		end
+	end
+	return false
+end
+
+local function pointOf(frame, anchor)
+	local points = frame._points
+	if not points then return nil end
+	local found
+	for i = 1, #points do
+		if points[i][1] == anchor then found = points[i] end
+	end
+	return found
+end
+
+local box
+for i = 1, #frames do
+	local text = frames[i]._text
+	if text and frames[i]._maxLetters ~= nil and text:find("format: ironkeep-group 1", 1, true) then
+		box = frames[i]
+	end
+end
+if not box then fail("the report box was not found") end
+if box._maxLetters ~= 0 then fail("the report box still has a letter cap") end
+local expected = Ironkeep.Group.Report(Ironkeep.db.session, time())
+if box._text ~= expected then fail("opened report does not match Group.Report") end
+if not box:HasFocus() then fail("opening Copy list did not focus the report") end
+if box._highlighted ~= expected then fail("opening Copy list did not select the report") end
+
+local reportScroll
+for i = 1, #frames do
+	if frames[i]._w == 388 and frames[i]._h and frames[i]._h >= 120 and frames[i]._h <= 150 then
+		reportScroll = frames[i]
+	end
+end
+if not reportScroll then fail("the report area is not 120 to 150 pixels tall") end
+local reportPoint = pointOf(reportScroll, "BOTTOMLEFT")
+if not reportPoint or reportPoint[2] ~= 16 or reportPoint[3] ~= 48 then
+	fail("the report area moved off the bottom controls")
+end
+local reportTop = reportPoint[3] + reportScroll._h
+
+local hint
+for i = 1, #frames do
+	local text = frames[i]._text
+	if text and text:find("Ctrl+C", 1, true) and text:find("selected", 1, true) and text:find("this computer", 1, true) then
+		hint = frames[i]
+	end
+end
+if not hint then fail("the copy hint does not explain the selection") end
+local hintPoint = pointOf(hint, "BOTTOMLEFT")
+if not hintPoint or hintPoint[3] < reportTop then fail("the copy hint overlaps the report") end
+
+local listBottom
+local listFrame
+for i = 1, #frames do
+	local point = pointOf(frames[i], "BOTTOMRIGHT")
+	if point and point[2] == -12 and type(point[3]) == "number" then
+		listBottom = point[3]
+		listFrame = frames[i]
+	end
+end
+if not listFrame or not listFrame:IsShown() then fail("the group list is hidden while the report is open") end
+if not listBottom or listBottom < hintPoint[3] + 28 then fail("the group list overlaps the copy hint") end
+if 480 - 80 - listBottom < 140 then fail("the group list has too little room while the report is open") end
+
+local focuses = box._focusCount
+box._scripts.OnEscapePressed(box)
+if box:HasFocus() then fail("Escape left the report focused") end
+if box._focusCount ~= focuses then fail("leaving the report focused it again") end
+if not clickLabel("Hide") then fail("the report did not stay open until Hide") end
+
+Ironkeep.db.lastReport = "Ironkeep group\n\nPrevious marker\n\nformat: ironkeep-group 1"
+if not clickLabel("Previous") then fail("Previous was not created") end
+if box._text ~= Ironkeep.db.lastReport then fail("Previous did not show the stored report") end
+if box._highlighted ~= box._text or not box:HasFocus() then fail("Previous did not select the report") end
+if not hint._text:find("Previous", 1, true) then fail("the previous hint was not shown") end
+if not clickLabel("Current") then fail("Current was not created") end
+expected = Ironkeep.Group.Report(Ironkeep.db.session, time())
+if box._text ~= expected then fail("Current did not restore Group.Report") end
+if box._highlighted ~= expected then fail("Current did not select the report") end
+
+if not clickLabel("Hide") then fail("Hide did not close the report") end
+if box:HasFocus() then fail("closing Copy list left the report focused") end
+local stamp = Ironkeep.db.session.started or 0
+for n = 1, 50 do
+	Ironkeep.db.session.people["long-" .. n] = {
+		name = string.rep("N", 160) .. n,
+		className = "Warrior",
+		classFile = "WARRIOR",
+		role = "DAMAGER",
+		present = true,
+		first = stamp,
+		last = stamp,
+		subgroup = 1,
+	}
+end
+local people = 0
+for _ in pairs(Ironkeep.db.session.people) do people = people + 1 end
+if people <= 40 then fail("the long report fixture has too few players") end
+if not clickLabel("Copy list") then fail("Copy list did not reopen") end
+expected = Ironkeep.Group.Report(Ironkeep.db.session, time())
+if #expected <= 8000 then fail("the long report fixture does not pass the old letter cap") end
+if box._text ~= expected then
+	fail("long report differs from Group.Report (" .. #box._text .. " vs " .. #expected .. ")")
+end
+if box._text:sub(-24) ~= "format: ironkeep-group 1" then fail("the long report dropped its trailer") end
+if box._highlighted ~= expected or not box:HasFocus() then fail("the long report was not selected") end
+local _, breaks = expected:gsub("\n", "\n")
+if box._h < math.max(reportScroll._h, (breaks + 1) * 14) then
+	fail("the long report is clipped to the visible box")
+end
+
+reportScroll._scrollMax = 400
+reportScroll:SetVerticalScroll(0)
+reportScroll._scripts.OnMouseWheel(reportScroll, -1)
+if reportScroll:GetVerticalScroll() <= 0 then fail("the report area does not scroll") end
+local scrolled = reportScroll:GetVerticalScroll()
+box._scripts.OnMouseWheel(box, -1)
+if reportScroll:GetVerticalScroll() <= scrolled then
+	fail("wheeling over the text did not scroll the report")
+end
+
+if not clickLabel("Hide") then fail("Hide failed after the long report") end
+Ironkeep.db.session.people["long-1"].name = "Changed Name"
+if not clickLabel("Copy list") then fail("Copy list did not reopen after a change") end
+expected = Ironkeep.Group.Report(Ironkeep.db.session, time())
+if box._text ~= expected then fail("reopening did not refresh the changed report") end
+if not box._text:find("Changed Name", 1, true) then fail("the changed name was not copied") end
+if box._highlighted ~= expected then fail("the refreshed report was not selected") end
+
+for _ = 1, 3 do
+	if not clickLabel("Hide") then fail("repeated Hide failed") end
+	if not clickLabel("Copy list") then fail("repeated Copy list failed") end
+end
+if box._text ~= Ironkeep.Group.Report(Ironkeep.db.session, time()) then
+	fail("opening Copy list again changed the report")
+end
+
+if not clickLabel("Clear") then fail("Clear was not created") end
+local confirmShown = false
+for i = 1, #frames do
+	if frames[i]._text == "Clear this list?" and frames[i]:IsShown() then confirmShown = true end
+end
+if not confirmShown then fail("Clear did not ask for confirmation") end
+if Ironkeep.db.session.place ~= "Hall of Thanes" then fail("Clear asked by removing the session") end
+if not clickLabel("Cancel") then fail("Cancel was not created") end
+for i = 1, #frames do
+	if frames[i]._text == "Clear this list?" and frames[i]:IsShown() then
+		fail("Cancel left the confirmation open")
+	end
+end
+if box._text ~= expected then fail("Cancel changed the report") end
+
+local function expectFocusError(action, needle)
+	local ok, err = pcall(action)
+	if ok then fail(needle .. " error was swallowed") end
+	if not tostring(err):find(needle, 1, true) then
+		fail(needle .. " error was hidden: " .. tostring(err))
+	end
+end
+
+local function assertUpdateStillRuns(marker)
+	local place = Ironkeep.db.session.place
+	Ironkeep.db.session.place = marker
+	Ironkeep.Window.Update()
+	local found = false
+	for i = 1, #frames do
+		if frames[i]._text == marker then found = true end
+	end
+	Ironkeep.db.session.place = place
+	Ironkeep.Window.Update()
+	if not found then fail("a focus error left the window unable to update") end
+end
+
+if not clickLabel("Hide") then fail("Hide failed before the focus-lock checks") end
+local originalHighlight = box.HighlightText
+box.HighlightText = function() error("highlight failed") end
+expectFocusError(function() clickLabel("Copy list") end, "highlight failed")
+box.HighlightText = originalHighlight
+assertUpdateStillRuns("AfterHighlight")
+
+if not clickLabel("Hide") then fail("Hide failed before SetFocus check") end
+local originalSetFocus = box.SetFocus
+box.SetFocus = function() error("setfocus failed") end
+expectFocusError(function() clickLabel("Copy list") end, "setfocus failed")
+box.SetFocus = originalSetFocus
+assertUpdateStillRuns("AfterSetFocus")
+
+if box:HasFocus() then box:ClearFocus() end
+if not clickLabel("Hide") then fail("Hide failed before reopening for ClearFocus") end
+if not clickLabel("Copy list") then fail("Copy list failed before ClearFocus check") end
+local originalClear = box.ClearFocus
+box.ClearFocus = function() error("clearfocus failed") end
+expectFocusError(function() clickLabel("Hide") end, "clearfocus failed")
+box.ClearFocus = originalClear
+assertUpdateStillRuns("AfterClearFocus")
+if Ironkeep.db.session.place ~= "Hall of Thanes" then fail("the focus-lock checks changed the place") end
 
 if SlashCmdList.IRONKEEP == SlashCmdList.IKROSTER then fail("the roster command replaced the group command") end
 if SLASH_IRONKEEP1 ~= "/ironkeep" or SLASH_IKROSTER1 ~= "/ikroster" then
