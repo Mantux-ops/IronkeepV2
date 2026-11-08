@@ -4,6 +4,17 @@
 {% block title %}Roster · {{ guild.name }} · Ironkeep{% endblock %}
 
 {% block main %}
+{% set class_colors = {
+  "WARRIOR": "#C79C6E",
+  "PALADIN": "#F58CBA",
+  "HUNTER": "#ABD473",
+  "ROGUE": "#FFF569",
+  "PRIEST": "#FFFFFF",
+  "SHAMAN": "#0070DE",
+  "MAGE": "#69CCF0",
+  "WARLOCK": "#9482C9",
+  "DRUID": "#FF7D0A"
+} %}
 <header class="page-header">
   <div>
     <h1 class="page-title">Guild roster</h1>
@@ -12,25 +23,100 @@
 </header>
 
 <article class="card measure-card">
-  {% if roster %}
+  {% if roster and roster.members %}
+  {% set members = roster.members|sort(attribute="name", case_sensitive=False) %}
   <div class="card__head">
     <div>
       <h2 class="card__title">{{ roster.wow_guild_name }}</h2>
-      <p class="card__desc">{{ roster.members|length }} members · captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
+      <p class="card__desc">Captured {{ roster.captured_label }} · received {{ roster.received_at }}</p>
     </div>
   </div>
-  <div class="raid-list">
-    {% for member in roster.members %}
-    <div class="raid-row">
-      <span class="raid-row__name">
-        <span class="raid-row__title">{{ member.name }}</span>
-        <span class="raid-row__sub">{{ member.className }} · {{ member.classToken }} · level {{ member.level }} · {{ member.rankName }} · {{ member.guid }}</span>
-      </span>
-    </div>
-    {% endfor %}
+  <div class="roster-toolbar">
+    <label class="search">
+      {{ icon("search", 16) }}
+      <input type="search" id="roster-search" aria-label="Search name, class, or rank" placeholder="Search name, class, or rank" autocomplete="off">
+    </label>
+    <label class="field">
+      <span class="field__label" id="roster-class-label">Class</span>
+      <select class="input select" id="roster-class" aria-labelledby="roster-class-label">
+        <option value="">All classes</option>
+        {% set shown_classes = namespace(tokens=[]) %}
+        {% for member in members|sort(attribute="className", case_sensitive=False) %}
+          {% if member.classToken not in shown_classes.tokens %}
+            {% set shown_classes.tokens = shown_classes.tokens + [member.classToken] %}
+            <option value="{{ member.classToken }}">{{ member.className }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+    <label class="field">
+      <span class="field__label" id="roster-rank-label">Rank</span>
+      <select class="input select" id="roster-rank" aria-labelledby="roster-rank-label">
+        <option value="">All ranks</option>
+        {% set shown_ranks = namespace(names=[]) %}
+        {% for member in members|sort(attribute="rankName", case_sensitive=False) %}
+          {% if member.rankName not in shown_ranks.names %}
+            {% set shown_ranks.names = shown_ranks.names + [member.rankName] %}
+            <option value="{{ member.rankName }}">{{ member.rankName }}</option>
+          {% endif %}
+        {% endfor %}
+      </select>
+    </label>
+  </div>
+  <p class="roster-count" id="roster-count" aria-live="polite">{{ members|length }} of {{ members|length }} characters</p>
+  <div class="table-wrap">
+    <table class="table table--roster" id="roster-table">
+      <caption class="roster-caption">{{ roster.wow_guild_name }} characters</caption>
+      <thead>
+        <tr>
+          <th scope="col" data-sort="name" aria-sort="ascending" class="is-sorted" data-dir="asc">
+            <button type="button" class="roster-sort">Name</button>
+          </th>
+          <th scope="col" data-sort="level" aria-sort="none" class="num">
+            <button type="button" class="roster-sort">Level</button>
+          </th>
+          <th scope="col" data-sort="class" aria-sort="none">
+            <button type="button" class="roster-sort">Class</button>
+          </th>
+          <th scope="col" data-sort="rank" aria-sort="none">
+            <button type="button" class="roster-sort">Rank</button>
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for member in members %}
+        {% set color = class_colors.get((member.classToken or "")|upper, "#8d95a1") %}
+        <tr
+          data-guid="{{ member.guid }}"
+          data-name="{{ member.name }}"
+          data-level="{{ member.level }}"
+          data-class-name="{{ member.className }}"
+          data-class-token="{{ member.classToken }}"
+          data-rank="{{ member.rankName }}"
+        >
+          <td data-label="Name">
+            <span class="roster-name">
+              <span class="class-swatch" style="background: {{ color }}"></span>
+              <span class="roster-name__text" style="color: {{ color }}">{{ member.name }}</span>
+            </span>
+          </td>
+          <td class="num" data-label="Level">{{ member.level }}</td>
+          <td data-label="Class">{{ member.className }}</td>
+          <td data-label="Rank">{{ member.rankName }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <p class="table-empty" id="roster-none" hidden>No characters match.</p>
   </div>
   {% else %}
   <p class="muted">No guild roster yet. Run /ikroster, log out of the game, and leave the companion open.</p>
   {% endif %}
 </article>
+{% endblock %}
+
+{% block scripts %}
+{% if roster and roster.members %}
+<script src="{{ asset('js/roster.js') }}"></script>
+{% endif %}
 {% endblock %}
