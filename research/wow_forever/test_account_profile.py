@@ -38,6 +38,7 @@ import json
 import os
 import re
 import secrets
+import socket
 import sys
 import threading
 import time
@@ -247,9 +248,26 @@ class _Hold:
         self.decision = None
 
 
+class CallbackServer(HTTPServer):
+    """Loopback listener that will not share or steal its port.
+
+    Windows lets the same user bind 127.0.0.1 twice when neither socket sets
+    an option. SO_REUSEADDR would make that hijack explicit. SO_EXCLUSIVEADDRUSE
+    makes the second bind fail, which is what a Unix bind already does.
+    """
+
+    allow_reuse_address = False
+    allow_reuse_port = False
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def make_server(port=PORT):
     try:
-        server = HTTPServer((HOST, port), CallbackHandler)
+        server = CallbackServer((HOST, port), CallbackHandler)
     except OSError:
         raise ApiFailure("The callback port is already in use.", EXIT_UNEXPECTED) from None
     bound = server.server_address[0]

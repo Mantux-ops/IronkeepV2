@@ -1,7 +1,9 @@
 """Offline tests for the local account-profile script. No browser and no Battle.net."""
 
+import gc
 import io
 import json
+import socket
 import threading
 import time
 import unittest
@@ -417,11 +419,23 @@ class LocalFlowTests(unittest.TestCase):
 
     def test_occupied_port_has_a_fixed_message(self):
         server = api.make_server(0)
+        second = None
         try:
+            self.assertFalse(server.allow_reuse_address)
+            self.assertEqual(server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR), 0)
+            if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+                self.assertNotEqual(
+                    server.socket.getsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE),
+                    0,
+                )
             with self.assertRaises(api.ApiFailure) as caught:
-                api.make_server(server.server_address[1])
+                second = api.make_server(server.server_address[1])
         finally:
+            if second is not None:
+                second.server_close()
             server.server_close()
+            del server, second
+            gc.collect()
         self.assertEqual(str(caught.exception), "The callback port is already in use.")
 
     def test_callback_log_does_not_write_the_query(self):
