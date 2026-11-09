@@ -1,4 +1,4 @@
--- The group as the site shows a raid: by role, not as a table.
+-- Attendance for one officer. The table is a view of the current session.
 -- Drag the title. Copy list opens the text. It stays on this computer.
 
 Ironkeep = Ironkeep or {}
@@ -20,10 +20,18 @@ local ACCENT = { 0.176, 0.831, 0.749, 1 }
 local ACCENT_STRONG = { 0.369, 0.918, 0.831, 1 }
 local ACCENT_INK = { 0.024, 0.145, 0.129, 1 }
 local GREEN = { 0.247, 0.824, 0.561, 1 }
-local GREEN_BG = { 0.247, 0.824, 0.561, 0.10 }
 local RED_BG = { 0.949, 0.427, 0.427, 0.10 }
 local RED_BORDER = { 0.949, 0.427, 0.427, 0.40 }
 local RED_TEXT = { 1, 0.612, 0.612, 1 }
+
+local WINDOW_W = 850
+local WINDOW_H = 550
+local PAD = 16
+local CONTENT_W = WINDOW_W - PAD * 2
+local LIST_TOP = 132
+local ROW_H = 24
+local ROW_W = WINDOW_W - 24
+local COL = { member = 16, class = 300, role = 470, time = 590, status = 700 }
 
 local ROW_CAP = 200
 local REPORT_HEIGHT = 140
@@ -156,27 +164,6 @@ local function button(parent, label, width, kind)
 	return widget
 end
 
-local function pill(parent)
-	local frame = CreateFrame("Frame", nil, parent)
-	frame:SetHeight(20)
-	frame.bg = solid(frame)
-	frame.bg:SetAllPoints()
-	frame.label = face(frame:CreateFontString(nil, "OVERLAY"), 11, true)
-	frame.label:SetPoint("CENTER")
-	frame:Hide()
-	return frame
-end
-
-local function showPill(frame, text, fg, bg)
-	frame.label:SetText(text)
-	frame.label:SetTextColor(fg[1], fg[2], fg[3])
-	local width = frame.label:GetStringWidth() or 0
-	if width < 8 then width = #text * 7 end
-	frame:SetWidth(width + 14)
-	tint(frame.bg, bg)
-	frame:Show()
-end
-
 local function savePoint()
 	if not window or not Ironkeep.db then return end
 	local point, _, _, x, y = window:GetPoint(1)
@@ -193,109 +180,119 @@ local function setConfirm(on)
 	window.confirmNo:SetShown(window.confirming)
 end
 
-local function kindLabel(instanceType)
+local function reliableKind(instanceType)
 	if instanceType == "raid" then return "Raid" end
 	if instanceType == "party" then return "Dungeon" end
-	return "Group"
+	return nil
 end
 
-local function applyRow(row, item, session)
-	if not item then
+local function paintText(widget, color, alpha)
+	widget:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
+end
+
+local function columnLabel(parent, text, x)
+	local label = face(parent:CreateFontString(nil, "OVERLAY"), 11, true)
+	label:SetPoint("TOPLEFT", parent, "TOPLEFT", 12 + x, -(LIST_TOP - 22))
+	label:SetText(text)
+	paintText(label, MUTED)
+	return label
+end
+
+local function summaryStat(parent, caption, x)
+	local frame = CreateFrame("Frame", nil, parent)
+	frame:SetSize(140, 28)
+	frame:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -46)
+	frame._stat = caption
+	frame.caption = face(frame:CreateFontString(nil, "OVERLAY"), 11, false)
+	frame.caption:SetPoint("TOPLEFT", 0, 0)
+	frame.caption:SetText(caption)
+	paintText(frame.caption, MUTED)
+	frame.value = face(frame:CreateFontString(nil, "OVERLAY"), 14, true)
+	frame.value:SetPoint("LEFT", frame.caption, "RIGHT", 8, 0)
+	frame.value:SetText("0")
+	paintText(frame.value, TEXT)
+	return frame
+end
+
+local function setStat(frame, value, color)
+	local text = tostring(value)
+	frame._value = text
+	frame.value:SetText(text)
+	paintText(frame.value, color or TEXT)
+end
+
+local function applyPerson(row, person)
+	if not person then
 		row:Hide()
+		row._member = nil
 		return
 	end
 	row:Show()
-	if item.kind == "lane" then
-		row.swatch:Hide()
-		row.group:SetText("")
-		row.name:SetText(item.label)
-		row.name:ClearAllPoints()
-		row.name:SetPoint("LEFT", 4, 0)
-		if item.key == "LEFT" then
-			row.name:SetTextColor(RED_TEXT[1], RED_TEXT[2], RED_TEXT[3])
-		else
-			row.name:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
-		end
-		row.count:SetText(tostring(item.count))
-		row.count:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-		local width = row.name:GetStringWidth() or 0
-		if width < 8 then width = #item.label * 8 end
-		row.count:ClearAllPoints()
-		row.count:SetPoint("LEFT", row.name, "LEFT", width + 8, 0)
-		row.time:SetText("")
-		return
-	end
-
-	local person = item.person
-	row.swatch:Show()
 	local color = CLASS_COLOR[person.classFile] or ACCENT
 	local alpha = person.present and 1 or 0.45
+	row.swatch:Show()
 	row.swatch:SetVertexColor(color[1], color[2], color[3], alpha)
-	row.name:ClearAllPoints()
-	row.name:SetPoint("RIGHT", row.time, "LEFT", -8, 0)
-	row.name:SetText(person.name or "Unknown")
-	row.name:SetTextColor(color[1], color[2], color[3], alpha)
-	if session.instanceType == "raid" and person.subgroup then
-		row.group:SetText(tostring(person.subgroup))
-		row.name:SetPoint("LEFT", row.group, "RIGHT", 4, 0)
-	else
-		row.group:SetText("")
-		row.name:SetPoint("LEFT", row.swatch, "RIGHT", 8, 0)
-	end
-	row.count:SetText("")
+	local name = person.name or "Unknown"
+	local className = person.className or person.classFile or ""
+	local role = Ironkeep.Group.RoleLabel(person.role)
 	local seen = Ironkeep.Group.Seen(person)
+	local status = person.present and "Here" or "Left"
+	row.name:SetText(name)
+	paintText(row.name, color, alpha)
+	row.className:SetText(className)
+	paintText(row.className, color, alpha)
+	row.role:SetText(role)
+	paintText(row.role, TEXT_2, alpha)
+	row.time:SetText(seen)
+	row.status:SetText(status)
 	if person.present then
-		row.time:SetText(seen)
-		row.time:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+		paintText(row.time, MUTED)
+		paintText(row.status, GREEN)
 	else
-		row.time:SetText(seen)
-		row.time:SetTextColor(RED_TEXT[1], RED_TEXT[2], RED_TEXT[3])
+		paintText(row.time, RED_TEXT, alpha)
+		paintText(row.status, RED_TEXT)
 	end
+	row._member = name
+	row._class = className
+	row._role = role
+	row._time = seen
+	row._status = status
+	row._color = color
 end
 
 local function makeRow(parent, index)
 	local row = CreateFrame("Frame", nil, parent)
-	row:SetSize(396, 22)
+	row:SetSize(ROW_W, ROW_H)
+	row._attendance = true
 	row.swatch = solid(row, "ARTWORK")
 	row.swatch:SetSize(8, 8)
 	row.swatch:SetPoint("LEFT", 2, 0)
-	row.group = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
-	row.group:SetPoint("LEFT", 16, 0)
-	row.group:SetWidth(14)
-	row.group:SetJustifyH("LEFT")
-	row.group:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
-	row.time = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
-	row.time:SetPoint("RIGHT", -2, 0)
-	row.time:SetWidth(52)
-	row.time:SetJustifyH("RIGHT")
 	row.name = face(row:CreateFontString(nil, "OVERLAY"), 13, true)
+	row.name:SetPoint("LEFT", COL.member, 0)
+	row.name:SetWidth(COL.class - COL.member - 12)
 	row.name:SetJustifyH("LEFT")
 	row.name:SetWordWrap(false)
 	if row.name.SetMaxLines then row.name:SetMaxLines(1) end
-	row.count = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.className = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.className:SetPoint("LEFT", COL.class, 0)
+	row.className:SetWidth(COL.role - COL.class - 12)
+	row.className:SetJustifyH("LEFT")
+	row.className:SetWordWrap(false)
+	row.role = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.role:SetPoint("LEFT", COL.role, 0)
+	row.role:SetWidth(COL.time - COL.role - 12)
+	row.role:SetJustifyH("LEFT")
+	row.time = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.time:SetPoint("LEFT", COL.time, 0)
+	row.time:SetWidth(COL.status - COL.time - 12)
+	row.time:SetJustifyH("LEFT")
+	row.status = face(row:CreateFontString(nil, "OVERLAY"), 12, true)
+	row.status:SetPoint("LEFT", COL.status, 0)
+	row.status:SetWidth(ROW_W - COL.status - 8)
+	row.status:SetJustifyH("LEFT")
 	row:Hide()
 	rows[index] = row
 	return row
-end
-
-local function placePills()
-	local x = 16
-	local function put(frame)
-		if not frame:IsShown() then return end
-		frame:ClearAllPoints()
-		frame:SetPoint("TOPLEFT", window, "TOPLEFT", x, -50)
-		x = x + frame:GetWidth() + 6
-	end
-	put(window.kindPill)
-	put(window.herePill)
-	put(window.leftPill)
-	window.started:ClearAllPoints()
-	if x > 16 then
-		window.started:SetPoint("TOPLEFT", window, "TOPLEFT", x + 2, -52)
-		window.started:Show()
-	else
-		window.started:Hide()
-	end
 end
 
 local function layoutChrome()
@@ -309,7 +306,7 @@ local function layoutChrome()
 	window.reportScroll:SetShown(open)
 	window.reportBorder:SetShown(open)
 	window.scroll:ClearAllPoints()
-	window.scroll:SetPoint("TOPLEFT", 12, -80)
+	window.scroll:SetPoint("TOPLEFT", 12, -LIST_TOP)
 	window.scroll:SetPoint("BOTTOMRIGHT", -12, open and LIST_BOTTOM_OPEN or LIST_BOTTOM_CLOSED)
 	window.copy:SetText(open and "Hide" or "Copy list")
 	if Ironkeep.showingPrevious then
@@ -323,7 +320,7 @@ function Ironkeep.Window.Build()
 	if window then return end
 
 	window = frameWithBackdrop("IronkeepFrame", UIParent)
-	window:SetSize(420, 480)
+	window:SetSize(WINDOW_W, WINDOW_H)
 	window:SetFrameStrata("MEDIUM")
 	window:SetClampedToScreen(true)
 	window:SetMovable(true)
@@ -360,21 +357,44 @@ function Ironkeep.Window.Build()
 	close:SetPoint("RIGHT", -2, 0)
 	close:SetScript("OnClick", function() Ironkeep.Window.Hide() end)
 
-	window.place = face(title:CreateFontString(nil, "OVERLAY"), 16, true)
-	window.place:SetPoint("LEFT", logo, "RIGHT", 8, 0)
-	window.place:SetPoint("RIGHT", close, "LEFT", -8, 0)
+	local brand = face(title:CreateFontString(nil, "OVERLAY"), 16, true)
+	brand:SetPoint("LEFT", logo, "RIGHT", 8, 0)
+	brand:SetText("Ironkeep")
+	paintText(brand, TEXT)
+
+	window.recordedStat = summaryStat(window, "Recorded", PAD)
+	window.presentStat = summaryStat(window, "Present", PAD + 160)
+	window.leftStat = summaryStat(window, "Left", PAD + 320)
+
+	window.place = face(window:CreateFontString(nil, "OVERLAY"), 13, true)
+	window.place:SetPoint("TOPLEFT", PAD, -80)
+	window.place:SetWidth(360)
 	window.place:SetJustifyH("LEFT")
 	window.place:SetWordWrap(false)
-	window.place:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
+	paintText(window.place, TEXT)
 
-	window.kindPill = pill(window)
-	window.herePill = pill(window)
-	window.leftPill = pill(window)
 	window.started = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
-	window.started:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+	window.started:SetPoint("TOPLEFT", 390, -81)
+	paintText(window.started, MUTED)
+
+	window.kindText = face(window:CreateFontString(nil, "OVERLAY"), 12, true)
+	window.kindText:SetPoint("TOPLEFT", 470, -81)
+	paintText(window.kindText, TEXT_2)
+
+	columnLabel(window, "Member", COL.member)
+	columnLabel(window, "Class", COL.class)
+	columnLabel(window, "Role", COL.role)
+	columnLabel(window, "Time", COL.time)
+	columnLabel(window, "Status", COL.status)
+
+	local headRule = solid(window, "BORDER")
+	headRule:SetPoint("TOPLEFT", 12, -(LIST_TOP - 4))
+	headRule:SetPoint("TOPRIGHT", -12, -(LIST_TOP - 4))
+	headRule:SetHeight(1)
+	tint(headRule, BORDER)
 
 	local scroll = CreateFrame("ScrollFrame", nil, window)
-	scroll:SetPoint("TOPLEFT", 12, -80)
+	scroll:SetPoint("TOPLEFT", 12, -LIST_TOP)
 	scroll:SetPoint("BOTTOMRIGHT", -12, LIST_BOTTOM_CLOSED)
 	scroll:EnableMouseWheel(true)
 	scroll:SetScript("OnMouseWheel", function(self, delta)
@@ -385,16 +405,16 @@ function Ironkeep.Window.Build()
 		self:SetVerticalScroll(nextScroll)
 	end)
 	local child = CreateFrame("Frame", nil, scroll)
-	child:SetSize(396, 22)
+	child:SetSize(ROW_W, ROW_H)
 	scroll:SetScrollChild(child)
 	window.scroll = scroll
 	window.list = child
 
 	window.empty = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
-	window.empty:SetPoint("TOPLEFT", 16, -88)
-	window.empty:SetWidth(388)
+	window.empty:SetPoint("TOPLEFT", PAD, -(LIST_TOP + 8))
+	window.empty:SetWidth(CONTENT_W)
 	window.empty:SetJustifyH("LEFT")
-	window.empty:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+	paintText(window.empty, MUTED)
 
 	local copy = button(window, "Copy list", 96, "accent")
 	copy:SetPoint("BOTTOMLEFT", 16, 14)
@@ -430,7 +450,7 @@ function Ironkeep.Window.Build()
 	local confirmText = face(window:CreateFontString(nil, "OVERLAY"), 12, true)
 	confirmText:SetPoint("BOTTOMLEFT", 16, 20)
 	confirmText:SetText("Clear this list?")
-	confirmText:SetTextColor(TEXT[1], TEXT[2], TEXT[3])
+	paintText(confirmText, TEXT)
 	confirmText:Hide()
 
 	local confirmNo = button(window, "Cancel", 72, "ghost")
@@ -452,16 +472,16 @@ function Ironkeep.Window.Build()
 
 	local reportLabel = face(window:CreateFontString(nil, "OVERLAY"), 11, false)
 	reportLabel:SetPoint("BOTTOMLEFT", 16, REPORT_LABEL_Y)
-	reportLabel:SetWidth(388)
+	reportLabel:SetWidth(CONTENT_W)
 	reportLabel:SetJustifyH("LEFT")
 	reportLabel:SetWordWrap(true)
-	reportLabel:SetTextColor(MUTED[1], MUTED[2], MUTED[3])
+	paintText(reportLabel, MUTED)
 	reportLabel:SetText(COPY_HINT)
 	reportLabel:Hide()
 
 	local reportScroll = CreateFrame("ScrollFrame", nil, window)
 	reportScroll:SetPoint("BOTTOMLEFT", 16, REPORT_BOTTOM)
-	reportScroll:SetSize(388, REPORT_HEIGHT)
+	reportScroll:SetSize(CONTENT_W, REPORT_HEIGHT)
 	reportScroll:Hide()
 	local reportBorder = frameWithBackdrop(nil, window)
 	reportBorder:SetPoint("TOPLEFT", reportScroll, "TOPLEFT", -4, 4)
@@ -479,8 +499,8 @@ function Ironkeep.Window.Build()
 	reportBox:SetMultiLine(true)
 	reportBox:SetAutoFocus(false)
 	face(reportBox, 11, false)
-	reportBox:SetTextColor(TEXT_2[1], TEXT_2[2], TEXT_2[3])
-	reportBox:SetWidth(372)
+	paintText(reportBox, TEXT_2)
+	reportBox:SetWidth(CONTENT_W - 16)
 	-- Forever treats 0 as no letter cap. A positive value truncates SetText.
 	reportBox:SetMaxLetters(0)
 	if reportBox.SetTextInsets then reportBox:SetTextInsets(8, 8, 4, 4) end
@@ -537,54 +557,64 @@ function Ironkeep.Window.Update()
 	local session = db and db.session
 	if not session then setConfirm(false) end
 
-	window.kindPill:Hide()
-	window.herePill:Hide()
-	window.leftPill:Hide()
-	if not session then
-		window.place:SetText("No group yet")
-		window.empty:SetText("Join a party or a raid. The list fills itself, also while this window is closed.")
-		window.empty:Show()
-	else
-		local here, gone = 0, 0
+	local here, gone = 0, 0
+	if session then
 		for _, person in pairs(session.people) do
 			if person.present then here = here + 1 else gone = gone + 1 end
 		end
+	end
+	setStat(window.recordedStat, here + gone, TEXT)
+	setStat(window.presentStat, here, GREEN)
+	setStat(window.leftStat, gone, gone > 0 and RED_TEXT or MUTED)
+
+	local kind = session and reliableKind(session.instanceType) or nil
+	if kind then
+		window.kindText:SetText(kind)
+		window.kindText:Show()
+	else
+		window.kindText:SetText("")
+		window.kindText:Hide()
+	end
+	if not session then
+		window.place:SetText("No group yet")
+		window.started:SetText("")
+		window.empty:SetText("Join a party or a raid. The list fills itself, also while this window is closed.")
+		window.empty:Show()
+	else
 		window.place:SetText(session.place or "Unknown")
-		showPill(window.kindPill, kindLabel(session.instanceType), TEXT_2, PANEL_3)
-		showPill(window.herePill, here .. " here", GREEN, GREEN_BG)
-		if gone > 0 then showPill(window.leftPill, gone .. " left", RED_TEXT, RED_BG) end
+		if session.started and date then
+			window.started:SetText(date("%H:%M", session.started))
+		else
+			window.started:SetText("")
+		end
+	end
+
+	local people = Ironkeep.Group.Rows(session)
+	if #people > ROW_CAP then
+		local trimmed = {}
+		for i = 1, ROW_CAP do trimmed[i] = people[i] end
+		people = trimmed
+	end
+	if session and #people == 0 then
+		window.empty:SetText("Nobody recorded yet.")
+		window.empty:Show()
+	elseif session then
 		window.empty:Hide()
 	end
-	if session and session.started and date then
-		window.started:SetText(date("%H:%M", session.started))
-	else
-		window.started:SetText("")
-	end
-	placePills()
 
-	local items = Ironkeep.Group.Lanes(session)
-	if #items > ROW_CAP then
-		local trimmed = {}
-		for i = 1, ROW_CAP do trimmed[i] = items[i] end
-		items = trimmed
-	end
 	local y = 0
-	for i = 1, #items do
-		local item = items[i]
+	for i = 1, #people do
 		local row = rows[i] or makeRow(window.list, i)
-		local height = 22
-		local gap = 0
-		if item.kind == "lane" then
-			height = 24
-			if i > 1 then gap = 10 end
-		end
 		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", 0, -(y + gap))
-		row:SetHeight(height)
-		applyRow(row, item, session or {})
-		y = y + gap + height
+		row:SetPoint("TOPLEFT", 0, -y)
+		row:SetHeight(ROW_H)
+		applyPerson(row, people[i])
+		y = y + ROW_H
 	end
-	for i = #items + 1, #rows do rows[i]:Hide() end
+	for i = #people + 1, #rows do
+		rows[i]:Hide()
+		rows[i]._member = nil
+	end
 	window.list:SetHeight(math.max(y, 1))
 
 	layoutChrome()
