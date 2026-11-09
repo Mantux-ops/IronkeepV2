@@ -22,6 +22,21 @@ IronkeepDB = saved
 local previous = { schema = 1, marker = "keep-me", members = { { guid = "old", name = "Old Name" } } }
 IronkeepRosterDB = previous
 
+local frames = {}
+function CreateFrame()
+	local frame = { _events = {}, _scripts = {}, _shown = false }
+	function frame:RegisterEvent(event)
+		self._events[#self._events + 1] = event
+	end
+	function frame:SetScript(name, fn)
+		self._scripts[name] = fn
+	end
+	function frame:Show() self._shown = true end
+	function frame:Hide() self._shown = false end
+	frames[#frames + 1] = frame
+	return frame
+end
+
 dofile("addon/IronkeepRoster/Roster.lua")
 
 local function assertTrue(value, message)
@@ -251,7 +266,161 @@ assertEqual(capped.reportedTotal, 501)
 kept()
 assertEqual(#IronkeepRosterDB.members, 214, "the cap scan replaced the saved roster")
 
+local watch = frames[1]
+assertTrue(watch ~= nil, "the roster addon did not create a frame")
+local registeredUpdate = false
+for i = 1, #watch._events do
+	if watch._events[i] == "GUILD_ROSTER_UPDATE" then registeredUpdate = true end
+end
+assertTrue(registeredUpdate, "GUILD_ROSTER_UPDATE was not registered")
+assertEqual(#watch._events, 1, "the roster addon registered an extra event")
+assertTrue(watch._shown == false, "the roster frame stays shown while idle")
+
+install(214, 110)
+local calls = 0
+local depth = 0
+local maxDepth = 0
+local lastInfo
+local inner = IronkeepRoster.Scan
+IronkeepRoster.Scan = function(mode)
+	depth = depth + 1
+	if depth > maxDepth then maxDepth = depth end
+	calls = calls + 1
+	local info = inner(mode)
+	lastInfo = info
+	depth = depth - 1
+	return info
+end
+local function fire()
+	watch._scripts.OnEvent(watch, "GUILD_ROSTER_UPDATE")
+end
+local function elapse(seconds)
+	watch._scripts.OnUpdate(watch, seconds)
+end
+local quiet = IronkeepRoster.QUIET_SECONDS
+fire()
+fire()
+fire()
+elapse(quiet - 0.1)
+assertEqual(calls, 0, "a burst scanned before the quiet period")
+fire()
+elapse(quiet - 0.1)
+assertEqual(calls, 0, "a new event did not restart the quiet period")
+printed = {}
+elapse(quiet)
+assertEqual(calls, 1, "the quiet period did not scan once")
+assertEqual(maxDepth, 1, "a roster scan overlapped another scan")
+local identical = lastInfo
+assertEqual(identical.reason, "unchanged")
+assertTrue(not identical.published, "an identical roster was published")
+assertTrue(IronkeepRosterDB == previous, "an identical automatic scan replaced the snapshot")
+assertEqual(chat(), "", "an identical automatic scan printed chat")
+assertTrue(IronkeepDB == saved, "an automatic scan replaced attendance data")
+
+install(216, 110)
+printed = {}
+local grown = inner("auto")
+assertTrue(grown.published, "a larger roster was not captured automatically")
+assertEqual(#IronkeepRosterDB.members, 216)
+assertEqual(chat(), "", "a routine automatic save printed chat")
+local grownSaved = IronkeepRosterDB
+
+install(210, 100)
+printed = {}
+local shrunk = inner("auto")
+assertEqual(shrunk.reason, "suspicious-drop")
+assertTrue(not shrunk.published, "a sharp drop was published automatically")
+assertTrue(IronkeepRosterDB == grownSaved, "a sharp drop replaced the snapshot")
+assertTrue(string.find(chat(), "/ikroster", 1, true) ~= nil, "a sharp drop did not tell the officer about /ikroster")
+printed = {}
+local shrunkAgain = inner("auto")
+assertEqual(shrunkAgain.reason, "suspicious-drop")
+assertEqual(chat(), "", "a repeated sharp drop printed again")
+
+install(212, 100)
+printed = {}
+local smallDrop = inner("auto")
+assertTrue(smallDrop.published, "a drop of four members was rejected")
+assertEqual(#IronkeepRosterDB.members, 212)
+assertEqual(chat(), "", "a small automatic drop printed chat")
+
+install(206, 100)
+local sharp = inner("auto")
+assertEqual(sharp.reason, "suspicious-drop")
+assertEqual(#IronkeepRosterDB.members, 212, "the second sharp drop replaced the snapshot")
+printed = {}
+local manualSmaller = SlashCmdList.IKROSTER()
+assertTrue(manualSmaller.published, "/ikroster did not save the smaller roster")
+assertEqual(#IronkeepRosterDB.members, 206)
+assertTrue(string.find(chat(), "Guild roster saved. 206 members for Herberg.", 1, true) ~= nil, "the manual save was not reported")
+
+local held = IronkeepRosterDB
+printed = {}
+install(5, 2, function(index)
+	if index == 3 then return "empty" end
+end)
+local partialAuto = inner("auto")
+assertEqual(partialAuto.reason, "incomplete")
+assertTrue(IronkeepRosterDB == held, "an incomplete automatic scan replaced the snapshot")
+assertEqual(chat(), "", "an incomplete automatic scan printed chat")
+
+printed = {}
+_G.IsInGuild = function() return false end
+local left = inner("auto")
+assertEqual(left.reason, "not-in-guild")
+assertTrue(IronkeepRosterDB == held, "leaving the guild cleared the snapshot")
+assertEqual(chat(), "", "leaving the guild printed chat")
+
+install(206, 100)
+printed = {}
+local current = SlashCmdList.IKROSTER()
+assertEqual(current.reason, "unchanged")
+assertTrue(IronkeepRosterDB == held, "a manual rescan replaced an identical snapshot")
+assertTrue(string.find(chat(), "already current", 1, true) ~= nil, "the manual rescan did not say the roster is current")
+
+install(206, 100, function(index)
+	if index == 2 then return "custom", "Person3", "Member", 60, "Mage", "MAGE", "G-3" end
+	if index == 3 then return "custom", "Person2", "Member", 60, "Mage", "MAGE", "G-2" end
+end)
+local reordered = SlashCmdList.IKROSTER()
+assertEqual(reordered.reason, "unchanged")
+assertTrue(IronkeepRosterDB == held, "reordered identical members replaced the snapshot")
+
+calls = 0
+maxDepth = 0
+IronkeepRoster.Scan = function(mode)
+	depth = depth + 1
+	if depth > maxDepth then maxDepth = depth end
+	calls = calls + 1
+	local info = inner(mode)
+	depth = depth - 1
+	return info
+end
+install(208, 100)
+local poked = false
+_G.GetGuildRosterInfo = function(index)
+	if not poked then
+		poked = true
+		elapse(quiet + 1)
+		fire()
+	end
+	if index == 1 then
+		return fields("Ada Smith", "Member", 70, "Warrior", "WARRIOR", "Player-5826-0A1")
+	end
+	return fields("Person" .. index, "Member", 60, "Mage", "MAGE", "G-" .. index)
+end
+fire()
+elapse(quiet)
+assertEqual(calls, 1, "an event during a scan started a second scan")
+assertEqual(maxDepth, 1, "a scan re-entered itself")
+elapse(quiet)
+assertEqual(calls, 2, "an event during a scan did not run after the next quiet period")
+elapse(30)
+assertEqual(calls, 2, "the roster addon scanned without a new event")
+IronkeepRoster.Scan = inner
+
 assertEqual(guildRosterCalls, 0, "GuildRoster was called")
 assertEqual(IronkeepDB.session.people.a.name, "Ada Smith")
+assertTrue(IronkeepDB == saved, "roster capture replaced attendance data")
 
 io.write("ok\n")
