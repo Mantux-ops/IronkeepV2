@@ -55,6 +55,13 @@ local CLASS_COLOR = {
 	DRUID = { 1.00, 0.49, 0.04 },
 }
 
+-- Names only. The class token on the person is unchanged.
+-- Warrior and hunter keep their hue, lifted so the name reads on the dark rows.
+local DISPLAY_COLOR = {
+	WARRIOR = { 0.91, 0.78, 0.62 },
+	HUNTER = { 0.82, 0.94, 0.62 },
+}
+
 local window
 local rows = {}
 local reportBox
@@ -103,18 +110,35 @@ local function frameWithBackdrop(name, parent)
 	return CreateFrame("Frame", name, parent)
 end
 
-local function card(frame, edge, bg)
-	if not frame.SetBackdrop then return false end
-	local ok = pcall(frame.SetBackdrop, frame, {
-		bgFile = MEDIA .. bg,
-		edgeFile = MEDIA .. edge,
-		edgeSize = 8,
-		insets = { left = 8, right = 8, top = 8, bottom = 8 },
-	})
-	if not ok then return false end
-	frame:SetBackdropColor(1, 1, 1, 1)
-	frame:SetBackdropBorderColor(1, 1, 1, 1)
-	return true
+-- panel-edge.tga is a picture of a rounded rectangle, not a WoW edge texture.
+-- SetBackdrop repeats slices of that picture, which is the tick marks on the frame.
+local function continuousPlate(frame, fill, edge)
+	local bg = solid(frame, "BACKGROUND")
+	bg:SetPoint("TOPLEFT", 1, -1)
+	bg:SetPoint("BOTTOMRIGHT", -1, 1)
+	tint(bg, fill)
+	local top = solid(frame, "BORDER")
+	top:SetPoint("TOPLEFT")
+	top:SetPoint("TOPRIGHT")
+	top:SetHeight(1)
+	tint(top, edge)
+	local bottom = solid(frame, "BORDER")
+	bottom:SetPoint("BOTTOMLEFT")
+	bottom:SetPoint("BOTTOMRIGHT")
+	bottom:SetHeight(1)
+	tint(bottom, edge)
+	local left = solid(frame, "BORDER")
+	left:SetPoint("TOPLEFT", 0, -1)
+	left:SetPoint("BOTTOMLEFT", 0, 1)
+	left:SetWidth(1)
+	tint(left, edge)
+	local right = solid(frame, "BORDER")
+	right:SetPoint("TOPRIGHT", 0, -1)
+	right:SetPoint("BOTTOMRIGHT", 0, 1)
+	right:SetWidth(1)
+	tint(right, edge)
+	frame._flatBorder = true
+	frame._fill = fill
 end
 
 local function paintButton(button, hover)
@@ -190,25 +214,6 @@ local function paintText(widget, color, alpha)
 	widget:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
 end
 
-local function flatPlate(frame, fill, edge)
-	if frame.SetBackdrop then
-		local ok = pcall(frame.SetBackdrop, frame, {
-			bgFile = "Interface\\Buttons\\WHITE8X8",
-			edgeFile = "Interface\\Buttons\\WHITE8X8",
-			edgeSize = 1,
-			insets = { left = 1, right = 1, top = 1, bottom = 1 },
-		})
-		if ok and frame.SetBackdropColor then
-			frame:SetBackdropColor(fill[1], fill[2], fill[3], fill[4] or 1)
-			frame:SetBackdropBorderColor(edge[1], edge[2], edge[3], edge[4] or 1)
-			return
-		end
-	end
-	local bg = solid(frame, "BACKGROUND")
-	bg:SetAllPoints()
-	tint(bg, fill)
-end
-
 local function columnLabel(parent, text, x)
 	local label = face(parent:CreateFontString(nil, "OVERLAY"), 11, true)
 	label:SetPoint("TOPLEFT", parent, "TOPLEFT", 12 + x, -(LIST_TOP - 22))
@@ -217,12 +222,18 @@ local function columnLabel(parent, text, x)
 	return label
 end
 
-local function summaryStat(parent, caption, x, fill, edge)
+local function summaryStat(parent, caption, x, accent)
 	local frame = CreateFrame("Frame", nil, parent)
 	frame:SetSize(168, 30)
 	frame:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -48)
 	frame._stat = caption
-	flatPlate(frame, fill, edge)
+	frame._accent = accent
+	continuousPlate(frame, PANEL, BORDER)
+	local mark = solid(frame, "ARTWORK")
+	mark:SetPoint("TOPLEFT", 1, -6)
+	mark:SetPoint("BOTTOMLEFT", 1, 6)
+	mark:SetWidth(2)
+	tint(mark, accent)
 	frame.caption = face(frame:CreateFontString(nil, "OVERLAY"), 11, false)
 	frame.caption:SetPoint("LEFT", 12, 0)
 	frame.caption:SetText(caption)
@@ -253,7 +264,7 @@ local function applyPerson(row, person, index)
 	else
 		tint(row.bg, BG, 0.95)
 	end
-	local color = CLASS_COLOR[person.classFile] or ACCENT
+	local color = DISPLAY_COLOR[person.classFile] or CLASS_COLOR[person.classFile] or ACCENT
 	local alpha = person.present and 1 or 0.45
 	row.swatch:Show()
 	row.swatch:SetVertexColor(color[1], color[2], color[3], alpha)
@@ -368,11 +379,7 @@ function Ironkeep.Window.Build()
 	window:SetMovable(true)
 	window:EnableMouse(true)
 	window:Hide()
-	if not card(window, "panel-edge.tga", "panel-bg.tga") then
-		local fill = solid(window)
-		fill:SetAllPoints()
-		tint(fill, PANEL)
-	end
+	continuousPlate(window, PANEL, BORDER)
 
 	local db = Ironkeep.db or {}
 	window:ClearAllPoints()
@@ -410,9 +417,9 @@ function Ironkeep.Window.Build()
 	headerRule:SetHeight(1)
 	tint(headerRule, BORDER)
 
-	window.recordedStat = summaryStat(window, "Recorded", PAD, PANEL, BORDER)
-	window.presentStat = summaryStat(window, "Present", PAD + 180, { GREEN[1], GREEN[2], GREEN[3], 0.12 }, { GREEN[1], GREEN[2], GREEN[3], 0.45 })
-	window.leftStat = summaryStat(window, "Left", PAD + 360, RED_BG, RED_BORDER)
+	window.recordedStat = summaryStat(window, "Recorded", PAD, MUTED)
+	window.presentStat = summaryStat(window, "Present", PAD + 180, GREEN)
+	window.leftStat = summaryStat(window, "Left", PAD + 360, { 0.78, 0.38, 0.38 })
 
 	window.place = face(window:CreateFontString(nil, "OVERLAY"), 13, true)
 	window.place:SetPoint("TOPLEFT", PAD, -84)
@@ -559,11 +566,7 @@ function Ironkeep.Window.Build()
 	reportBorder:SetPoint("BOTTOMRIGHT", reportScroll, "BOTTOMRIGHT", 4, -4)
 	reportBorder:SetFrameLevel(window:GetFrameLevel())
 	reportBorder:Hide()
-	if not card(reportBorder, "input-edge.tga", "input-bg.tga") then
-		local fill = solid(reportBorder)
-		fill:SetAllPoints()
-		tint(fill, BG)
-	end
+	continuousPlate(reportBorder, BG, BORDER)
 	reportScroll:SetFrameLevel(reportBorder:GetFrameLevel() + 2)
 
 	reportBox = CreateFrame("EditBox", nil, reportScroll)

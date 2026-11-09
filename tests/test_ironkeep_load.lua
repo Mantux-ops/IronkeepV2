@@ -240,6 +240,25 @@ end
 if statValue("Recorded") ~= "3" or statValue("Present") ~= "2" or statValue("Left") ~= "1" then
 	fail("the summary counts are not recorded 3, present 2, left 1")
 end
+local function statFrame(caption)
+	for i = 1, #frames do
+		if frames[i]._stat == caption then return frames[i] end
+	end
+end
+local recordedCard = statFrame("Recorded")
+local presentCard = statFrame("Present")
+local leftCard = statFrame("Left")
+if not recordedCard or not presentCard or not leftCard then fail("a statistic card is missing") end
+if recordedCard._w ~= 168 or recordedCard._h ~= 30 or presentCard._w ~= recordedCard._w or presentCard._h ~= recordedCard._h or leftCard._w ~= recordedCard._w or leftCard._h ~= recordedCard._h then
+	fail("the statistic cards are not the same size")
+end
+if recordedCard._fill ~= presentCard._fill or presentCard._fill ~= leftCard._fill or not recordedCard._flatBorder then
+	fail("the statistic cards do not share one panel")
+end
+if recordedCard._accent == presentCard._accent or presentCard._accent == leftCard._accent or recordedCard._accent == leftCard._accent then
+	fail("the statistic cards do not have distinct accents")
+end
+if not main._flatBorder then fail("the window still uses a tiled edge texture") end
 if not hasExactText("Hall of Thanes") then fail("the location is not shown") end
 if sessionKind() ~= "Raid" then fail("a raid did not show its group type") end
 if capNote() ~= "" then fail("a short list showed the 200-row notice") end
@@ -250,15 +269,31 @@ local ada = shownRow("Ada Smith")
 if not ada or ada._class ~= "Warrior" or ada._role ~= "Tank" or ada._status ~= "Here" or ada._time ~= "<1m" then
 	fail("Ada is not shown as a present warrior tank")
 end
-if not ada._color or ada._color[1] ~= 0.78 or ada._color[2] ~= 0.61 or ada._color[3] ~= 0.43 then
-	fail("Ada is not colored as a warrior")
+if not ada._color or ada._color[1] ~= 0.91 or ada._color[2] ~= 0.78 or ada._color[3] ~= 0.62 then
+	fail("Ada is not shown in the readable warrior color")
 end
 if ada._group ~= "1" then fail("Ada's raid group is not shown") end
 local dain = shownRow("Dain Frost")
 if not dain or dain._class ~= "Mage" or dain._role ~= "Damage" or dain._status ~= "Left" or dain._group ~= "2" then
 	fail("Dain is not shown as a mage who left group 2")
 end
+if not dain._color or dain._color[1] ~= 0.41 or dain._color[2] ~= 0.80 or dain._color[3] ~= 0.94 then
+	fail("Dain is not colored as a mage")
+end
 local adaRow = Ironkeep.db.session.people["guid-a"]
+local savedFile, savedName = adaRow.classFile, adaRow.className
+adaRow.classFile = "HUNTER"
+adaRow.className = "Hunter"
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._class ~= "Hunter" or ada._color[1] ~= 0.82 or ada._color[2] ~= 0.94 or ada._color[3] ~= 0.62 then
+	fail("a hunter name was not given a readable display color")
+end
+adaRow.classFile = savedFile
+adaRow.className = savedName
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._color[1] ~= 0.91 then fail("the warrior color did not return") end
 adaRow.subgroup = nil
 Ironkeep.Window.Update()
 ada = shownRow("Ada Smith")
