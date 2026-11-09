@@ -72,6 +72,10 @@ local function widget(kind)
 	function w:IsShown() return self._shown end
 	function w:SetFont() return true end
 	function w:SetScript(name, fn) self._scripts[name] = fn end
+	function w:RegisterEvent(event)
+		self._events = self._events or {}
+		self._events[#self._events + 1] = event
+	end
 	function w:GetPoint() return "CENTER", nil, "CENTER", 0, 40 end
 	function w:GetVerticalScroll() return self._scroll or 0 end
 	function w:GetVerticalScrollRange() return self._scrollMax or 0 end
@@ -172,6 +176,138 @@ for i = 1, #lanes do
 end
 if not leftLane or leftLane.person.name ~= "Dain Frost" then fail("a leaver did not move under Left") end
 
+local function frameNamed(name)
+	for i = 1, #frames do
+		if frames[i]._name == name then return frames[i] end
+	end
+end
+
+local function statValue(caption)
+	for i = 1, #frames do
+		if frames[i]._stat == caption then return frames[i]._value end
+	end
+end
+
+local function shownRow(name)
+	for i = 1, #frames do
+		local frame = frames[i]
+		if frame._attendance and frame:IsShown() and frame._member == name then return frame end
+	end
+end
+
+local function hasExactText(text)
+	for i = 1, #frames do
+		if frames[i]._text == text and frames[i]:IsShown() then return true end
+	end
+	return false
+end
+
+local function sessionKind()
+	for i = 1, #frames do
+		if frames[i]._sessionKind and frames[i]:IsShown() then return frames[i]._text end
+	end
+	return ""
+end
+
+local function capNote()
+	for i = 1, #frames do
+		if frames[i]._capNote and frames[i]:IsShown() then return frames[i]._text end
+	end
+	return ""
+end
+
+local main = frameNamed("IronkeepFrame")
+if not main or main._w ~= 850 or main._h ~= 550 then fail("the window is not 850 by 550") end
+if not hasExactText("Ironkeep") then fail("the header does not show the Ironkeep name") end
+local headings = { "Member", "Class", "Role", "Group", "Time", "Status" }
+local function columnX(text)
+	for i = 1, #frames do
+		local points = frames[i]._text == text and frames[i]._points
+		if points then
+			for p = 1, #points do
+				if points[p][1] == "TOPLEFT" and type(points[p][4]) == "number" then return points[p][4] end
+			end
+		end
+	end
+end
+local previousX = -1
+for i = 1, #headings do
+	if not hasExactText(headings[i]) then fail("the attendance table is missing " .. headings[i]) end
+	local x = columnX(headings[i])
+	if not x or x <= previousX then fail("the " .. headings[i] .. " column overlaps the previous one") end
+	previousX = x
+end
+if statValue("Recorded") ~= "3" or statValue("Present") ~= "2" or statValue("Left") ~= "1" then
+	fail("the summary counts are not recorded 3, present 2, left 1")
+end
+local function statFrame(caption)
+	for i = 1, #frames do
+		if frames[i]._stat == caption then return frames[i] end
+	end
+end
+local recordedCard = statFrame("Recorded")
+local presentCard = statFrame("Present")
+local leftCard = statFrame("Left")
+if not recordedCard or not presentCard or not leftCard then fail("a statistic card is missing") end
+if recordedCard._w ~= 168 or recordedCard._h ~= 30 or presentCard._w ~= recordedCard._w or presentCard._h ~= recordedCard._h or leftCard._w ~= recordedCard._w or leftCard._h ~= recordedCard._h then
+	fail("the statistic cards are not the same size")
+end
+if recordedCard._fill ~= presentCard._fill or presentCard._fill ~= leftCard._fill or not recordedCard._flatBorder then
+	fail("the statistic cards do not share one panel")
+end
+if recordedCard._accent == presentCard._accent or presentCard._accent == leftCard._accent or recordedCard._accent == leftCard._accent then
+	fail("the statistic cards do not have distinct accents")
+end
+if not main._flatBorder then fail("the window still uses a tiled edge texture") end
+if not hasExactText("Hall of Thanes") then fail("the location is not shown") end
+if sessionKind() ~= "Raid" then fail("a raid did not show its group type") end
+if capNote() ~= "" then fail("a short list showed the 200-row notice") end
+local started = date("%H:%M", Ironkeep.db.session.started)
+if not hasExactText(started) then fail("the start time is not shown") end
+
+local ada = shownRow("Ada Smith")
+if not ada or ada._class ~= "Warrior" or ada._role ~= "Tank" or ada._status ~= "Here" or ada._time ~= "<1m" then
+	fail("Ada is not shown as a present warrior tank")
+end
+if not ada._color or ada._color[1] ~= 0.91 or ada._color[2] ~= 0.78 or ada._color[3] ~= 0.62 then
+	fail("Ada is not shown in the readable warrior color")
+end
+if ada._group ~= "1" then fail("Ada's raid group is not shown") end
+local dain = shownRow("Dain Frost")
+if not dain or dain._class ~= "Mage" or dain._role ~= "Damage" or dain._status ~= "Left" or dain._group ~= "2" then
+	fail("Dain is not shown as a mage who left group 2")
+end
+if not dain._color or dain._color[1] ~= 0.41 or dain._color[2] ~= 0.80 or dain._color[3] ~= 0.94 then
+	fail("Dain is not colored as a mage")
+end
+local adaRow = Ironkeep.db.session.people["guid-a"]
+local savedFile, savedName = adaRow.classFile, adaRow.className
+adaRow.classFile = "HUNTER"
+adaRow.className = "Hunter"
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._class ~= "Hunter" or ada._color[1] ~= 0.82 or ada._color[2] ~= 0.94 or ada._color[3] ~= 0.62 then
+	fail("a hunter name was not given a readable display color")
+end
+adaRow.classFile = savedFile
+adaRow.className = savedName
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._color[1] ~= 0.91 then fail("the warrior color did not return") end
+adaRow.subgroup = nil
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._group ~= "" then fail("a missing subgroup was shown as a group") end
+adaRow.subgroup = 1
+Ironkeep.Window.Update()
+
+Ironkeep.db.session.instanceType = "none"
+Ironkeep.Window.Update()
+if sessionKind() ~= "" then fail("an ordinary zone showed a group type") end
+Ironkeep.db.session.instanceType = "raid"
+Ironkeep.Window.Update()
+if sessionKind() ~= "Raid" then fail("the raid type did not return") end
+
 -- Copy list is the accent button. Clicking it opens the text.
 local opened = false
 for i = 1, #frames do
@@ -233,7 +369,7 @@ if box._highlighted ~= expected then fail("opening Copy list did not select the 
 
 local reportScroll
 for i = 1, #frames do
-	if frames[i]._w == 388 and frames[i]._h and frames[i]._h >= 120 and frames[i]._h <= 150 then
+	if frames[i]._w == 818 and frames[i]._h and frames[i]._h >= 120 and frames[i]._h <= 150 then
 		reportScroll = frames[i]
 	end
 end
@@ -266,7 +402,7 @@ for i = 1, #frames do
 end
 if not listFrame or not listFrame:IsShown() then fail("the group list is hidden while the report is open") end
 if not listBottom or listBottom < hintPoint[3] + 28 then fail("the group list overlaps the copy hint") end
-if 480 - 80 - listBottom < 140 then fail("the group list has too little room while the report is open") end
+if 550 - 132 - listBottom < 140 then fail("the group list has too little room while the report is open") end
 
 local focuses = box._focusCount
 box._scripts.OnEscapePressed(box)
@@ -400,6 +536,76 @@ expectFocusError(function() clickLabel("Hide") end, "clearfocus failed")
 box.ClearFocus = originalClear
 assertUpdateStillRuns("AfterClearFocus")
 if Ironkeep.db.session.place ~= "Hall of Thanes" then fail("the focus-lock checks changed the place") end
+
+local function shownRows()
+	local count = 0
+	for i = 1, #frames do
+		local frame = frames[i]
+		if frame._attendance and frame:IsShown() and frame._member then count = count + 1 end
+	end
+	return count
+end
+
+local capName = "Cap Person Extra"
+local stamp = Ironkeep.db.session.started or 0
+local existing = 0
+for _ in pairs(Ironkeep.db.session.people) do existing = existing + 1 end
+for n = existing + 1, 210 do
+	Ironkeep.db.session.people["cap-" .. n] = {
+		name = n == 210 and capName or ("Cap " .. n),
+		className = "Mage",
+		classFile = "MAGE",
+		role = "DAMAGER",
+		present = true,
+		first = stamp,
+		last = stamp,
+		subgroup = 1,
+	}
+end
+Ironkeep.Window.Update()
+if shownRows() ~= 200 then fail("the attendance table drew more or less than 200 rows") end
+local total = 0
+for _ in pairs(Ironkeep.db.session.people) do total = total + 1 end
+if capNote() ~= "Showing 200 of " .. total .. " members" then
+	fail("the row cap did not say how many members are hidden")
+end
+local cappedReport = Ironkeep.Group.Report(Ironkeep.db.session, time())
+if not cappedReport:find(capName, 1, true) or not cappedReport:find("format: ironkeep-group 1", 1, true) then
+	fail("the row cap changed the exported report")
+end
+if cappedReport:find("Showing 200", 1, true) then fail("the row cap notice was written into the report") end
+
+local events = eventFrame._events or {}
+local expectedEvents = {
+	"ADDON_LOADED",
+	"GROUP_ROSTER_UPDATE",
+	"PARTY_MEMBERS_CHANGED",
+	"RAID_ROSTER_UPDATE",
+	"PLAYER_ENTERING_WORLD",
+}
+if #events ~= #expectedEvents then fail("the event list changed") end
+for i = 1, #expectedEvents do
+	if events[i] ~= expectedEvents[i] then fail("event " .. tostring(events[i]) .. " is not " .. expectedEvents[i]) end
+end
+
+local function readFile(path)
+	local handle = io.open(path, "r")
+	if not handle then fail("missing " .. path) end
+	local text = handle:read("*a")
+	handle:close()
+	return text
+end
+
+local coreText = readFile("addon/Ironkeep/Core.lua")
+if not coreText:find("if elapsed < 30", 1, true) then fail("the refresh interval changed") end
+if not coreText:find('SLASH_IRONKEEP1 = "/ironkeep"', 1, true) then fail("/ironkeep changed") end
+if not coreText:find('SLASH_IRONKEEP2 = "/ik"', 1, true) then fail("/ik changed") end
+local bindings = readFile("addon/Ironkeep/Bindings.xml")
+if not bindings:find("IRONKEEP_TOGGLE", 1, true) then fail("the key binding changed") end
+local rosterToc = readFile("addon/IronkeepRoster/IronkeepRoster.toc")
+if rosterToc:find("IronkeepDB", 1, true) or not rosterToc:find("IronkeepRosterDB", 1, true) then
+	fail("the roster saved variable changed")
+end
 
 if SlashCmdList.IRONKEEP == SlashCmdList.IKROSTER then fail("the roster command replaced the group command") end
 if SLASH_IRONKEEP1 ~= "/ironkeep" or SLASH_IKROSTER1 ~= "/ikroster" then
