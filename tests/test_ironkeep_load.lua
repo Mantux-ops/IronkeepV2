@@ -202,17 +202,47 @@ local function hasExactText(text)
 	return false
 end
 
+local function sessionKind()
+	for i = 1, #frames do
+		if frames[i]._sessionKind and frames[i]:IsShown() then return frames[i]._text end
+	end
+	return ""
+end
+
+local function capNote()
+	for i = 1, #frames do
+		if frames[i]._capNote and frames[i]:IsShown() then return frames[i]._text end
+	end
+	return ""
+end
+
 local main = frameNamed("IronkeepFrame")
 if not main or main._w ~= 850 or main._h ~= 550 then fail("the window is not 850 by 550") end
 if not hasExactText("Ironkeep") then fail("the header does not show the Ironkeep name") end
-for _, heading in ipairs({ "Member", "Class", "Role", "Time", "Status" }) do
-	if not hasExactText(heading) then fail("the attendance table is missing " .. heading) end
+local headings = { "Member", "Class", "Role", "Group", "Time", "Status" }
+local function columnX(text)
+	for i = 1, #frames do
+		local points = frames[i]._text == text and frames[i]._points
+		if points then
+			for p = 1, #points do
+				if points[p][1] == "TOPLEFT" and type(points[p][4]) == "number" then return points[p][4] end
+			end
+		end
+	end
+end
+local previousX = -1
+for i = 1, #headings do
+	if not hasExactText(headings[i]) then fail("the attendance table is missing " .. headings[i]) end
+	local x = columnX(headings[i])
+	if not x or x <= previousX then fail("the " .. headings[i] .. " column overlaps the previous one") end
+	previousX = x
 end
 if statValue("Recorded") ~= "3" or statValue("Present") ~= "2" or statValue("Left") ~= "1" then
 	fail("the summary counts are not recorded 3, present 2, left 1")
 end
 if not hasExactText("Hall of Thanes") then fail("the location is not shown") end
-if not hasExactText("Raid") then fail("a raid did not show its group type") end
+if sessionKind() ~= "Raid" then fail("a raid did not show its group type") end
+if capNote() ~= "" then fail("a short list showed the 200-row notice") end
 local started = date("%H:%M", Ironkeep.db.session.started)
 if not hasExactText(started) then fail("the start time is not shown") end
 
@@ -223,19 +253,25 @@ end
 if not ada._color or ada._color[1] ~= 0.78 or ada._color[2] ~= 0.61 or ada._color[3] ~= 0.43 then
 	fail("Ada is not colored as a warrior")
 end
+if ada._group ~= "1" then fail("Ada's raid group is not shown") end
 local dain = shownRow("Dain Frost")
-if not dain or dain._class ~= "Mage" or dain._role ~= "Damage" or dain._status ~= "Left" then
-	fail("Dain is not shown as a mage who left")
+if not dain or dain._class ~= "Mage" or dain._role ~= "Damage" or dain._status ~= "Left" or dain._group ~= "2" then
+	fail("Dain is not shown as a mage who left group 2")
 end
+local adaRow = Ironkeep.db.session.people["guid-a"]
+adaRow.subgroup = nil
+Ironkeep.Window.Update()
+ada = shownRow("Ada Smith")
+if not ada or ada._group ~= "" then fail("a missing subgroup was shown as a group") end
+adaRow.subgroup = 1
+Ironkeep.Window.Update()
 
 Ironkeep.db.session.instanceType = "none"
 Ironkeep.Window.Update()
-if hasExactText("Raid") or hasExactText("Dungeon") or hasExactText("Group") then
-	fail("an ordinary zone showed a group type")
-end
+if sessionKind() ~= "" then fail("an ordinary zone showed a group type") end
 Ironkeep.db.session.instanceType = "raid"
 Ironkeep.Window.Update()
-if not hasExactText("Raid") then fail("the raid type did not return") end
+if sessionKind() ~= "Raid" then fail("the raid type did not return") end
 
 -- Copy list is the accent button. Clicking it opens the text.
 local opened = false
@@ -493,10 +529,16 @@ for n = existing + 1, 210 do
 end
 Ironkeep.Window.Update()
 if shownRows() ~= 200 then fail("the attendance table drew more or less than 200 rows") end
+local total = 0
+for _ in pairs(Ironkeep.db.session.people) do total = total + 1 end
+if capNote() ~= "Showing 200 of " .. total .. " members" then
+	fail("the row cap did not say how many members are hidden")
+end
 local cappedReport = Ironkeep.Group.Report(Ironkeep.db.session, time())
 if not cappedReport:find(capName, 1, true) or not cappedReport:find("format: ironkeep-group 1", 1, true) then
 	fail("the row cap changed the exported report")
 end
+if cappedReport:find("Showing 200", 1, true) then fail("the row cap notice was written into the report") end
 
 local events = eventFrame._events or {}
 local expectedEvents = {

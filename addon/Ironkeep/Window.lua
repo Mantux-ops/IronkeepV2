@@ -31,7 +31,7 @@ local CONTENT_W = WINDOW_W - PAD * 2
 local LIST_TOP = 132
 local ROW_H = 24
 local ROW_W = WINDOW_W - 24
-local COL = { member = 16, class = 300, role = 470, time = 590, status = 700 }
+local COL = { member = 16, class = 250, role = 400, group = 520, time = 610, status = 710 }
 
 local ROW_CAP = 200
 local REPORT_HEIGHT = 140
@@ -190,6 +190,25 @@ local function paintText(widget, color, alpha)
 	widget:SetTextColor(color[1], color[2], color[3], alpha or color[4] or 1)
 end
 
+local function flatPlate(frame, fill, edge)
+	if frame.SetBackdrop then
+		local ok = pcall(frame.SetBackdrop, frame, {
+			bgFile = "Interface\\Buttons\\WHITE8X8",
+			edgeFile = "Interface\\Buttons\\WHITE8X8",
+			edgeSize = 1,
+			insets = { left = 1, right = 1, top = 1, bottom = 1 },
+		})
+		if ok and frame.SetBackdropColor then
+			frame:SetBackdropColor(fill[1], fill[2], fill[3], fill[4] or 1)
+			frame:SetBackdropBorderColor(edge[1], edge[2], edge[3], edge[4] or 1)
+			return
+		end
+	end
+	local bg = solid(frame, "BACKGROUND")
+	bg:SetAllPoints()
+	tint(bg, fill)
+end
+
 local function columnLabel(parent, text, x)
 	local label = face(parent:CreateFontString(nil, "OVERLAY"), 11, true)
 	label:SetPoint("TOPLEFT", parent, "TOPLEFT", 12 + x, -(LIST_TOP - 22))
@@ -198,17 +217,18 @@ local function columnLabel(parent, text, x)
 	return label
 end
 
-local function summaryStat(parent, caption, x)
+local function summaryStat(parent, caption, x, fill, edge)
 	local frame = CreateFrame("Frame", nil, parent)
-	frame:SetSize(140, 28)
-	frame:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -46)
+	frame:SetSize(168, 30)
+	frame:SetPoint("TOPLEFT", parent, "TOPLEFT", x, -48)
 	frame._stat = caption
+	flatPlate(frame, fill, edge)
 	frame.caption = face(frame:CreateFontString(nil, "OVERLAY"), 11, false)
-	frame.caption:SetPoint("TOPLEFT", 0, 0)
+	frame.caption:SetPoint("LEFT", 12, 0)
 	frame.caption:SetText(caption)
 	paintText(frame.caption, MUTED)
 	frame.value = face(frame:CreateFontString(nil, "OVERLAY"), 14, true)
-	frame.value:SetPoint("LEFT", frame.caption, "RIGHT", 8, 0)
+	frame.value:SetPoint("RIGHT", -12, 0)
 	frame.value:SetText("0")
 	paintText(frame.value, TEXT)
 	return frame
@@ -221,13 +241,18 @@ local function setStat(frame, value, color)
 	paintText(frame.value, color or TEXT)
 end
 
-local function applyPerson(row, person)
+local function applyPerson(row, person, index)
 	if not person then
 		row:Hide()
 		row._member = nil
 		return
 	end
 	row:Show()
+	if index % 2 == 0 then
+		tint(row.bg, PANEL_3, 0.45)
+	else
+		tint(row.bg, BG, 0.95)
+	end
 	local color = CLASS_COLOR[person.classFile] or ACCENT
 	local alpha = person.present and 1 or 0.45
 	row.swatch:Show()
@@ -237,12 +262,16 @@ local function applyPerson(row, person)
 	local role = Ironkeep.Group.RoleLabel(person.role)
 	local seen = Ironkeep.Group.Seen(person)
 	local status = person.present and "Here" or "Left"
+	local group = ""
+	if type(person.subgroup) == "number" then group = tostring(person.subgroup) end
 	row.name:SetText(name)
 	paintText(row.name, color, alpha)
 	row.className:SetText(className)
 	paintText(row.className, color, alpha)
 	row.role:SetText(role)
 	paintText(row.role, TEXT_2, alpha)
+	row.groupLabel:SetText(group)
+	paintText(row.groupLabel, TEXT_2, alpha)
 	row.time:SetText(seen)
 	row.status:SetText(status)
 	if person.present then
@@ -255,6 +284,7 @@ local function applyPerson(row, person)
 	row._member = name
 	row._class = className
 	row._role = role
+	row._group = group
 	row._time = seen
 	row._status = status
 	row._color = color
@@ -264,6 +294,14 @@ local function makeRow(parent, index)
 	local row = CreateFrame("Frame", nil, parent)
 	row:SetSize(ROW_W, ROW_H)
 	row._attendance = true
+	row.bg = solid(row, "BACKGROUND")
+	row.bg:SetAllPoints()
+	tint(row.bg, BG, 0.95)
+	row.rule = solid(row, "BORDER")
+	row.rule:SetPoint("BOTTOMLEFT", 0, 0)
+	row.rule:SetPoint("BOTTOMRIGHT", 0, 0)
+	row.rule:SetHeight(1)
+	tint(row.rule, BORDER)
 	row.swatch = solid(row, "ARTWORK")
 	row.swatch:SetSize(8, 8)
 	row.swatch:SetPoint("LEFT", 2, 0)
@@ -280,8 +318,12 @@ local function makeRow(parent, index)
 	row.className:SetWordWrap(false)
 	row.role = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
 	row.role:SetPoint("LEFT", COL.role, 0)
-	row.role:SetWidth(COL.time - COL.role - 12)
+	row.role:SetWidth(COL.group - COL.role - 12)
 	row.role:SetJustifyH("LEFT")
+	row.groupLabel = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
+	row.groupLabel:SetPoint("LEFT", COL.group, 0)
+	row.groupLabel:SetWidth(COL.time - COL.group - 12)
+	row.groupLabel:SetJustifyH("LEFT")
 	row.time = face(row:CreateFontString(nil, "OVERLAY"), 12, false)
 	row.time:SetPoint("LEFT", COL.time, 0)
 	row.time:SetWidth(COL.status - COL.time - 12)
@@ -362,28 +404,51 @@ function Ironkeep.Window.Build()
 	brand:SetText("Ironkeep")
 	paintText(brand, TEXT)
 
-	window.recordedStat = summaryStat(window, "Recorded", PAD)
-	window.presentStat = summaryStat(window, "Present", PAD + 160)
-	window.leftStat = summaryStat(window, "Left", PAD + 320)
+	local headerRule = solid(window, "BORDER")
+	headerRule:SetPoint("TOPLEFT", 12, -44)
+	headerRule:SetPoint("TOPRIGHT", -12, -44)
+	headerRule:SetHeight(1)
+	tint(headerRule, BORDER)
+
+	window.recordedStat = summaryStat(window, "Recorded", PAD, PANEL, BORDER)
+	window.presentStat = summaryStat(window, "Present", PAD + 180, { GREEN[1], GREEN[2], GREEN[3], 0.12 }, { GREEN[1], GREEN[2], GREEN[3], 0.45 })
+	window.leftStat = summaryStat(window, "Left", PAD + 360, RED_BG, RED_BORDER)
 
 	window.place = face(window:CreateFontString(nil, "OVERLAY"), 13, true)
-	window.place:SetPoint("TOPLEFT", PAD, -80)
-	window.place:SetWidth(360)
+	window.place:SetPoint("TOPLEFT", PAD, -84)
+	window.place:SetWidth(280)
 	window.place:SetJustifyH("LEFT")
 	window.place:SetWordWrap(false)
 	paintText(window.place, TEXT)
 
 	window.started = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
-	window.started:SetPoint("TOPLEFT", 390, -81)
+	window.started:SetPoint("TOPLEFT", 310, -85)
 	paintText(window.started, MUTED)
 
 	window.kindText = face(window:CreateFontString(nil, "OVERLAY"), 12, true)
-	window.kindText:SetPoint("TOPLEFT", 470, -81)
+	window.kindText._sessionKind = true
+	window.kindText:SetPoint("TOPLEFT", 380, -85)
 	paintText(window.kindText, TEXT_2)
+
+	window.capNote = face(window:CreateFontString(nil, "OVERLAY"), 12, false)
+	window.capNote._capNote = true
+	window.capNote:SetPoint("TOPRIGHT", -PAD, -85)
+	window.capNote:SetWidth(250)
+	window.capNote:SetJustifyH("RIGHT")
+	window.capNote:SetWordWrap(false)
+	paintText(window.capNote, MUTED)
+	window.capNote:Hide()
+
+	local sessionRule = solid(window, "BORDER")
+	sessionRule:SetPoint("TOPLEFT", 12, -104)
+	sessionRule:SetPoint("TOPRIGHT", -12, -104)
+	sessionRule:SetHeight(1)
+	tint(sessionRule, BORDER)
 
 	columnLabel(window, "Member", COL.member)
 	columnLabel(window, "Class", COL.class)
 	columnLabel(window, "Role", COL.role)
+	columnLabel(window, "Group", COL.group)
 	columnLabel(window, "Time", COL.time)
 	columnLabel(window, "Status", COL.status)
 
@@ -415,6 +480,12 @@ function Ironkeep.Window.Build()
 	window.empty:SetWidth(CONTENT_W)
 	window.empty:SetJustifyH("LEFT")
 	paintText(window.empty, MUTED)
+
+	local footerRule = solid(window, "BORDER")
+	footerRule:SetPoint("BOTTOMLEFT", 12, 48)
+	footerRule:SetPoint("BOTTOMRIGHT", -12, 48)
+	footerRule:SetHeight(1)
+	tint(footerRule, BORDER)
 
 	local copy = button(window, "Copy list", 96, "accent")
 	copy:SetPoint("BOTTOMLEFT", 16, 14)
@@ -590,10 +661,16 @@ function Ironkeep.Window.Update()
 	end
 
 	local people = Ironkeep.Group.Rows(session)
-	if #people > ROW_CAP then
+	local total = #people
+	if total > ROW_CAP then
+		window.capNote:SetText("Showing " .. ROW_CAP .. " of " .. total .. " members")
+		window.capNote:Show()
 		local trimmed = {}
 		for i = 1, ROW_CAP do trimmed[i] = people[i] end
 		people = trimmed
+	else
+		window.capNote:SetText("")
+		window.capNote:Hide()
 	end
 	if session and #people == 0 then
 		window.empty:SetText("Nobody recorded yet.")
@@ -608,7 +685,7 @@ function Ironkeep.Window.Update()
 		row:ClearAllPoints()
 		row:SetPoint("TOPLEFT", 0, -y)
 		row:SetHeight(ROW_H)
-		applyPerson(row, people[i])
+		applyPerson(row, people[i], i)
 		y = y + ROW_H
 	end
 	for i = #people + 1, #rows do
