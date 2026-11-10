@@ -44,6 +44,11 @@
   <SolidColorBrush x:Key="GreenBorderBrush" Color="#663FD28F"/>
   <SolidColorBrush x:Key="GreyBgBrush" Color="#1A8D95A1"/>
   <SolidColorBrush x:Key="GreyBorderBrush" Color="#598D95A1"/>
+  <SolidColorBrush x:Key="ScrollTrackBrush" Color="{StaticResource Panel2}"/>
+  <SolidColorBrush x:Key="ScrollThumbBrush" Color="{StaticResource Muted}"/>
+  <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="{StaticResource Text2}"/>
+  <SolidColorBrush x:Key="ScrollThumbPressedBrush" Color="{StaticResource Accent}"/>
+  <SolidColorBrush x:Key="ScrollThumbDisabledBrush" Color="{StaticResource Faint}"/>
 
   <Style TargetType="Window">
     <Setter Property="Background" Value="{StaticResource BgBrush}"/>
@@ -416,5 +421,99 @@
     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
     <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
     <Setter Property="ItemContainerStyle" Value="{StaticResource HistoryItem}"/>
+  </Style>
+
+  <!-- Shared by every ScrollViewer, including History, settings, and the guild menu.
+       The ScrollViewer template stays intact, so the wheel, keys, and dragging still belong to it. -->
+  <Style x:Key="ScrollPageButton" TargetType="RepeatButton">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RepeatButton">
+          <Border Background="Transparent"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="ScrollThumb" TargetType="Thumb">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="MinWidth" Value="0"/>
+    <Setter Property="MinHeight" Value="28"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Thumb">
+          <Grid Background="Transparent">
+            <Border x:Name="Thumb" Background="{StaticResource ScrollThumbBrush}" CornerRadius="4" Margin="2"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbHoverBrush}"/>
+            </Trigger>
+            <Trigger Property="IsMouseCaptured" Value="True">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbPressedBrush}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbDisabledBrush}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding Orientation, RelativeSource={RelativeSource AncestorType=ScrollBar}}" Value="Horizontal">
+        <Setter Property="MinWidth" Value="28"/>
+        <Setter Property="MinHeight" Value="0"/>
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+  <Style TargetType="ScrollBar">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="Width" Value="14"/>
+    <Setter Property="MinWidth" Value="14"/>
+    <Setter Property="Cursor" Value="Arrow"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ScrollBar">
+          <Border Background="{StaticResource ScrollTrackBrush}" CornerRadius="7">
+            <Track x:Name="PART_Track" Focusable="False" IsDirectionReversed="True">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton x:Name="PageDecrease" Style="{StaticResource ScrollPageButton}" Command="{x:Static ScrollBar.PageUpCommand}"/>
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Style="{StaticResource ScrollThumb}"/>
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton x:Name="PageIncrease" Style="{StaticResource ScrollPageButton}" Command="{x:Static ScrollBar.PageDownCommand}"/>
+              </Track.IncreaseRepeatButton>
+            </Track>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+              <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+              <Setter TargetName="PageDecrease" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+              <Setter TargetName="PageIncrease" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="Orientation" Value="Horizontal">
+        <Setter Property="Width" Value="Auto"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="Height" Value="14"/>
+        <Setter Property="MinHeight" Value="14"/>
+      </Trigger>
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Opacity" Value="0.7"/>
+      </Trigger>
+    </Style.Triggers>
   </Style>
 </ResourceDictionary>
