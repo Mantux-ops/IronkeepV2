@@ -1,6 +1,6 @@
 ## Interface: 16001
 ## Title: Ironkeep Roster Diagnostic
-## Notes: Temporary read-only compare of the saved roster and the live cache. Delete this folder when finished.
+## Notes: Temporary read-only roster check. Watches the production scan call and saves nothing. Delete this folder when finished.
 ## Author: Ironkeep
 ## Version: 0.0.0
 ## OptionalDeps: IronkeepRoster

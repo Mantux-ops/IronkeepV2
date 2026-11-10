@@ -5,6 +5,10 @@
 -- sameRoster matches addon/IronkeepRoster/Roster.lua from PR #62
 -- (210c7ae): guild name, sequence length, then sorted lines of
 -- guid, name, level, classToken, className, rankName.
+--
+-- An automatic scan is observed only when the production global
+-- IronkeepRoster.Scan is entered. A roster event is counted separately
+-- and is never treated as a scan.
 
 IronkeepRosterDiag = IronkeepRosterDiag or {}
 
@@ -401,58 +405,216 @@ function IronkeepRosterDiag.Compare()
 	}
 end
 
-local function showSome(label, rows, formatRow)
-	local shown = #rows
-	if shown > DETAIL_CAP then shown = DETAIL_CAP end
-	local i
-	for i = 1, shown do
-		say(label .. " " .. formatRow(rows[i]))
+local originalScan
+local wrappedScan
+local rosterEvents = 0
+local automaticScans = 0
+local manualScans = 0
+local lastAutomatic
+
+local function stamp(db)
+	if type(db) ~= "table" then return nil end
+	return db.capturedAt
+end
+
+local function classify(beforeRef, beforeAt, afterRef, afterAt, ok, info)
+	local sameSnapshot = beforeRef == afterRef
+	local sameAt = beforeAt == afterAt
+	local record = {
+		beforeAt = beforeAt,
+		afterAt = afterAt,
+		sameSnapshot = sameSnapshot,
+		published = false,
+	}
+	if not ok then
+		record.outcome = "error"
+		record.reason = "error"
+		return record
 	end
-	if #rows > DETAIL_CAP then
-		say(label .. " " .. tostring(#rows - DETAIL_CAP) .. " more")
+	local reason = type(info) == "table" and info.reason or nil
+	local published = type(info) == "table" and info.published == true
+	record.reason = reason
+	record.published = published
+	record.populated = type(info) == "table" and info.populated or nil
+	if reason == "unchanged" and not published and sameSnapshot and sameAt then
+		record.outcome = "preserved"
+	elseif reason == "published" and published and (not sameSnapshot or not sameAt) then
+		record.outcome = "published"
+	elseif not published and sameSnapshot and sameAt then
+		record.outcome = "rejected"
+	else
+		record.outcome = "conflict"
+	end
+	return record
+end
+
+local function callScan(fn, argc, args)
+	local returned = { n = 0 }
+	local function save(...)
+		returned.n = select("#", ...)
+		local i
+		for i = 1, returned.n do returned[i] = select(i, ...) end
+	end
+	if argc == 0 then
+		save(fn())
+	else
+		save(fn(unpack(args, 1, argc)))
+	end
+	return returned
+end
+
+wrappedScan = function(...)
+	local argc = select("#", ...)
+	local mode = argc >= 1 and select(1, ...) or nil
+	local args = { ... }
+	local fn = originalScan
+	local beforeRef = IronkeepRosterDB
+	local beforeAt = stamp(beforeRef)
+	local ok, returned = pcall(callScan, fn, argc, args)
+	local afterRef = IronkeepRosterDB
+	local afterAt = stamp(afterRef)
+	local info = nil
+	if ok and type(returned) == "table" and returned.n >= 1 then info = returned[1] end
+	local record = classify(beforeRef, beforeAt, afterRef, afterAt, ok, info)
+	if mode == "auto" then
+		automaticScans = automaticScans + 1
+		lastAutomatic = record
+	else
+		manualScans = manualScans + 1
+	end
+	if not ok then error(returned, 0) end
+	return unpack(returned, 1, returned.n)
+end
+
+function IronkeepRosterDiag.Install()
+	if type(IronkeepRoster) ~= "table" or type(IronkeepRoster.Scan) ~= "function" then
+		return false
+	end
+	if IronkeepRoster.Scan == wrappedScan then return true end
+	originalScan = IronkeepRoster.Scan
+	IronkeepRoster.Scan = wrappedScan
+	return true
+end
+
+function IronkeepRosterDiag.NoteRosterEvent()
+	rosterEvents = rosterEvents + 1
+end
+
+function IronkeepRosterDiag.OnEvent(_, event)
+	if event == "ADDON_LOADED" then
+		IronkeepRosterDiag.Install()
+	elseif event == "GUILD_ROSTER_UPDATE" then
+		IronkeepRosterDiag.NoteRosterEvent()
 	end
 end
 
-function IronkeepRosterDiag.Report()
-	local before = IronkeepRosterDB
-	local result = IronkeepRosterDiag.Compare()
-	say("capturedAt " .. tostring(result.capturedAt))
-	say("saved walk " .. tostring(result.savedWalk) .. ", hash " .. tostring(result.savedHash) .. ", extra " .. tostring(result.savedExtra))
-	say("live rows " .. tostring(result.liveRows) .. ", reported " .. tostring(result.liveTotal) .. ", empty " .. tostring(result.liveEmpty) .. ", errors " .. tostring(result.liveErrors))
-	say("guild [" .. tostring(result.guildSaved) .. "] vs [" .. tostring(result.guildLive) .. "]")
-	if result.api ~= nil then
-		say("live roster API " .. tostring(result.api))
+function IronkeepRosterDiag.Observation()
+	return {
+		wrapped = type(IronkeepRoster) == "table" and IronkeepRoster.Scan == wrappedScan,
+		rosterEvents = rosterEvents,
+		automaticScans = automaticScans,
+		manualScans = manualScans,
+		last = lastAutomatic,
+	}
+end
+
+local function autoLine(obs)
+	if not obs.wrapped then
+		local line = "auto: no automatic scan observed. IronkeepRoster.Scan is not wrapped, so a production scan cannot be seen."
+		if obs.rosterEvents > 0 then
+			line = line .. " roster events " .. tostring(obs.rosterEvents) .. ". An event is not a scan."
+		end
+		return line
 	end
-	if result.liveCapped then
-		say("live roster stopped at " .. tostring(READ_CAP))
+	local last = obs.last
+	if not last then
+		local line = "auto: no automatic scan observed."
+		if obs.rosterEvents > 0 then
+			line = line .. " roster events " .. tostring(obs.rosterEvents) .. ". An event is not a scan."
+		end
+		if obs.manualScans > 0 then
+			line = line .. " manual scans " .. tostring(obs.manualScans) .. "."
+		end
+		return line
 	end
-	if not result.comparable then
-		say("sameRoster skipped (" .. tostring(result.blocked or result.api or "incomplete") .. ")")
-	elseif result.sameRoster then
-		say("sameRoster true")
-	else
-		say("sameRoster false")
+	local seen = " scans " .. tostring(obs.automaticScans) .. "."
+	if last.outcome == "preserved" then
+		return "auto: identical roster, snapshot preserved. capturedAt " .. tostring(last.beforeAt) .. ", same table." .. seen
 	end
-	say("added " .. tostring(#result.added) .. ", removed " .. tostring(#result.removed) .. ", changed " .. tostring(#result.changed))
-	if result.savedMissingGuid > 0 or result.liveMissingGuid > 0 then
-		say("missing guid saved " .. tostring(result.savedMissingGuid) .. ", live " .. tostring(result.liveMissingGuid))
+	if last.outcome == "published" then
+		local pointer = last.sameSnapshot and "same table" or "new table"
+		return "auto: changed roster, new snapshot published. capturedAt " .. tostring(last.beforeAt) .. " => " .. tostring(last.afterAt) .. ", " .. pointer .. "." .. seen
 	end
-	if result.savedDuplicates > 0 or result.liveDuplicates > 0 then
-		say("duplicate guid saved " .. tostring(result.savedDuplicates) .. ", live " .. tostring(result.liveDuplicates))
+	if last.outcome == "rejected" or (last.outcome == "error" and last.sameSnapshot and last.beforeAt == last.afterAt) then
+		return "auto: scan skipped or rejected (" .. tostring(last.reason) .. "). capturedAt " .. tostring(last.beforeAt) .. ", snapshot kept." .. seen
 	end
-	showSome("added", result.added, function(row)
+	return "auto: scan result disagreed with the snapshot. reason " .. tostring(last.reason) .. ", capturedAt " .. tostring(last.beforeAt) .. " => " .. tostring(last.afterAt) .. ", same table " .. tostring(last.sameSnapshot) .. "." .. seen
+end
+
+local function addDetails(lines, result)
+	local function push(label, rows, formatRow)
+		local shown = #rows
+		if shown > DETAIL_CAP then shown = DETAIL_CAP end
+		local i
+		for i = 1, shown do
+			lines[#lines + 1] = label .. " " .. formatRow(rows[i])
+		end
+		if #rows > DETAIL_CAP then
+			lines[#lines + 1] = label .. " " .. tostring(#rows - DETAIL_CAP) .. " more"
+		end
+	end
+	push("added", result.added, function(row)
 		return tostring(row.guid) .. " " .. tostring(row.name)
 	end)
-	showSome("removed", result.removed, function(row)
+	push("removed", result.removed, function(row)
 		return tostring(row.guid) .. " " .. tostring(row.name)
 	end)
-	showSome("changed", result.changed, function(row)
+	push("changed", result.changed, function(row)
 		return tostring(row.guid) .. " " .. row.field .. " [" .. tostring(row.old) .. "] => [" .. tostring(row.new) .. "]"
 	end)
-	if before ~= IronkeepRosterDB then
-		say("stopped because the saved snapshot pointer changed")
+end
+
+function IronkeepRosterDiag.Lines()
+	local before = IronkeepRosterDB
+	local result = IronkeepRosterDiag.Compare()
+	local lines = { autoLine(IronkeepRosterDiag.Observation()) }
+	local compare
+	if result.api ~= nil then
+		compare = "compare: live roster API " .. tostring(result.api) .. "."
+	elseif not result.comparable then
+		compare = "compare: sameRoster skipped (" .. tostring(result.blocked or "incomplete") .. "). capturedAt " .. tostring(result.capturedAt) .. ", saved " .. tostring(result.savedWalk) .. ", live " .. tostring(result.liveRows) .. "."
+	elseif result.sameRoster then
+		compare = "compare: sameRoster true. capturedAt " .. tostring(result.capturedAt) .. ", saved " .. tostring(result.savedWalk) .. ", live " .. tostring(result.liveRows) .. ", added 0, removed 0, changed 0."
+	else
+		compare = "compare: sameRoster false. capturedAt " .. tostring(result.capturedAt) .. ", saved " .. tostring(result.savedWalk) .. ", live " .. tostring(result.liveRows) .. ", added " .. tostring(#result.added) .. ", removed " .. tostring(#result.removed) .. ", changed " .. tostring(#result.changed) .. "."
 	end
-	return result
+	lines[#lines + 1] = compare
+	if result.savedHash ~= result.savedWalk or result.savedExtra ~= 0 then
+		lines[#lines + 1] = "saved walk " .. tostring(result.savedWalk) .. ", hash " .. tostring(result.savedHash) .. ", extra " .. tostring(result.savedExtra) .. "."
+	end
+	if result.guildSaved ~= result.guildLive then
+		lines[#lines + 1] = "guild [" .. tostring(result.guildSaved) .. "] vs [" .. tostring(result.guildLive) .. "]."
+	end
+	if result.liveCapped then
+		lines[#lines + 1] = "live roster stopped at " .. tostring(READ_CAP) .. "."
+	end
+	if result.savedMissingGuid > 0 or result.liveMissingGuid > 0 then
+		lines[#lines + 1] = "missing guid saved " .. tostring(result.savedMissingGuid) .. ", live " .. tostring(result.liveMissingGuid) .. "."
+	end
+	if #result.added > 0 or #result.removed > 0 or #result.changed > 0 then
+		addDetails(lines, result)
+	end
+	if before ~= IronkeepRosterDB then
+		lines[#lines + 1] = "stopped because the saved snapshot pointer changed."
+	end
+	return lines
+end
+
+function IronkeepRosterDiag.Report()
+	local lines = IronkeepRosterDiag.Lines()
+	local i
+	for i = 1, #lines do say(lines[i]) end
+	return lines
 end
 
 SLASH_IKROSTERDIFF1 = "/ikrosterdiff"
@@ -460,3 +622,16 @@ if type(SlashCmdList) ~= "table" then SlashCmdList = {} end
 SlashCmdList.IKROSTERDIFF = function()
 	return IronkeepRosterDiag.Report()
 end
+
+if type(CreateFrame) == "function" then
+	local ok, frame = pcall(CreateFrame, "Frame")
+	if ok and type(frame) == "table" then
+		if frame.SetScript then frame:SetScript("OnEvent", IronkeepRosterDiag.OnEvent) end
+		if frame.RegisterEvent then
+			pcall(frame.RegisterEvent, frame, "ADDON_LOADED")
+			pcall(frame.RegisterEvent, frame, "GUILD_ROSTER_UPDATE")
+		end
+	end
+end
+
+IronkeepRosterDiag.Install()
