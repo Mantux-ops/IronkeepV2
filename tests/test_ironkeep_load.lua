@@ -143,7 +143,12 @@ dofile("addon/IronkeepRoster/Roster.lua")
 
 local eventFrame
 for i = 1, #frames do
-	if frames[i]._scripts.OnEvent then eventFrame = frames[i] end
+	local events = frames[i]._events
+	if events then
+		for e = 1, #events do
+			if events[e] == "ADDON_LOADED" then eventFrame = frames[i] end
+		end
+	end
 end
 if not eventFrame then fail("the addon did not listen for load") end
 

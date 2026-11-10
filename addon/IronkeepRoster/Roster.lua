@@ -14,11 +14,27 @@
 -- Field positions were checked on one Forever client (guild Herberg):
 -- 1 name, 2 rank name, 4 level, 5 localized class, 11 class file token, 17 GUID.
 -- Rank index and per-character online status are not stored.
+--
+-- GUILD_ROSTER_UPDATE only means the local cache changed. A scan still waits
+-- until events have been quiet for two seconds, then uses the same checks as
+-- /ikroster. Nothing here calls GuildRoster() or polls on a timer.
+-- An automatic scan will not replace a saved roster that is shorter by more
+-- than 5 members and by more than 2 percent. A smaller real roster is saved
+-- with /ikroster. Identical stored members are not written again.
 
 IronkeepRoster = IronkeepRoster or {}
 
 local SCAN_CAP = 500
+local QUIET_SECONDS = 2
+-- Both have to be true. A drop of 5 members is kept. A drop of 6 is kept when
+-- it is 2 percent or less of the saved roster, and rejected when it is more.
+local AUTO_DROP_MEMBERS = 5
+local AUTO_DROP_FRACTION = 0.02
 IronkeepRoster.SCAN_CAP = SCAN_CAP
+IronkeepRoster.QUIET_SECONDS = QUIET_SECONDS
+
+local scanAutomatic = false
+local dropNoted = false
 
 local function global(name)
 	if type(_G) == "table" then return _G[name] end
@@ -237,7 +253,57 @@ local function result(reason, examined, populated, empty, errors, total, online,
 	}
 end
 
+local function memberLine(member)
+	if type(member) ~= "table" then return "" end
+	return table.concat({
+		tostring(member.guid),
+		tostring(member.name),
+		tostring(member.level),
+		tostring(member.classToken),
+		tostring(member.className),
+		tostring(member.rankName),
+	}, "\0")
+end
+
+local function sameRoster(previous, guild, members)
+	if type(previous) ~= "table" or previous.wowGuildName ~= guild then return false end
+	if type(previous.members) ~= "table" or #previous.members ~= #members then return false end
+	local oldLines, newLines = {}, {}
+	local i
+	for i = 1, #members do
+		oldLines[i] = memberLine(previous.members[i])
+		newLines[i] = memberLine(members[i])
+	end
+	table.sort(oldLines)
+	table.sort(newLines)
+	for i = 1, #members do
+		if oldLines[i] ~= newLines[i] then return false end
+	end
+	return true
+end
+
+local function suspiciousDrop(previous, newCount)
+	if type(previous) ~= "table" or type(previous.members) ~= "table" then return false end
+	local count = #previous.members
+	if count < 1 or type(newCount) ~= "number" or newCount >= count then return false end
+	local drop = count - newCount
+	return drop > AUTO_DROP_MEMBERS and (drop / count) > AUTO_DROP_FRACTION
+end
+
 local function announce(info, guild)
+	if scanAutomatic then
+		if info.reason == "suspicious-drop" and not dropNoted then
+			dropNoted = true
+			say("Guild roster shrank by too many members. The previous snapshot was kept. /ikroster can save the smaller roster.")
+		elseif info.published or info.reason == "unchanged" then
+			dropNoted = false
+		end
+		return
+	end
+	if info.reason == "unchanged" then
+		say("Guild roster is already current. " .. tostring(info.populated) .. " members for " .. tostring(guild) .. ".")
+		return
+	end
 	if info.published then
 		say("Guild roster saved. " .. tostring(info.populated) .. " members for " .. tostring(guild) .. ".")
 		return
@@ -245,7 +311,8 @@ local function announce(info, guild)
 	say("Guild roster was not saved (" .. tostring(info.reason) .. "). The previous snapshot is unchanged.")
 end
 
-function IronkeepRoster.Scan()
+function IronkeepRoster.Scan(mode)
+	scanAutomatic = mode == "auto"
 	local found = playerHints()
 	local inFn = global("IsInGuild")
 	if type(inFn) == "function" then
@@ -357,6 +424,16 @@ function IronkeepRoster.Scan()
 		announce(info)
 		return info
 	end
+	if sameRoster(IronkeepRosterDB, guild, members) then
+		local info = result("unchanged", examined, populated, empty, errors, total, online, true)
+		announce(info, guild)
+		return info
+	end
+	if scanAutomatic and suspiciousDrop(IronkeepRosterDB, populated) then
+		local info = result("suspicious-drop", examined, populated, empty, errors, total, online, true)
+		announce(info, guild)
+		return info
+	end
 
 	local capturedAt = captureTime()
 	if capturedAt == nil then
@@ -400,4 +477,42 @@ SLASH_IKROSTER1 = "/ikroster"
 if type(SlashCmdList) ~= "table" then SlashCmdList = {} end
 SlashCmdList.IKROSTER = function()
 	return IronkeepRoster.Scan()
+end
+
+local watch
+local pending = false
+local waited = 0
+local scanning = false
+
+local function armWatch()
+	pending = true
+	waited = 0
+	if watch and watch.Show then watch:Show() end
+end
+
+local function onUpdate(_, delta)
+	if not pending or scanning then return end
+	if type(delta) ~= "number" or delta < 0 then delta = 0 end
+	waited = waited + delta
+	if waited < QUIET_SECONDS then return end
+	pending = false
+	waited = 0
+	if watch and watch.Hide then watch:Hide() end
+	scanning = true
+	pcall(IronkeepRoster.Scan, "auto")
+	scanning = false
+	if pending and watch and watch.Show then watch:Show() end
+end
+
+if type(CreateFrame) == "function" then
+	local ok, frame = pcall(CreateFrame, "Frame")
+	if ok and frame then
+		watch = frame
+		if frame.SetScript then
+			frame:SetScript("OnEvent", function() armWatch() end)
+			frame:SetScript("OnUpdate", onUpdate)
+		end
+		if frame.Hide then frame:Hide() end
+		if frame.RegisterEvent then pcall(frame.RegisterEvent, frame, "GUILD_ROSTER_UPDATE") end
+	end
 end
