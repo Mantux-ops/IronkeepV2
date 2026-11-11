@@ -10,6 +10,7 @@ import json
 import re
 import sqlite3
 import threading
+import unicodedata
 from datetime import datetime, timezone
 
 from . import db
@@ -17,11 +18,15 @@ from . import db
 MAX_BYTES = 65536
 MAX_PEOPLE = 40
 _LOCK = threading.Lock()
-_NAME = re.compile(r"^(?:[A-Za-z]{2,12}|[A-Za-z]{2,12} [A-Za-z]{2,12})$")
 _TIME = re.compile(r"^(?:|<1m|[0-9]{1,4}m|[0-9]{1,4}h [0-9]{1,2}m)$")
 _STARTED = re.compile(r"^(?:|\d{4}-\d{2}-\d{2} \d{2}:\d{2})$")
 _ROLES = {"", "Tank", "Healer", "Damage"}
 _HASH = re.compile(r"^[0-9a-f]{64}$")
+# Lu/Ll/Lt/Lo are letters. Lm is a modifier letter (phonetic superscripts) and
+# is not a character name. One combining mark may follow a letter after NFC.
+_NAME_LETTERS = {"Lu", "Ll", "Lt", "Lo"}
+_NAME_MIN = 2
+_NAME_MAX = 12
 
 
 class ReportError(Exception):
@@ -78,7 +83,8 @@ def parse_text(text):
         if len(parts) != 5:
             raise ReportError("This report could not be read.")
         name, class_name, role, seen, status = parts
-        if status not in ("here", "left") or _NAME.fullmatch(name) is None:
+        stored_name = _character_name(name)
+        if status not in ("here", "left") or stored_name is None:
             raise ReportError("This report could not be read.")
         if role not in _ROLES or not _class_ok(class_name):
             raise ReportError("This report could not be read.")
@@ -86,7 +92,7 @@ def parse_text(text):
             raise ReportError("This report could not be read.")
         people.append(
             {
-                "name": name,
+                "name": stored_name,
                 "class_name": class_name,
                 "role": role,
                 "time": seen,
@@ -96,6 +102,49 @@ def parse_text(text):
     if len(people) > MAX_PEOPLE:
         raise ReportError("This report has too many people.")
     return {"place": place or "Unknown", "started": started, "people": people}
+
+
+def _character_name(value):
+    """NFC form of a character name copied from UnitFullName, or None.
+
+    The addon writes one given name, or a given name and surname joined by a
+    single ASCII space. It does not rewrite the characters the game returns.
+    Each part is 2 to 12 letters in Unicode categories Lu, Ll, Lt, or Lo.
+    After NFC, a letter may carry one combining mark (category M). Modifier
+    letters (Lm), digits, punctuation, symbols, spaces inside a part, and
+    control or format characters are rejected. An ASCII name that matched
+    the previous letter rule still matches, and the report lines are unchanged.
+    """
+    if not isinstance(value, str):
+        return None
+    text = unicodedata.normalize("NFC", value)
+    if text == "" or text != text.strip() or "  " in text:
+        return None
+    parts = text.split(" ")
+    if len(parts) > 2:
+        return None
+    for part in parts:
+        if not _name_part(part):
+            return None
+    return text
+
+
+def _name_part(part):
+    letters = 0
+    marks = 0
+    for char in part:
+        category = unicodedata.category(char)
+        if category in _NAME_LETTERS:
+            letters += 1
+            marks = 0
+            if letters > _NAME_MAX:
+                return False
+            continue
+        if category.startswith("M") and letters and marks < 1:
+            marks += 1
+            continue
+        return False
+    return _NAME_MIN <= letters <= _NAME_MAX
 
 
 def _class_ok(value):
