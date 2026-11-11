@@ -459,8 +459,9 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="Thumb">
-          <Grid Background="Transparent">
-            <Border x:Name="Thumb" Background="{StaticResource ScrollThumbBrush}" CornerRadius="4" Margin="2"/>
+          <!-- SnapsToDevicePixels is inherited from the bar and clips the bottom arc. -->
+          <Grid Background="Transparent" SnapsToDevicePixels="False" UseLayoutRounding="False">
+            <Border x:Name="Thumb" Background="{StaticResource ScrollThumbBrush}" CornerRadius="4" Margin="1" SnapsToDevicePixels="False" UseLayoutRounding="False"/>
           </Grid>
           <ControlTemplate.Triggers>
             <Trigger Property="IsMouseOver" Value="True">
@@ -493,7 +494,7 @@
     <Setter Property="Template">
       <Setter.Value>
         <ControlTemplate TargetType="ScrollBar">
-          <Border Background="{StaticResource ScrollTrackBrush}" CornerRadius="7">
+          <Border Background="{StaticResource ScrollTrackBrush}" CornerRadius="7" Padding="2" SnapsToDevicePixels="False" UseLayoutRounding="False">
             <Track x:Name="PART_Track" Focusable="False" IsDirectionReversed="True">
               <Track.DecreaseRepeatButton>
                 <RepeatButton x:Name="PageDecrease" Style="{StaticResource ScrollPageButton}" Command="{x:Static ScrollBar.PageUpCommand}"/>
