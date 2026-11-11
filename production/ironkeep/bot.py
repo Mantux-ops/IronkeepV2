@@ -14,9 +14,84 @@ import discord
 
 from . import config, db, forever_companion, tickets, warcraft_forever
 from . import wow
-from .discord_api import fill, replace_guild_commands
+from .discord_api import fill, interaction_callback, replace_guild_commands
 
 log = logging.getLogger("ironkeep.bot")
+
+# Ticket controls use these actions. The Tank button is ikt:<raid id>.
+_TICKET_ACTIONS = frozenset({"open", "form", "claim", "close"})
+
+
+def ikt_destination(custom_id):
+    """Separate ticket controls from the Tank signup button.
+
+    Tickets use ikt:open, ikt:form:<index>, ikt:claim:<id>, and ikt:close:<id>.
+    A raid or dungeon Tank button is ikt:<raid id>, digits only, with no extra segment.
+    Returns 'ticket', 'signup', or 'reject'. None means the id is not an ikt id.
+    """
+    head, separator, rest = str(custom_id or "").partition(":")
+    if head != "ikt" or not separator:
+        return None
+    action, extra, _remainder = rest.partition(":")
+    if action in _TICKET_ACTIONS:
+        return "ticket"
+    if not extra and action.isdigit() and not action.startswith("0"):
+        return "signup"
+    return "reject"
+
+
+def _reject_ikt(interaction_id, token, custom_id):
+    """Answer an ikt id that is neither a ticket action nor a raid id."""
+    bounded = " ".join(str(custom_id or "").split())[:80]
+    try:
+        interaction_callback(
+            interaction_id,
+            token,
+            kind=4,
+            data={"content": "Deze knop werkt niet meer.", "flags": 64},
+        )
+    except Exception:
+        log.exception("Rejected component reply failed custom_id=%s", bounded)
+
+
+async def dispatch_ikt(interaction, custom_id, guild_id, user_id, name, role_ids, data):
+    """Finish a ticket or a malformed ikt id.
+
+    A Tank raid id returns False so the normal signup path can handle it.
+    """
+    destination = ikt_destination(custom_id)
+    if destination == "ticket":
+        try:
+            await asyncio.to_thread(
+                tickets.answer,
+                guild_id,
+                user_id,
+                name,
+                role_ids,
+                custom_id,
+                list(data.get("values") or []),
+                str(interaction.id),
+                interaction.token,
+                _interaction_fields(data) if interaction.type == discord.InteractionType.modal_submit else {},
+                person_name(interaction),
+            )
+        except Exception:
+            log.exception("Ticket action failed")
+        return True
+    if destination == "reject":
+        await asyncio.to_thread(
+            _reject_ikt,
+            str(interaction.id),
+            interaction.token,
+            custom_id,
+        )
+        return True
+    return False
+
+
+def person_name(interaction):
+    person = interaction.user
+    return person.name if person is not None else ""
 
 
 def _content_ids(member, settings):
@@ -568,23 +643,7 @@ def main():
         role_ids = [str(role_id) for role_id in getattr(person, "_roles", []) or []]
         guild_id = str(interaction.guild_id or "")
         user_id = str(interaction.user.id)
-        if str(custom_id).startswith("ikt"):
-            try:
-                await asyncio.to_thread(
-                    tickets.answer,
-                    guild_id,
-                    user_id,
-                    name,
-                    role_ids,
-                    custom_id,
-                    list(data.get("values") or []),
-                    str(interaction.id),
-                    interaction.token,
-                    _interaction_fields(data) if interaction.type == discord.InteractionType.modal_submit else {},
-                    person.name if person is not None else "",
-                )
-            except Exception:
-                log.exception("Ticket action failed")
+        if await dispatch_ikt(interaction, custom_id, guild_id, user_id, name, role_ids, data):
             return
         if str(custom_id).startswith("ikr"):
             try:
