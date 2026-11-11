@@ -1,0 +1,77 @@
+{
+  "probed_at": "2026-11-06T00:35:00+01:00",
+  "timezone": "Europe/Amsterdam",
+  "credentials": "none",
+  "note": "These calls used no client id, client secret, or access token. Response bodies on the API host were empty. This does not prove that the Herberg document exists.",
+  "results": [
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/guild/herberg?namespace=profile-forever-eu&locale=en_GB",
+      "authorization": "absent",
+      "status": 404,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/guild/herberg/roster?namespace=profile-forever-eu&locale=en_GB",
+      "authorization": "absent",
+      "status": 404,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/guild/herberg?namespace=profile-forever-eu&locale=en_GB",
+      "authorization": "Bearer invalid-token",
+      "status": 401,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/ruleset/index?namespace=dynamic-forever-eu&locale=en_GB",
+      "authorization": "absent",
+      "status": 404,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/ruleset/index?namespace=dynamic-forever-eu&locale=en_GB",
+      "authorization": "Bearer invalid-token",
+      "status": 401,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/guild/silvermoon/no-such-guild?namespace=profile-eu&locale=en_GB",
+      "authorization": "absent",
+      "status": 404,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "GET",
+      "url": "https://eu.api.blizzard.com/data/wow/guild/silvermoon/no-such-guild?namespace=profile-eu&locale=en_GB",
+      "authorization": "Bearer invalid-token",
+      "status": 401,
+      "server": "blizzard",
+      "body": ""
+    },
+    {
+      "method": "POST",
+      "url": "https://oauth.battle.net/token",
+      "authorization": "absent",
+      "body_sent": "grant_type=client_credentials",
+      "status": 401,
+      "content_type": "application/json",
+      "www_authenticate": "Bearer realm=\"Blizzard OAuth\", error=\"unauthorized\", error_description=\"An Authentication object was not found in the SecurityContext\"",
+      "body": {
+        "error": "unauthorized",
+        "error_description": "An Authentication object was not found in the SecurityContext"
+      }
+    }
+  ]
+}

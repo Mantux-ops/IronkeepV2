@@ -1,0 +1,103 @@
+{
+  "_disclaimer": "Not a live Battle.net response and not Herberg's data. Field names below were published by community probes on 5 November 2026. Values are placeholders. Fields marked assumed are retail-shaped details those probes did not print.",
+  "guild": {
+    "confirmed_fields": [
+      "id",
+      "name",
+      "faction.type",
+      "faction.name",
+      "achievement_points",
+      "member_count",
+      "created_timestamp",
+      "slug",
+      "ruleset.name",
+      "ruleset.id",
+      "name_search",
+      "roster.href",
+      "achievements.href",
+      "activity.href"
+    ],
+    "example_shape": {
+      "id": 0,
+      "name": "Guild Name",
+      "faction": {"type": "HORDE", "name": "Horde"},
+      "achievement_points": 0,
+      "member_count": 0,
+      "created_timestamp": 0,
+      "slug": "guild-name",
+      "ruleset": {"name": "Normal", "id": 2},
+      "name_search": "Guild Name",
+      "roster": {"href": "https://eu.api.blizzard.com/data/wow/guild/guild-name/roster?namespace=profile-forever-eu"},
+      "achievements": {"href": "https://eu.api.blizzard.com/data/wow/guild/guild-name/achievements?namespace=profile-forever-eu"},
+      "activity": {"href": "https://eu.api.blizzard.com/data/wow/guild/guild-name/activity?namespace=profile-forever-eu"}
+    },
+    "not_observed": ["realm", "rank names"]
+  },
+  "roster_member": {
+    "confirmed_fields": [
+      "character.key.href",
+      "character.name",
+      "character.surname",
+      "character.slug",
+      "character.id",
+      "character.level",
+      "character.playable_class.id",
+      "character.playable_race.id",
+      "character.faction.type",
+      "rank"
+    ],
+    "example_shape": {
+      "character": {
+        "key": {"href": "https://eu.api.blizzard.com/profile/wow/character/first-surname?namespace=profile-forever-eu"},
+        "name": "First",
+        "surname": "Surname",
+        "slug": "first-surname",
+        "id": 0,
+        "level": 1,
+        "playable_class": {"id": 1},
+        "playable_race": {"id": 1},
+        "faction": {"type": "ALLIANCE"}
+      },
+      "rank": 0
+    },
+    "rank_zero_means": "guild master, according to the community notes",
+    "absent_from_roster": ["rank name", "class name", "race name", "realm"]
+  },
+  "character_profile_level_10_plus": {
+    "confirmed_fields": [
+      "id",
+      "name",
+      "surname",
+      "name_search",
+      "faction.type",
+      "faction.name",
+      "race.name",
+      "race.id",
+      "character_class.name",
+      "character_class.id",
+      "level",
+      "experience",
+      "guild.name",
+      "guild.id",
+      "guild.slug",
+      "ruleset.name",
+      "ruleset.id",
+      "ruleset.key.href",
+      "last_login_timestamp",
+      "average_item_level",
+      "equipment.href"
+    ],
+    "explicitly_absent": ["realm", "active_spec", "active_title"],
+    "below_level_10": "profile URL returns 404; the character can still appear on the guild roster"
+  },
+  "equipment_and_professions": {
+    "confirmed": "Both subdocuments returned HTTP 200 for level 10+ characters in community probes.",
+    "professions_confirmed_contents": [
+      "primary and secondary groups",
+      "skill current and max for the current rank, such as 75 or 150",
+      "known recipes",
+      "Cooking, Fishing, and First Aid appear as secondaries"
+    ],
+    "equipment_item_fields": "not printed by the community reports; do not assume the retail equipped_items schema until a live sample is saved"
+  }
+}
