@@ -5,6 +5,7 @@ Run from the repository root:
     PYTHONPATH=production python3 -m unittest production.tests.test_companion_phase2
 """
 
+import json
 import os
 import sqlite3
 import sys
@@ -76,6 +77,57 @@ class ReportParserTests(unittest.TestCase):
             with self.assertRaises(companion_reports.ReportError):
                 companion_reports.parse_text(report([(name, "Warrior", "Tank", "5m", "here")]))
 
+    def test_unicode_letters_in_character_names_are_accepted(self):
+        parsed = companion_reports.parse_text(
+            report(
+                [
+                    ("Renée", "Mage", "Damage", "4m", "here"),
+                    ("Łukasz", "Warrior", "Tank", "5m", "here"),
+                    ("Иван", "Priest", "Healer", "6m", "left"),
+                    ("李明", "Druid", "", "7m", "here"),
+                    ("Jose\u0301 Alarcón", "Hunter", "Damage", "<1m", "here"),
+                    ("Jo\u0308rg", "Mage", "", "2m", "left"),
+                ]
+            )
+        )
+        self.assertEqual(
+            [person["name"] for person in parsed["people"]],
+            ["Renée", "Łukasz", "Иван", "李明", "José Alarcón", "Jörg"],
+        )
+        self.assertEqual(parsed["people"][0]["role"], "Damage")
+        self.assertFalse(parsed["people"][2]["here"])
+        twelve = companion_reports.parse_text(report([("Abcdefghijkl", "Mage", "", "1m", "here")]))
+        self.assertEqual(twelve["people"][0]["name"], "Abcdefghijkl")
+
+    def test_name_marks_symbols_and_shape_are_still_rejected(self):
+        rejected = (
+            "A",
+            "Abcdefghijklm",
+            "Renée Swiftblade Junior",
+            "O'Brien",
+            "Ada-Smith",
+            "Ada2",
+            "Ada<script>",
+            "Ada|Smith",
+            "Ada\nSmith",
+            "Ada\x00Smith",
+            "Ada\u200bSmith",
+            "Ada\u202eSmith",
+            "Ada\u00adSmith",
+            "Ada\u00a0Smith",
+            "Ada😀",
+            "\u0301Ada",
+            "q\u0308",
+            "Be\u0301\u0301\u0301",
+            "Ada  Smith",
+            "ʰʰ",
+        )
+        for name in rejected:
+            with self.assertRaises(companion_reports.ReportError):
+                companion_reports.parse_text(report([(name, "Warrior", "Tank", "5m", "here")]))
+        self.assertIsNone(companion_reports._character_name(" Ada"))
+        self.assertIsNone(companion_reports._character_name("Ada "))
+
     def test_a_report_without_the_format_line_is_rejected(self):
         with self.assertRaises(companion_reports.ReportError):
             companion_reports.parse_text("Ironkeep group\nPlace: Hall\n")
@@ -139,6 +191,24 @@ class UploadTests(unittest.TestCase):
         again = self.post_report(body["access_token"], body=report().replace("\n", "\r\n"))
         self.assertEqual(again.status_code, 200, again.text)
         self.assertEqual(again.json(), {"ok": True, "duplicate": True})
+        self.assertEqual(self.report_count(), (1, 1, 0))
+
+    def test_a_unicode_character_name_is_stored_and_a_symbol_is_refused(self):
+        self.enable()
+        self.guild("1", "keep", self.wow_settings(["77"]))
+        self.member_roles[("100", "1")] = ["77"]
+        token = self.issue()["access_token"]
+        body = report([("Renée", "Mage", "Damage", "4m", "here"), ("Bram", "Warrior", "Tank", "5m", "left")])
+        sent = self.post_report(token, body=body)
+        self.assertEqual(sent.status_code, 200, sent.text)
+        self.assertEqual(sent.json(), {"ok": True})
+        stored = sqlite3.connect(self.db_path).execute("SELECT people_json FROM companion_reports").fetchone()[0]
+        people = json.loads(stored)
+        self.assertEqual([person["name"] for person in people], ["Renée", "Bram"])
+        self.assertNotIn("<", stored)
+        refused = self.post_report(token, body=report([("Renée<script>", "Mage", "", "4m", "here")]))
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(refused.json()["error"], "This report could not be read.")
         self.assertEqual(self.report_count(), (1, 1, 0))
 
     def test_invalid_format_oversized_body_and_storage_failure_store_nothing(self):
