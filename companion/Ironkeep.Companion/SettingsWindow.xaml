@@ -14,7 +14,7 @@
       <Button Content="Retry failed" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="RetryClick" AutomationProperties.Name="Retry failed reports"/>
       <Button Content="Save" Style="{StaticResource AccentButton}" Click="SaveClick" AutomationProperties.Name="Save settings"/>
     </StackPanel>
-    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <ScrollViewer Style="{StaticResource IronkeepScrollViewer}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
       <StackPanel>
         <TextBlock Text="Settings" Style="{StaticResource PageTitle}"/>
         <TextBlock Text="Forever folder, the legacy guild connection, and the queue." Style="{StaticResource PageSubtitle}" Margin="0,2,0,16"/>
