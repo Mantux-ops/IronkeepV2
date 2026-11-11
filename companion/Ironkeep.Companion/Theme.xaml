@@ -44,6 +44,11 @@
   <SolidColorBrush x:Key="GreenBorderBrush" Color="#663FD28F"/>
   <SolidColorBrush x:Key="GreyBgBrush" Color="#1A8D95A1"/>
   <SolidColorBrush x:Key="GreyBorderBrush" Color="#598D95A1"/>
+  <SolidColorBrush x:Key="ScrollTrackBrush" Color="{StaticResource Panel2}"/>
+  <SolidColorBrush x:Key="ScrollThumbBrush" Color="{StaticResource Muted}"/>
+  <SolidColorBrush x:Key="ScrollThumbHoverBrush" Color="{StaticResource Text2}"/>
+  <SolidColorBrush x:Key="ScrollThumbPressedBrush" Color="{StaticResource Accent}"/>
+  <SolidColorBrush x:Key="ScrollThumbDisabledBrush" Color="{StaticResource Faint}"/>
 
   <Style TargetType="Window">
     <Setter Property="Background" Value="{StaticResource BgBrush}"/>
@@ -219,7 +224,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="TextBox">
           <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}">
-            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="Center"/>
+            <ScrollViewer x:Name="PART_ContentHost" Style="{DynamicResource IronkeepScrollViewer}" Focusable="False" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocused" Value="True">
@@ -255,7 +260,7 @@
       <Setter.Value>
         <ControlTemplate TargetType="PasswordBox">
           <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Padding="{TemplateBinding Padding}">
-            <ScrollViewer x:Name="PART_ContentHost" Focusable="False" VerticalAlignment="Center"/>
+            <ScrollViewer x:Name="PART_ContentHost" Style="{DynamicResource IronkeepScrollViewer}" Focusable="False" VerticalAlignment="Center"/>
           </Border>
           <ControlTemplate.Triggers>
             <Trigger Property="IsKeyboardFocused" Value="True">
@@ -336,7 +341,7 @@
             <ContentPresenter Margin="11,8,28,8" VerticalAlignment="Center" HorizontalAlignment="Left" IsHitTestVisible="False" Content="{TemplateBinding SelectionBoxItem}" ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"/>
             <Popup x:Name="PART_Popup" Placement="Bottom" AllowsTransparency="True" Focusable="False" IsOpen="{TemplateBinding IsDropDownOpen}" PopupAnimation="Fade">
               <Border Margin="0,6,0,0" MinWidth="{Binding ActualWidth, RelativeSource={RelativeSource TemplatedParent}}" MaxHeight="300" Background="{StaticResource Panel2Brush}" BorderBrush="{StaticResource BorderStrongBrush}" BorderThickness="1" CornerRadius="7" Padding="6">
-                <ScrollViewer>
+                <ScrollViewer Style="{DynamicResource IronkeepScrollViewer}">
                   <ItemsPresenter/>
                 </ScrollViewer>
               </Border>
@@ -416,5 +421,139 @@
     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
     <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
     <Setter Property="ItemContainerStyle" Value="{StaticResource HistoryItem}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ListView">
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" SnapsToDevicePixels="True">
+            <ScrollViewer Style="{DynamicResource IronkeepScrollViewer}" Focusable="False" Padding="{TemplateBinding Padding}" HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}" VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}" CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}" PanningMode="{TemplateBinding ScrollViewer.PanningMode}" IsDeferredScrollingEnabled="{TemplateBinding ScrollViewer.IsDeferredScrollingEnabled}">
+              <ItemsPresenter SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>
+            </ScrollViewer>
+          </Border>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
   </Style>
+
+  <!-- The Windows theme paints ScrollBars that the ScrollViewer template creates.
+       An implicit ScrollBar style does not replace that theme style, so this template
+       sets IronkeepScrollBar directly on the two named bars. -->
+  <Style x:Key="ScrollPageButton" TargetType="RepeatButton">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="RepeatButton">
+          <Border Background="Transparent"/>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style x:Key="ScrollThumb" TargetType="Thumb">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="IsTabStop" Value="False"/>
+    <Setter Property="Focusable" Value="False"/>
+    <Setter Property="MinWidth" Value="0"/>
+    <Setter Property="MinHeight" Value="28"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="Thumb">
+          <!-- SnapsToDevicePixels is inherited from the bar and clips the bottom arc. -->
+          <Grid Background="Transparent" SnapsToDevicePixels="False" UseLayoutRounding="False">
+            <Border x:Name="Thumb" Background="{StaticResource ScrollThumbBrush}" CornerRadius="4" Margin="1" SnapsToDevicePixels="False" UseLayoutRounding="False"/>
+          </Grid>
+          <ControlTemplate.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbHoverBrush}"/>
+            </Trigger>
+            <Trigger Property="IsMouseCaptured" Value="True">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbPressedBrush}"/>
+            </Trigger>
+            <Trigger Property="IsEnabled" Value="False">
+              <Setter TargetName="Thumb" Property="Background" Value="{StaticResource ScrollThumbDisabledBrush}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <DataTrigger Binding="{Binding Orientation, RelativeSource={RelativeSource AncestorType=ScrollBar}}" Value="Horizontal">
+        <Setter Property="MinWidth" Value="28"/>
+        <Setter Property="MinHeight" Value="0"/>
+      </DataTrigger>
+    </Style.Triggers>
+  </Style>
+  <Style x:Key="IronkeepScrollBar" TargetType="ScrollBar">
+    <Setter Property="OverridesDefaultStyle" Value="True"/>
+    <Setter Property="SnapsToDevicePixels" Value="True"/>
+    <Setter Property="Width" Value="14"/>
+    <Setter Property="MinWidth" Value="14"/>
+    <Setter Property="Cursor" Value="Arrow"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ScrollBar">
+          <Border Background="{StaticResource ScrollTrackBrush}" CornerRadius="7" Padding="2" SnapsToDevicePixels="False" UseLayoutRounding="False">
+            <Track x:Name="PART_Track" Focusable="False" IsDirectionReversed="True">
+              <Track.DecreaseRepeatButton>
+                <RepeatButton x:Name="PageDecrease" Style="{StaticResource ScrollPageButton}" Command="{x:Static ScrollBar.PageUpCommand}"/>
+              </Track.DecreaseRepeatButton>
+              <Track.Thumb>
+                <Thumb Style="{StaticResource ScrollThumb}"/>
+              </Track.Thumb>
+              <Track.IncreaseRepeatButton>
+                <RepeatButton x:Name="PageIncrease" Style="{StaticResource ScrollPageButton}" Command="{x:Static ScrollBar.PageDownCommand}"/>
+              </Track.IncreaseRepeatButton>
+            </Track>
+          </Border>
+          <ControlTemplate.Triggers>
+            <Trigger Property="Orientation" Value="Horizontal">
+              <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+              <Setter TargetName="PageDecrease" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+              <Setter TargetName="PageIncrease" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
+            </Trigger>
+          </ControlTemplate.Triggers>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+    <Style.Triggers>
+      <Trigger Property="Orientation" Value="Horizontal">
+        <Setter Property="Width" Value="Auto"/>
+        <Setter Property="MinWidth" Value="0"/>
+        <Setter Property="Height" Value="14"/>
+        <Setter Property="MinHeight" Value="14"/>
+      </Trigger>
+      <Trigger Property="IsEnabled" Value="False">
+        <Setter Property="Opacity" Value="0.7"/>
+      </Trigger>
+    </Style.Triggers>
+  </Style>
+  <Style TargetType="ScrollBar" BasedOn="{StaticResource IronkeepScrollBar}"/>
+
+  <Style x:Key="IronkeepScrollViewer" TargetType="ScrollViewer">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+    <Setter Property="Template">
+      <Setter.Value>
+        <ControlTemplate TargetType="ScrollViewer">
+          <Grid Background="{TemplateBinding Background}" SnapsToDevicePixels="True">
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*"/>
+              <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+            <Grid.RowDefinitions>
+              <RowDefinition Height="*"/>
+              <RowDefinition Height="Auto"/>
+            </Grid.RowDefinitions>
+            <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" Grid.Column="0" Grid.Row="0" Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" CanContentScroll="{TemplateBinding CanContentScroll}" CanHorizontallyScroll="False" CanVerticallyScroll="False" Margin="{TemplateBinding Padding}"/>
+            <ScrollBar x:Name="PART_VerticalScrollBar" Style="{StaticResource IronkeepScrollBar}" Grid.Column="1" Grid.Row="0" Orientation="Vertical" Minimum="0" Maximum="{TemplateBinding ScrollableHeight}" ViewportSize="{TemplateBinding ViewportHeight}" Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" Value="{Binding VerticalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}" Cursor="Arrow" AutomationProperties.AutomationId="VerticalScrollBar"/>
+            <ScrollBar x:Name="PART_HorizontalScrollBar" Style="{StaticResource IronkeepScrollBar}" Grid.Column="0" Grid.Row="1" Orientation="Horizontal" Minimum="0" Maximum="{TemplateBinding ScrollableWidth}" ViewportSize="{TemplateBinding ViewportWidth}" Visibility="{TemplateBinding ComputedHorizontalScrollBarVisibility}" Value="{Binding HorizontalOffset, Mode=OneWay, RelativeSource={RelativeSource TemplatedParent}}" Cursor="Arrow" AutomationProperties.AutomationId="HorizontalScrollBar"/>
+            <Rectangle Grid.Column="1" Grid.Row="1" Fill="{StaticResource PanelBrush}"/>
+          </Grid>
+        </ControlTemplate>
+      </Setter.Value>
+    </Setter>
+  </Style>
+  <Style TargetType="ScrollViewer" BasedOn="{StaticResource IronkeepScrollViewer}"/>
 </ResourceDictionary>
