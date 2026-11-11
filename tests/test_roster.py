@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -157,6 +158,10 @@ class RosterHttpTests(unittest.TestCase):
         self.assertIn("Herberg", page.text)
         self.assertIn("Ada Smith", page.text)
         self.assertNotIn("Bea Stone", page.text)
+        self.assertIn('data-guid="Player-1"', page.text)
+        self.assertIsNone(re.search(r">\s*Player-1\s*<", page.text))
+        self.assertIn('id="roster-search"', page.text)
+        self.assertIn("roster.js", page.text)
 
     def test_attendance_route_still_accepts_its_report(self):
         posted = self.client.post(
@@ -200,6 +205,60 @@ class RosterHttpTests(unittest.TestCase):
         outsider = db.create_session("2002", "Bea", "bea", "discord-access", "discord-refresh", 3600)
         refused = self.client.get("/dutchchaos/roster", cookies={"ik_session": outsider})
         self.assertEqual(refused.status_code, 403, refused.text)
+
+    def test_the_table_sorts_by_name_and_colors_the_class_token(self):
+        payload = snapshot(1794011429)
+        payload["members"] = [
+            {
+                "guid": "Player-1",
+                "name": "Bea Stone",
+                "level": 12,
+                "classToken": "MAGE",
+                "className": "Magiër",
+                "rankName": "Officier",
+            },
+            {
+                "guid": "Player-2",
+                "name": "Ada Smith",
+                "level": 70,
+                "classToken": "WARRIOR",
+                "className": "Warrior",
+                "rankName": "Member",
+            },
+        ]
+        self.assertEqual(self.post(payload).status_code, 200)
+        page = self.client.get("/dutchchaos/roster", cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertLess(page.text.find("Ada Smith"), page.text.find("Bea Stone"))
+        self.assertIn("Magiër", page.text)
+        self.assertIn("#69CCF0", page.text)
+        self.assertIn("#C79C6E", page.text)
+        self.assertIn(">Magiër</option>", page.text)
+        self.assertIn(">Officier</option>", page.text)
+        self.assertIn(">Warrior</option>", page.text)
+        self.assertIn(">Member</option>", page.text)
+        self.assertIn("2 of 2 characters", page.text)
+        self.assertIn('id="roster-none" hidden', page.text)
+        self.assertIn('data-guid="Player-1"', page.text)
+        self.assertIn('data-guid="Player-2"', page.text)
+        self.assertNotIn(">GUID<", page.text)
+        self.assertNotIn(">Guid<", page.text)
+
+    def test_character_names_are_escaped(self):
+        payload = snapshot(1794011429, name="A&B <script>alert(1)</script>")
+        posted = self.post(payload)
+        self.assertEqual(posted.status_code, 200, posted.text)
+        page = self.client.get("/dutchchaos/roster", cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertNotIn("<script>alert", page.text)
+        self.assertIn("A&amp;B &lt;script&gt;alert(1)&lt;/script&gt;", page.text)
+
+    def test_an_empty_roster_explains_how_to_capture_one(self):
+        page = self.client.get("/dutchchaos/roster", cookies={"ik_session": self.website})
+        self.assertEqual(page.status_code, 200, page.text)
+        self.assertIn("No guild roster yet.", page.text)
+        self.assertNotIn("roster.js", page.text)
+        self.assertNotIn("<table", page.text)
 
     def test_a_dutch_class_name_is_stored(self):
         payload = snapshot(1794011429)

@@ -2959,4 +2959,112 @@ a.albion-name:hover {
   .panel__actions {
     flex-wrap: wrap;
   }
+
+.roster-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 12px;
+  margin: 14px 0;
+}
+
+.roster-toolbar .field {
+  margin-top: 0;
+  flex: none;
+  width: 220px;
+}
+
+.roster-toolbar .search {
+  flex: none;
+}
+
+.roster-toolbar .select {
+  width: 100%;
+}
+
+.roster-count {
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.roster-caption {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.table--roster th[data-sort] {
+  padding: 0;
+}
+
+.table--roster th.is-sorted[data-dir="asc"]::after,
+.table--roster th.is-sorted[data-dir="desc"]::after {
+  content: none;
+}
+
+.roster-sort {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  text-align: inherit;
+  padding: 11px 16px;
+  cursor: pointer;
+}
+
+.table--roster th.num .roster-sort {
+  justify-content: center;
+}
+
+.table--roster th.is-sorted[data-dir="asc"] .roster-sort::after { content: "↑"; }
+.table--roster th.is-sorted[data-dir="desc"] .roster-sort::after { content: "↓"; }
+
+.roster-sort:focus-visible {
+  outline: 2px solid var(--accent-border);
+  outline-offset: 2px;
+}
+
+.roster-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+  font-weight: 600;
+}
+
+.roster-name__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.table--roster {
+  min-width: 640px;
+}
+
+@media (max-width: 720px) {
+  .roster-toolbar .search,
+  .roster-toolbar .field {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  .roster-toolbar .search input {
+    width: 100%;
+  }
 }
