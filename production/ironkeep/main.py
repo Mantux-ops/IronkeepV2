@@ -298,6 +298,7 @@ WOW_ERRORS = {
     "caps": "Set the spots for tank, healer and DPS. At least one spot in total.",
     "over": "Those spots add up to more than the size of this dungeon or raid.",
     "discord": "Saved here. Discord could not post the next raid.",
+    "publishing": "This raid is being posted to Discord, so it was not changed. Try again in a minute. If it stays this way, check the bot log before posting it again.",
     "closed": "The raid is closed here. The Discord message could not be updated.",
     "thread": "The raid is closed here. The thread could not be locked.",
     "removed": "The Discord message is still there, so this raid was kept.",
@@ -2125,7 +2126,7 @@ async def update_raid_page(slug: str, raid_id: int, request: Request):
     else:
         rule = wow.loot_rule((form.get("loot_rule") or [""])[0])
         rule_id = None if rule is None else rule["id"]
-    db.update_raid(
+    if not db.update_raid(
         raid_id,
         guild["id"],
         numbers["starts_at"],
@@ -2137,7 +2138,11 @@ async def update_raid_page(slug: str, raid_id: int, request: Request):
         numbers["ends_at"],
         numbers["reminder_minutes"],
         numbers["reminder_2_minutes"],
-    )
+    ):
+        fresh = db.raid_by_id(raid_id)
+        if fresh and db.publication_pending(fresh):
+            return RedirectResponse(f"{target}?error=publishing", status_code=303)
+        return RedirectResponse(target, status_code=303)
     fresh = db.raid_by_id(raid_id)
     if fresh and fresh.get("message_id"):
         try:
@@ -2265,24 +2270,29 @@ def close_raid_page(slug: str, raid_id: int, request: Request):
     raid = db.raid_by_id(raid_id)
     if raid is None or str(raid["guild_id"]) != str(guild["id"]):
         return RedirectResponse(target, status_code=303)
-    db.close_raid(raid_id)
-    close_error = False
-    thread_error = False
-    try:
-        wow.publish(db.guild_by_id(guild["id"]), db.raid_by_id(raid_id))
-    except discord_api.DiscordError:
+    if raid["status"] == "closed":
+        return RedirectResponse(target, status_code=303)
+    if raid["status"] == "open":
+        won = db.close_raid(raid_id, guild["id"])
+    elif raid["status"] == "scheduled":
+        won = db.close_scheduled_raid(raid_id, guild["id"])
+    else:
+        return RedirectResponse(target, status_code=303)
+    if not won:
+        fresh = db.raid_by_id(raid_id)
+        if fresh and db.publication_pending(fresh):
+            return RedirectResponse(f"{target}?error=publishing", status_code=303)
+        return RedirectResponse(target, status_code=303)
+    failed = wow.apply_close_effects(db.guild_by_id(guild["id"]) or guild, raid)
+    close_error = failed["message"]
+    thread_error = failed["thread"]
+    problem = failed["queue"]
+    if close_error:
         db.set_last_error(guild["id"], "Could not close the raid message in Discord.")
-        close_error = True
-    try:
-        wow.archive_question_thread(raid)
-    except discord_api.DiscordError:
+    if thread_error:
         db.set_last_error(guild["id"], "Could not lock the question thread.")
-        thread_error = True
-    try:
-        problem = wow.release_raids(db.guild_by_id(guild["id"]))
-    except discord_api.DiscordError:
+    if problem:
         db.set_last_error(guild["id"], "Could not post the next raid.")
-        problem = "discord"
     if problem:
         return RedirectResponse(f"{target}?error={problem}", status_code=303)
     if close_error:
@@ -2385,13 +2395,22 @@ def delete_raid_page(slug: str, raid_id: int, request: Request):
     raid = db.raid_by_id(raid_id)
     if raid is None or str(raid["guild_id"]) != str(guild["id"]):
         return RedirectResponse(target, status_code=303)
+    if db.publication_pending(raid):
+        return RedirectResponse(f"{target}?error=publishing", status_code=303)
     wow.discard_voice(raid)
     try:
         wow.remove_discord_raid(raid)
     except discord_api.DiscordError:
         db.set_last_error(guild["id"], "Could not delete the raid message in Discord.")
         return RedirectResponse(f"{target}?error=removed", status_code=303)
-    db.delete_raid(raid_id)
+    if not db.delete_raid(raid_id, guild["id"]):
+        fresh = db.raid_by_id(raid_id)
+        if fresh and db.publication_pending(fresh):
+            return RedirectResponse(f"{target}?error=publishing", status_code=303)
+        if fresh:
+            db.set_last_error(guild["id"], "Could not delete the raid message in Discord.")
+            return RedirectResponse(f"{target}?error=removed", status_code=303)
+        return RedirectResponse(target, status_code=303)
     try:
         problem = wow.release_raids(db.guild_by_id(guild["id"]))
     except discord_api.DiscordError:

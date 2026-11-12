@@ -15,6 +15,17 @@ from .mock_data import DEFAULT_MESSAGES
 
 _LOCK = threading.Lock()
 MAX_PARTIES = 4
+# One Create Message call waits at most 20 seconds, retries once, and pauses at most
+# 3 seconds after HTTP 429. 43 seconds is that budget. A slow connection can run
+# longer, so this is not proof that the previous sender has stopped.
+PUBLICATION_REQUEST_BUDGET_SECONDS = 43
+# Local stop on automatic retries. Discord says "a few minutes" and does not
+# give a number, a start time, or a concurrent-request rule. This is not that contract.
+PUBLICATION_NONCE_REUSE_SECONDS = 120
+_PUBLICATION_IDLE = (
+    "post_nonce IS NULL AND post_nonce_at IS NULL AND post_claimed_at IS NULL "
+    "AND post_claim_token IS NULL AND post_recovery_required = 0 AND post_repost_blocked = 0"
+)
 PALETTE = ["#d97706", "#b91c1c", "#7e22ce", "#0284c7", "#0f766e", "#1d4ed8", "#b45309", "#be123c"]
 MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
 
@@ -383,6 +394,20 @@ def connect():
     return conn
 
 
+def begin_immediate():
+    """A write transaction that commits before any Discord call. SQLite, not the process lock, is the lock."""
+    directory = os.path.dirname(config.DB_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA foreign_keys=ON")
+    conn.execute("PRAGMA busy_timeout=10000")
+    conn.execute("BEGIN IMMEDIATE")
+    return conn
+
+
 def init():
     if not config.DB_PATH:
         return
@@ -555,6 +580,21 @@ def _migrate(conn):
         _snapshot_raid_reminders(conn)
     if "party" not in signup_columns:
         conn.execute("ALTER TABLE raid_signups ADD COLUMN party INTEGER NOT NULL DEFAULT 1")
+    raid_columns = {row[1] for row in conn.execute("PRAGMA table_info(raids)")}
+    if "post_nonce" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_nonce TEXT")
+    if "post_nonce_at" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_nonce_at TEXT")
+    if "post_claimed_at" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_claimed_at TEXT")
+    if "post_claim_token" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_claim_token TEXT")
+    if "post_recovery_required" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_recovery_required INTEGER NOT NULL DEFAULT 0")
+    if "post_repost_blocked" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_repost_blocked INTEGER NOT NULL DEFAULT 0")
+    if "close_effects_pending" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN close_effects_pending INTEGER NOT NULL DEFAULT 0")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS voice_stays (
@@ -1722,6 +1762,13 @@ def _raid_from_row(row):
         "voice_seen": row["voice_seen"] if "voice_seen" in row.keys() else 0,
         "voice_empty_at": row["voice_empty_at"] if "voice_empty_at" in row.keys() else None,
         "party_count": row["party_count"] if "party_count" in row.keys() else 1,
+        "post_nonce": row["post_nonce"] if "post_nonce" in row.keys() else None,
+        "post_nonce_at": row["post_nonce_at"] if "post_nonce_at" in row.keys() else None,
+        "post_claimed_at": row["post_claimed_at"] if "post_claimed_at" in row.keys() else None,
+        "post_claim_token": row["post_claim_token"] if "post_claim_token" in row.keys() else None,
+        "post_recovery_required": row["post_recovery_required"] if "post_recovery_required" in row.keys() else 0,
+        "post_repost_blocked": row["post_repost_blocked"] if "post_repost_blocked" in row.keys() else 0,
+        "close_effects_pending": row["close_effects_pending"] if "close_effects_pending" in row.keys() else 0,
     }
 
 
@@ -1965,7 +2012,9 @@ def set_raid_thread(raid_id, thread_id):
     with _LOCK:
         conn = connect()
         conn.execute(
-            "UPDATE raids SET thread_id = ? WHERE id = ? AND thread_id IS NULL",
+            f"""UPDATE raids SET thread_id = ?
+               WHERE id = ? AND thread_id IS NULL
+                 AND NOT (status = 'scheduled' AND NOT ({_PUBLICATION_IDLE}))""",
             (str(thread_id), raid_id),
         )
         conn.commit()
@@ -2273,21 +2322,32 @@ def attendance_counts(guild_id):
 def set_raid_message(raid_id, message_id):
     with _LOCK:
         conn = connect()
-        conn.execute("UPDATE raids SET message_id = ? WHERE id = ?", (str(message_id), raid_id))
+        conn.execute(
+            f"""UPDATE raids SET message_id = ?
+               WHERE id = ? AND NOT (status = 'scheduled' AND NOT ({_PUBLICATION_IDLE}))""",
+            (str(message_id), raid_id),
+        )
         conn.commit()
         conn.close()
 
 
-def delete_raid(raid_id):
+def delete_raid(raid_id, guild_id):
+    """Delete one raid. False when a publication is in flight or its result is unknown."""
     with _LOCK:
         conn = connect()
-        conn.execute("DELETE FROM raid_signups WHERE raid_id = ?", (raid_id,))
-        conn.execute("DELETE FROM voice_stays WHERE raid_id = ?", (raid_id,))
-        conn.execute("DELETE FROM raid_attendance WHERE raid_id = ?", (raid_id,))
-        conn.execute("DELETE FROM raid_voice_channels WHERE raid_id = ?", (raid_id,))
-        conn.execute("DELETE FROM raids WHERE id = ?", (raid_id,))
+        cursor = conn.execute(
+            f"DELETE FROM raids WHERE id = ? AND guild_id = ? AND {_PUBLICATION_IDLE}",
+            (raid_id, str(guild_id)),
+        )
+        deleted = cursor.rowcount == 1
+        if deleted:
+            conn.execute("DELETE FROM raid_signups WHERE raid_id = ?", (raid_id,))
+            conn.execute("DELETE FROM voice_stays WHERE raid_id = ?", (raid_id,))
+            conn.execute("DELETE FROM raid_attendance WHERE raid_id = ?", (raid_id,))
+            conn.execute("DELETE FROM raid_voice_channels WHERE raid_id = ?", (raid_id,))
         conn.commit()
         conn.close()
+    return deleted
 
 
 def hold_raid(raid_id):
@@ -2295,45 +2355,273 @@ def hold_raid(raid_id):
     with _LOCK:
         conn = connect()
         current = conn.execute(
-            "SELECT voice_state FROM raids WHERE id = ? AND status = 'open'",
+            f"SELECT voice_state FROM raids WHERE id = ? AND status = 'open' AND {_PUBLICATION_IDLE}",
             (raid_id,),
         ).fetchone()
-        if current is not None and current["voice_state"] != "done":
+        if current is None:
+            conn.commit()
+            conn.close()
+            return False
+        if current["voice_state"] != "done":
             conn.execute("DELETE FROM raid_voice_channels WHERE raid_id = ?", (raid_id,))
-        conn.execute(
-            """UPDATE raids
+        cursor = conn.execute(
+            f"""UPDATE raids
                SET status = 'scheduled', message_id = NULL, thread_id = NULL, reminder_sent = 0, reminder_2_sent = 0,
+                   post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
+                   post_recovery_required = 0, post_repost_blocked = 0, close_effects_pending = 0,
                    voice_channel_id = CASE WHEN voice_state = 'done' THEN voice_channel_id ELSE NULL END,
                    voice_state = CASE WHEN voice_state = 'done' THEN voice_state ELSE NULL END,
                    voice_seen = CASE WHEN voice_state = 'done' THEN voice_seen ELSE 0 END,
                    voice_empty_at = CASE WHEN voice_state = 'done' THEN voice_empty_at ELSE NULL END
-               WHERE id = ? AND status = 'open'""",
+               WHERE id = ? AND status = 'open' AND {_PUBLICATION_IDLE}""",
             (raid_id,),
         )
+        held = cursor.rowcount == 1
         conn.commit()
         conn.close()
+    return held
 
 
-def close_raid(raid_id):
+def publication_pending(raid):
+    """True while a Discord post is claimed or its result still has to be reconciled."""
+    if not raid:
+        return False
+    return bool(
+        raid.get("post_nonce")
+        or raid.get("post_nonce_at")
+        or raid.get("post_claimed_at")
+        or raid.get("post_claim_token")
+        or int(raid.get("post_recovery_required") or 0)
+        or int(raid.get("post_repost_blocked") or 0)
+    )
+
+
+def close_raid(raid_id, guild_id):
+    """Close an open raid once. True only when this call changed it."""
     with _LOCK:
         conn = connect()
-        conn.execute("UPDATE raids SET status = 'closed' WHERE id = ?", (raid_id,))
-        conn.commit()
-        conn.close()
-
-
-def mark_raid_posted(raid_id, message_id, channel_id, reminder_sent=0, reminder_2_sent=0):
-    """A waiting raid is now the Discord post. A moment that has already passed is not reminded."""
-    with _LOCK:
-        conn = connect()
-        conn.execute(
-            """UPDATE raids
-               SET status = 'open', message_id = ?, channel_id = ?, reminder_sent = ?, reminder_2_sent = ?
-               WHERE id = ? AND status = 'scheduled'""",
-            (str(message_id), str(channel_id), 1 if reminder_sent else 0, 1 if reminder_2_sent else 0, raid_id),
+        cursor = conn.execute(
+            f"""UPDATE raids SET status = 'closed', close_effects_pending = 1
+               WHERE id = ? AND guild_id = ? AND status = 'open' AND {_PUBLICATION_IDLE}""",
+            (raid_id, str(guild_id)),
         )
+        won = cursor.rowcount == 1
         conn.commit()
         conn.close()
+    return won
+
+
+def close_scheduled_raid(raid_id, guild_id):
+    """Close a scheduled raid that is not being published. True only when this call changed it."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            f"""UPDATE raids SET status = 'closed', close_effects_pending = 1
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND {_PUBLICATION_IDLE}""",
+            (raid_id, str(guild_id)),
+        )
+        won = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return won
+
+
+def clear_close_effects(raid_id, guild_id):
+    """The message, thread, and queue steps for this close all succeeded."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            "UPDATE raids SET close_effects_pending = 0 WHERE id = ? AND guild_id = ? AND close_effects_pending = 1",
+            (raid_id, str(guild_id)),
+        )
+        cleared = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return cleared
+
+
+def claim_publication_row(conn, raid_id, guild_id, nonce, nonce_at, token, claimed_at, previous_nonce, budget_before):
+    """Take the publication claim. The nonce stays; the token identifies this owner."""
+    cursor = conn.execute(
+        """UPDATE raids
+           SET post_nonce = ?, post_nonce_at = ?, post_claim_token = ?, post_claimed_at = ?
+           WHERE id = ? AND guild_id = ? AND status = 'scheduled'
+             AND post_recovery_required = 0 AND post_repost_blocked = 0
+             AND (post_claimed_at IS NULL OR post_claimed_at < ?)
+             AND ((? IS NULL AND post_nonce IS NULL) OR post_nonce = ?)""",
+        (
+            nonce,
+            nonce_at,
+            token,
+            claimed_at,
+            raid_id,
+            str(guild_id),
+            budget_before,
+            previous_nonce,
+            previous_nonce,
+        ),
+    )
+    return cursor.rowcount == 1
+
+
+def mark_publication_recovery(raid_id, guild_id, budget_before, conn=None):
+    """Stop automatic posting. A claim that is still inside the request budget is left alone."""
+    own = conn is None
+    if own:
+        conn = connect()
+    cursor = conn.execute(
+        """UPDATE raids
+           SET post_recovery_required = 1, post_repost_blocked = 1, post_claimed_at = NULL, post_claim_token = NULL
+           WHERE id = ? AND guild_id = ? AND status = 'scheduled'
+             AND post_recovery_required = 0 AND post_nonce IS NOT NULL
+             AND (post_claimed_at IS NULL OR post_claimed_at < ?)""",
+        (raid_id, str(guild_id), budget_before),
+    )
+    changed = cursor.rowcount == 1
+    if own:
+        conn.commit()
+        conn.close()
+    return changed
+
+
+def mark_publication_recovery_owned(raid_id, guild_id, token):
+    """The current owner gives up automatic posting and keeps the nonce."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET post_recovery_required = 1, post_repost_blocked = 1, post_claimed_at = NULL, post_claim_token = NULL
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND post_claim_token = ?""",
+            (raid_id, str(guild_id), token),
+        )
+        changed = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return changed
+
+
+def release_publication_claim(raid_id, guild_id, token):
+    """Drop this owner's claim after Discord refused the create. The nonce stays for the retry."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET post_claimed_at = NULL, post_claim_token = NULL
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND post_claim_token = ?""",
+            (raid_id, str(guild_id), token),
+        )
+        released = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return released
+
+
+def finish_publication(raid_id, guild_id, token, message_id, channel_id, reminder_sent=0, reminder_2_sent=0):
+    """Save the Discord message. A stale owner cannot finish a newer claim."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET status = 'open', message_id = ?, channel_id = ?, reminder_sent = ?, reminder_2_sent = ?,
+                   post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
+                   post_recovery_required = 0, post_repost_blocked = 0
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND post_claim_token = ?""",
+            (
+                str(message_id),
+                str(channel_id),
+                1 if reminder_sent else 0,
+                1 if reminder_2_sent else 0,
+                raid_id,
+                str(guild_id),
+                token,
+            ),
+        )
+        saved = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return saved
+
+
+def remember_publication_message(raid_id, guild_id, message_id, channel_id, token=None, nonce=None):
+    """Store a message id that was observed. This does not post and does not open the raid."""
+    if not token and not nonce:
+        return False
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET message_id = ?, channel_id = ?
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled'
+                 AND (message_id IS NULL OR message_id = ?)
+                 AND (post_claim_token = ? OR (? IS NOT NULL AND post_nonce = ?))""",
+            (
+                str(message_id),
+                str(channel_id),
+                raid_id,
+                str(guild_id),
+                str(message_id),
+                token,
+                nonce,
+                nonce,
+            ),
+        )
+        saved = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return saved
+
+
+def finish_observed_publication(raid_id, guild_id, message_id, channel_id, reminder_sent=0, reminder_2_sent=0):
+    """Open a scheduled raid from a message id that was already stored and checked."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET status = 'open', channel_id = ?, reminder_sent = ?, reminder_2_sent = ?,
+                   post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
+                   post_recovery_required = 0, post_repost_blocked = 0
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND message_id = ?""",
+            (
+                str(channel_id),
+                1 if reminder_sent else 0,
+                1 if reminder_2_sent else 0,
+                raid_id,
+                str(guild_id),
+                str(message_id),
+            ),
+        )
+        saved = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return saved
+
+
+def permit_rejected_publication_retry(raid_id, guild_id, nonce):
+    """A definitive rejection proved this nonce did not create a message. One later send may use it."""
+    if not nonce:
+        return False
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET post_recovery_required = 0, post_repost_blocked = 0,
+                   post_claimed_at = NULL, post_claim_token = NULL
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled'
+                 AND post_nonce = ? AND message_id IS NULL""",
+            (raid_id, str(guild_id), nonce),
+        )
+        permitted = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return permitted
+
+
+def raids_on(conn, guild_id):
+    rows = conn.execute(
+        "SELECT * FROM raids WHERE guild_id = ? ORDER BY starts_at, id",
+        (str(guild_id),),
+    ).fetchall()
+    return [_raid_from_row(row) for row in rows]
 
 
 _KEEP = object()
@@ -2362,11 +2650,12 @@ def update_raid(raid_id, guild_id, starts_at, tank_cap, healer_cap, dps_cap, not
         if reminder_2_minutes is _KEEP:
             reminder_2_minutes = row["reminder_2_minutes"] if "reminder_2_minutes" in row.keys() else 0
         reminder_2_minutes = parse_second_reminder(reminder_2_minutes, reminder_minutes)
-        conn.execute(
-            """UPDATE raids
+        cursor = conn.execute(
+            f"""UPDATE raids
                SET starts_at = ?, ends_at = ?, tank_cap = ?, healer_cap = ?, dps_cap = ?, note = ?,
                    reminder_sent = ?, reminder_2_sent = ?, loot_rule = ?, reminder_minutes = ?, reminder_2_minutes = ?
-               WHERE id = ?""",
+               WHERE id = ? AND guild_id = ? AND status IN ('open', 'scheduled')
+                 AND (status != 'scheduled' OR ({_PUBLICATION_IDLE}))""",
             (
                 starts_at,
                 ends_at,
@@ -2380,11 +2669,13 @@ def update_raid(raid_id, guild_id, starts_at, tank_cap, healer_cap, dps_cap, not
                 reminder_minutes,
                 reminder_2_minutes,
                 raid_id,
+                str(guild_id),
             ),
         )
+        saved = cursor.rowcount == 1
         conn.commit()
         conn.close()
-    return True
+    return saved
 
 
 def mark_reminders(raid_id, first=False, second=False):

@@ -58,7 +58,7 @@ def _pause_for_rate_limit(error, parsed):
     return min(max(seconds, 0.2), 3)
 
 
-def _request(method, url, *, headers, body=None, form=None, raw=None, content_type=None):
+def _request(method, url, *, headers, body=None, form=None, raw=None, content_type=None, retry_rate_limit=True):
     data = None
     if raw is not None:
         data = raw
@@ -81,10 +81,14 @@ def _request(method, url, *, headers, body=None, form=None, raw=None, content_ty
                 parsed = json.loads(payload) if payload else {}
             except json.JSONDecodeError:
                 parsed = {"raw": payload}
-            if error.code == 429 and attempt == 0:
+            if error.code == 429 and attempt == 0 and retry_rate_limit:
                 time.sleep(_pause_for_rate_limit(error, parsed))
                 continue
             raise DiscordError(error.code, parsed) from error
+
+
+def _creates_message(method, path):
+    return method == "POST" and path.endswith("/messages")
 
 
 def _api(method, path, *, token, bot=False, body=None):
@@ -94,6 +98,7 @@ def _api(method, path, *, token, bot=False, body=None):
         "https://discord.com/api/v10" + path,
         headers={"Authorization": f"{kind} {token}", "User-Agent": "Ironkeep (https://ironkeep.gg, 0.1)"},
         body=body,
+        retry_rate_limit=not _creates_message(method, path),
     )
     return payload
 
@@ -199,12 +204,22 @@ def _with_files(method, path, payload, files):
         },
         raw=raw,
         content_type=content_type,
+        retry_rate_limit=not _creates_message(method, path),
     )
     return body
 
 
 def send_payload(channel_id, payload, files=None):
     return _with_files("POST", f"/channels/{channel_id}/messages", payload, files)
+
+
+def get_message(channel_id, message_id):
+    return _api(
+        "GET",
+        f"/channels/{channel_id}/messages/{message_id}",
+        token=config.BOT_TOKEN,
+        bot=True,
+    )
 
 
 def matching_attachment_ids(attachments, files):

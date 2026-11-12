@@ -2,6 +2,7 @@
 
 import logging
 import re
+import secrets
 import threading
 import time
 from datetime import timedelta
@@ -2970,12 +2971,13 @@ def _require_open(guild, raid):
     from datetime import datetime, timezone
 
     if raid["status"] == "open" and close_due(raid, guild.get("settings"), datetime.now(timezone.utc)):
-        db.close_raid(raid["id"])
-        raid["status"] = "closed"
-        try:
-            publish(guild, db.raid_by_id(raid["id"]))
-        except Exception:
-            log.warning("Could not close raid %s when it started", raid.get("id"))
+        if db.close_raid(raid["id"], guild["id"]):
+            raid["status"] = "closed"
+            apply_close_effects(guild, raid)
+        else:
+            fresh = db.raid_by_id(raid["id"])
+            if fresh is not None:
+                raid["status"] = fresh["status"]
     if raid["status"] != "open":
         raise PlayerMessage("Deze raid is gesloten.")
 
@@ -3179,6 +3181,94 @@ def _open_lane(guild, raid, user_id, lane, kind):
     return _spec_prompt(raid["id"], lane, kind), None
 
 
+def _close_from_discord(guild, raid):
+    """Close a raid, dungeon, or event from the Discord Sluiten button.
+
+    The saved status wins. Message, thread, and queue updates run after that
+    and cannot reopen the raid or report a successful close when the save failed.
+    """
+    if not db.close_raid(raid["id"], guild["id"]):
+        fresh = db.raid_by_id(raid["id"])
+        if fresh is not None and fresh.get("status") == "closed":
+            return {"content": "Deze raid is gesloten.", "components": []}, None
+        raise PlayerMessage("Er ging iets mis. Probeer het opnieuw.")
+    fresh = db.raid_by_id(raid["id"])
+    if fresh is None or fresh.get("status") != "closed":
+        raise PlayerMessage("Er ging iets mis. Probeer het opnieuw.")
+    failed = apply_close_effects(guild, raid)
+    notes = []
+    if failed["message"]:
+        notes.append("Het bericht in het kanaal kon niet worden bijgewerkt.")
+    if failed["thread"]:
+        notes.append("De thread kon niet worden gesloten.")
+    if failed["queue"]:
+        notes.append("De volgende raid kon niet worden geplaatst.")
+    content = "Gesloten."
+    if notes:
+        content = "\n".join([content, *notes])
+    return {"content": content, "components": []}, None
+
+
+def apply_close_effects(guild, raid):
+    """Edit the closed post, lock its thread, and release the queue. A crash leaves the flag set."""
+    current = db.guild_by_id(guild["id"]) or guild
+    fresh = db.raid_by_id(raid["id"]) or raid
+    failed = {"message": False, "thread": False, "queue": None}
+    try:
+        edit_public(current, fresh)
+    except Exception:
+        log.exception(
+            "Could not update the Discord message for raid %s in guild %s after close",
+            raid.get("id"),
+            guild.get("id"),
+        )
+        failed["message"] = True
+    try:
+        archive_question_thread(fresh if fresh.get("thread_id") else raid)
+    except Exception:
+        log.exception(
+            "Could not lock the question thread for raid %s in guild %s after close",
+            raid.get("id"),
+            guild.get("id"),
+        )
+        failed["thread"] = True
+    try:
+        failed["queue"] = release_raids(current)
+    except Exception:
+        log.exception(
+            "Could not post the next raid for guild %s after closing raid %s",
+            guild.get("id"),
+            raid.get("id"),
+        )
+        failed["queue"] = "discord"
+    else:
+        if failed["queue"]:
+            log.warning(
+                "Could not post the next raid for guild %s after closing raid %s: %s",
+                guild.get("id"),
+                raid.get("id"),
+                failed["queue"],
+            )
+    if not failed["message"] and not failed["thread"] and not failed["queue"]:
+        db.clear_close_effects(raid["id"], guild["id"])
+    return failed
+
+
+def reconcile_pending_closes(guild):
+    """Finish close side effects left behind when the winning caller stopped."""
+    for raid in db.raids_for_guild(guild["id"]):
+        if not raid.get("close_effects_pending"):
+            continue
+        try:
+            apply_close_effects(guild, raid)
+        except Exception:
+            log.exception(
+                "Could not finish closing raid %s in guild %s",
+                raid.get("id"),
+                guild.get("id"),
+            )
+
+
 def _action(guild_id, user_id, name, kind, args, values, role_ids=None):
     if kind in {"ike", "ikea", "ikep", "iked", "ikes"}:
         guild, raid = _raid_for(guild_id, args[0] if args else "")
@@ -3189,7 +3279,7 @@ def _action(guild_id, user_id, name, kind, args, values, role_ids=None):
         if kind == "ikea":
             return {"modal": _settings_modal(guild, raid)}, None
         if kind == "ikes":
-            return {"content": "Gesloten.", "components": []}, None
+            return _close_from_discord(guild, raid)
         if is_event(raid):
             raise PlayerMessage("Een event heeft geen extra party's.")
         count = party_total(raid)
@@ -3472,6 +3562,9 @@ def answer_raid_settings(guild_id, user_id, role_ids, interaction_id, token, cus
             if any(cap < 0 or cap > limit for cap in caps) or sum(caps) < 1 or sum(caps) > limit:
                 raise PlayerMessage("Die plekken passen niet in deze dungeon of raid.")
         if not db.update_raid(raid["id"], guild["id"], starts_at, caps[0], caps[1], caps[2], note, rule_id, ends_at):
+            fresh = db.raid_by_id(raid["id"])
+            if db.publication_pending(fresh):
+                raise PlayerMessage("Deze raid wordt nu op Discord geplaatst. Er is niets gewijzigd.")
             raise PlayerMessage("Dit event is gesloten." if is_event(raid) else "Deze raid is gesloten.")
         if not is_event(raid) and party_total(raid) >= 2:
             db.fill_open_parties(raid["id"])
@@ -3800,9 +3893,353 @@ def queue_plan(raids, settings, now, limit):
     return post, hold
 
 
+_reported_recovery = set()
+# These responses establish that this Create Message did not publish. 429 is one of them.
+# Anything else, including a timeout, can still become a message and must not be retried.
+_DEFINITIVE_CREATE = {400, 401, 403, 404, 405, 413, 429}
+
+
+def _stamp(moment):
+    from datetime import timezone
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S+00:00")
+
+
+def _report_publication_recovery(raid):
+    key = (str(raid.get("guild_id")), int(raid["id"]))
+    if key in _reported_recovery:
+        return
+    _reported_recovery.add(key)
+    log.error(
+        "Raid %s in guild %s needs manual publication recovery. Automatic posting is stopped. "
+        "nonce=%s nonce_at=%s. A missing message is not proof the original request failed. "
+        "Do not clear post_repost_blocked. If the Discord message exists, attach it with "
+        "UPDATE raids SET status='open', message_id='MESSAGE_ID', channel_id='CHANNEL_ID', "
+        "post_nonce=NULL, post_nonce_at=NULL, post_claimed_at=NULL, post_claim_token=NULL, "
+        "post_recovery_required=0, post_repost_blocked=0 "
+        "WHERE id=%s AND guild_id='%s' AND status='scheduled'.",
+        raid.get("id"),
+        raid.get("guild_id"),
+        raid.get("post_nonce"),
+        raid.get("post_nonce_at"),
+        raid.get("id"),
+        raid.get("guild_id"),
+    )
+
+
+def claim_scheduled_posts(guild, now=None):
+    """Claim each scheduled raid the queue would post. The write ends before Discord is called."""
+    from datetime import datetime, timedelta, timezone
+
+    now = now or datetime.now(timezone.utc)
+    claimed_at = _stamp(now)
+    budget_before = _stamp(now - timedelta(seconds=db.PUBLICATION_REQUEST_BUDGET_SECONDS))
+    reuse_before = _stamp(now - timedelta(seconds=db.PUBLICATION_NONCE_REUSE_SECONDS))
+    settings = guild.get("settings")
+    wow_config = db.wow_settings(settings)
+    limit = wow_config["posted_ahead"]
+    stuck = []
+    claimed = []
+    conn = db.begin_immediate()
+    try:
+        raids = db.raids_on(conn, guild["id"])
+        buckets = {}
+        for raid in raids:
+            buckets.setdefault(posting_channel(wow_config, raid), []).append(raid)
+        def consider(raid_id, allow_send):
+            row = conn.execute(
+                "SELECT * FROM raids WHERE id = ? AND guild_id = ?",
+                (raid_id, str(guild["id"])),
+            ).fetchone()
+            if row is None:
+                return
+            fresh = db._raid_from_row(row)
+            if fresh["status"] != "scheduled":
+                return
+            if fresh.get("message_id"):
+                claimed.append(
+                    {
+                        "id": fresh["id"],
+                        "nonce": fresh.get("post_nonce"),
+                        "token": fresh.get("post_claim_token"),
+                        "guild_id": str(guild["id"]),
+                        "confirm_only": True,
+                        "message_id": fresh["message_id"],
+                    }
+                )
+                return
+            if fresh.get("post_recovery_required") or fresh.get("post_repost_blocked"):
+                stuck.append(fresh)
+                return
+            owned_at = fresh.get("post_claimed_at")
+            if owned_at and owned_at >= budget_before:
+                return
+            if fresh.get("post_nonce") and (fresh.get("post_claim_token") or owned_at):
+                db.mark_publication_recovery(fresh["id"], guild["id"], budget_before, conn=conn)
+                fresh["post_recovery_required"] = 1
+                fresh["post_repost_blocked"] = 1
+                stuck.append(fresh)
+                return
+            nonce_at = fresh.get("post_nonce_at")
+            nonce_expired = bool(fresh.get("post_nonce")) and (not nonce_at or nonce_at < reuse_before)
+            if not allow_send or nonce_expired:
+                if fresh.get("post_nonce"):
+                    db.mark_publication_recovery(fresh["id"], guild["id"], budget_before, conn=conn)
+                    fresh["post_recovery_required"] = 1
+                    fresh["post_repost_blocked"] = 1
+                    stuck.append(fresh)
+                return
+            if fresh.get("post_nonce"):
+                nonce = fresh["post_nonce"]
+                nonce_at_value = nonce_at
+            else:
+                nonce = secrets.token_hex(8)
+                nonce_at_value = claimed_at
+            token = secrets.token_hex(16)
+            if db.claim_publication_row(
+                conn,
+                fresh["id"],
+                guild["id"],
+                nonce,
+                nonce_at_value,
+                token,
+                claimed_at,
+                fresh.get("post_nonce"),
+                budget_before,
+            ):
+                claimed.append(
+                    {"id": fresh["id"], "nonce": nonce, "token": token, "guild_id": str(guild["id"])}
+                )
+
+        for group in buckets.values():
+            pending = [
+                raid for raid in group if raid["status"] == "scheduled" and db.publication_pending(raid)
+            ]
+            if pending:
+                for raid in sorted(pending, key=lambda raid: (raid["starts_at"], raid["id"])):
+                    consider(raid["id"], _aware(raid["starts_at"], settings) > now)
+                continue
+            post, _hold = queue_plan(group, settings, now, limit)
+            for raid in post:
+                consider(raid["id"], True)
+        conn.commit()
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        raise
+    finally:
+        conn.close()
+    for raid in stuck:
+        _report_publication_recovery(raid)
+    return claimed
+
+
+def _confirm_published_message(channel_id, message, nonce):
+    """Return the message id, or missing, mismatch, or ambiguous. This does not search channel history."""
+    message_id = str((message or {}).get("id") or "")
+    if not message_id:
+        return "ambiguous"
+    returned = (message or {}).get("nonce")
+    if returned is not None and str(returned) != str(nonce):
+        return "mismatch"
+    try:
+        body = discord_api.get_message(channel_id, message_id)
+    except discord_api.DiscordError as error:
+        code = error.body.get("code") if isinstance(error.body, dict) else None
+        if error.status == 404 and code == 10008:
+            return "missing"
+        return "ambiguous"
+    except OSError:
+        return "ambiguous"
+    if str((body or {}).get("id") or "") != message_id:
+        return "mismatch"
+    seen = (body or {}).get("nonce")
+    if seen is not None and str(seen) != str(nonce):
+        return "mismatch"
+    return message_id
+
+
+def _stop_ambiguous_publication(raid, token):
+    """Keep the nonce and block another Create Message. The first request may still succeed."""
+    if db.mark_publication_recovery_owned(raid["id"], raid["guild_id"], token):
+        saved = db.raid_by_id(raid["id"])
+        if saved:
+            _report_publication_recovery(saved)
+    return "discord"
+
+
+def _reconcile_observed_publication(guild, claim, now):
+    """Finish a message id that is already stored. This does not call Create Message."""
+    import sqlite3
+
+    raid = db.raid_by_id(claim["id"])
+    if raid is None or str(raid["guild_id"]) != str(guild["id"]) or raid.get("status") != "scheduled":
+        return None
+    message_id = str(raid.get("message_id") or "")
+    channel_id = str(raid.get("channel_id") or "")
+    if not message_id or not channel_id:
+        return "discord"
+    try:
+        body = discord_api.get_message(channel_id, message_id)
+    except discord_api.DiscordError as error:
+        code = error.body.get("code") if isinstance(error.body, dict) else None
+        if error.status == 404 and code == 10008 and raid.get("post_claim_token"):
+            if db.mark_publication_recovery_owned(raid["id"], guild["id"], raid["post_claim_token"]):
+                saved = db.raid_by_id(raid["id"])
+                if saved:
+                    _report_publication_recovery(saved)
+        return "discord"
+    except OSError:
+        return "discord"
+    seen = (body or {}).get("nonce")
+    nonce = raid.get("post_nonce")
+    if seen is not None and nonce and str(seen) != str(nonce):
+        if raid.get("post_claim_token"):
+            _stop_ambiguous_publication(raid, raid["post_claim_token"])
+        return "discord"
+    if str((body or {}).get("id") or "") != message_id:
+        return "discord"
+    skip_first, skip_second = reminder_skips(raid, guild.get("settings"), now)
+    try:
+        saved = False
+        if raid.get("post_claim_token"):
+            saved = db.finish_publication(
+                raid["id"], guild["id"], raid["post_claim_token"], message_id, channel_id, skip_first, skip_second
+            )
+        if not saved:
+            saved = db.finish_observed_publication(
+                raid["id"], guild["id"], message_id, channel_id, skip_first, skip_second
+            )
+    except sqlite3.OperationalError:
+        log.exception(
+            "Could not save the Discord message for raid %s in guild %s",
+            raid["id"],
+            guild["id"],
+        )
+        return "discord"
+    if not saved:
+        return "discord"
+    post_creation_log(guild, raid, message_id, channel_id)
+    try:
+        open_question_thread(guild, db.raid_by_id(raid["id"]))
+    except discord_api.DiscordError as error:
+        log.warning("Could not open a question thread for raid %s: %s", raid["id"], error)
+    return None
+
+
+def _settle_publication(guild, claim, now):
+    """Send one claimed raid, or finish a message id that was already observed."""
+    import sqlite3
+
+    if claim.get("confirm_only"):
+        return _reconcile_observed_publication(guild, claim, now)
+    raid = db.raid_by_id(claim["id"])
+    token = claim["token"]
+    nonce = claim["nonce"]
+    if raid is None or str(raid["guild_id"]) != str(guild["id"]) or raid.get("status") != "scheduled":
+        return None
+    if raid.get("message_id"):
+        return _reconcile_observed_publication(guild, claim, now)
+    if raid.get("post_claim_token") != token:
+        return None
+    settings = guild.get("settings")
+    wow_config = db.wow_settings(settings)
+    instance = instance_by_id(raid.get("instance_id")) or {"kind": "raid"}
+    channel_id = event_channel(wow_config, instance)
+    if not channel_id:
+        db.release_publication_claim(raid["id"], guild["id"], token)
+        return "channel"
+    posting = dict(raid)
+    posting["status"] = "open"
+    posting["channel_id"] = channel_id
+    payload = message_payload(guild, posting, db.signups_for(raid["id"]))
+    payload["nonce"] = nonce
+    payload["enforce_nonce"] = True
+    try:
+        message = discord_api.send_payload(
+            channel_id, payload, files=message_files(posting, guild)
+        )
+    except discord_api.DiscordError as error:
+        if error.status in _DEFINITIVE_CREATE:
+            if not db.release_publication_claim(raid["id"], guild["id"], token):
+                db.permit_rejected_publication_retry(raid["id"], guild["id"], nonce)
+            log.warning(
+                "Discord refused the post for raid %s in guild %s: HTTP %s",
+                raid["id"],
+                guild["id"],
+                error.status,
+            )
+            return "discord"
+        log.warning(
+            "Discord did not confirm the post for raid %s in guild %s: HTTP %s",
+            raid["id"],
+            guild["id"],
+            error.status,
+        )
+        return _stop_ambiguous_publication(raid, token)
+    except OSError:
+        log.warning(
+            "Discord did not confirm the post for raid %s in guild %s: no response",
+            raid["id"],
+            guild["id"],
+        )
+        return _stop_ambiguous_publication(raid, token)
+    verdict = _confirm_published_message(channel_id, message, nonce)
+    if verdict == "ambiguous":
+        body_id = str((message or {}).get("id") or "")
+        body_nonce = (message or {}).get("nonce")
+        if body_id and (body_nonce is None or str(body_nonce) == str(nonce)):
+            db.remember_publication_message(
+                raid["id"], guild["id"], body_id, channel_id, token=token, nonce=nonce
+            )
+            log.warning(
+                "Discord did not confirm the post for raid %s in guild %s",
+                raid["id"],
+                guild["id"],
+            )
+            return "discord"
+        return _stop_ambiguous_publication(raid, token)
+    if verdict in ("missing", "mismatch"):
+        if db.mark_publication_recovery_owned(raid["id"], guild["id"], token):
+            saved = db.raid_by_id(raid["id"])
+            if saved:
+                _report_publication_recovery(saved)
+        return "discord"
+    skip_first, skip_second = reminder_skips(raid, settings, now)
+    db.remember_publication_message(raid["id"], guild["id"], verdict, channel_id, token=token, nonce=nonce)
+    try:
+        saved = db.finish_publication(
+            raid["id"], guild["id"], token, verdict, channel_id, skip_first, skip_second
+        )
+    except sqlite3.OperationalError:
+        log.exception(
+            "Could not save the Discord message for raid %s in guild %s",
+            raid["id"],
+            guild["id"],
+        )
+        return "discord"
+    if not saved:
+        log.warning(
+            "Did not save raid %s in guild %s because the publication claim changed",
+            raid["id"],
+            guild["id"],
+        )
+        return "discord"
+    post_creation_log(guild, raid, verdict, channel_id)
+    try:
+        open_question_thread(guild, db.raid_by_id(raid["id"]))
+    except discord_api.DiscordError as error:
+        log.warning("Could not open a question thread for raid %s: %s", raid["id"], error)
+    return None
+
+
 def release_raids(guild, now=None):
     """Discord shows the soonest raids, up to the chosen number. A later one makes room when an earlier raid is waiting."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timezone
 
     now = now or datetime.now(timezone.utc)
     settings = guild.get("settings")
@@ -3810,14 +4247,21 @@ def release_raids(guild, now=None):
     limit = config["posted_ahead"]
     for raid in db.raids_for_guild(guild["id"]):
         if raid["status"] == "scheduled" and _aware(raid["starts_at"], settings) <= now:
-            db.close_raid(raid["id"])
+            if db.close_scheduled_raid(raid["id"], guild["id"]):
+                continue
+            fresh = db.raid_by_id(raid["id"])
+            if db.publication_pending(fresh):
+                log.warning(
+                    "Did not cancel scheduled raid %s in guild %s because its Discord publication is unresolved",
+                    raid.get("id"),
+                    guild.get("id"),
+                )
+    hold = []
     buckets = {}
     for raid in db.raids_for_guild(guild["id"]):
         buckets.setdefault(posting_channel(config, raid), []).append(raid)
-    post, hold = [], []
     for group in buckets.values():
-        group_post, group_hold = queue_plan(group, settings, now, limit)
-        post.extend(group_post)
+        _post, group_hold = queue_plan(group, settings, now, limit)
         hold.extend(group_hold)
     for raid in hold:
         try:
@@ -3827,31 +4271,21 @@ def release_raids(guild, now=None):
         except discord_api.DiscordError as error:
             log.warning("Could not make room for an earlier raid %s: %s", raid.get("id"), error.status)
             continue
-        db.hold_raid(raid["id"])
-    for raid in post:
-        fresh = db.raid_by_id(raid["id"])
-        if fresh is None or fresh["status"] != "scheduled":
-            continue
-        instance = instance_by_id(fresh.get("instance_id")) or {"kind": "raid"}
-        channel_id = event_channel(config, instance)
-        if not channel_id:
-            return "channel"
-        posting = dict(fresh)
-        posting["status"] = "open"
-        posting["channel_id"] = channel_id
-        signups = db.signups_for(fresh["id"])
-        message = discord_api.send_payload(
-            channel_id, message_payload(guild, posting, signups), files=message_files(posting, guild)
-        )
-        skip_first, skip_second = reminder_skips(fresh, settings, now)
-        db.mark_raid_posted(fresh["id"], message["id"], channel_id, skip_first, skip_second)
-        post_creation_log(guild, fresh, message["id"], channel_id)
-        try:
-            open_question_thread(guild, db.raid_by_id(fresh["id"]))
-        except discord_api.DiscordError as error:
-            log.warning("Could not open a question thread for raid %s: %s", fresh["id"], error)
+        if not db.hold_raid(raid["id"]):
+            log.warning("Could not return raid %s to the queue", raid.get("id"))
+    try:
+        claims = claim_scheduled_posts(guild, now)
+    except Exception:
+        log.exception("Could not claim the next raid for guild %s", guild.get("id"))
+        ensure_question_threads(guild)
+        return "discord"
+    problem = None
+    for claim in claims:
+        result = _settle_publication(guild, claim, now)
+        if result and problem is None:
+            problem = result
     ensure_question_threads(guild)
-    return None
+    return problem
 
 
 VOICE_BEFORE = timedelta(hours=1)
@@ -4689,6 +5123,10 @@ def run_schedule(now=None):
         if guild.get("game") != "wow" or guild.get("approval") != "approved" or not guild.get("bot_present"):
             continue
         try:
+            reconcile_pending_closes(guild)
+        except Exception:
+            log.exception("Could not finish a closed raid for %s", guild.get("id"))
+        try:
             sync_voice(guild, now)
         except Exception as error:
             detail = getattr(error, "body", None) or error
@@ -4702,17 +5140,9 @@ def run_schedule(now=None):
             if raid.get("status") != "open":
                 continue
             if close_due(raid, guild.get("settings"), now):
-                db.close_raid(raid["id"])
-                try:
-                    publish(guild, db.raid_by_id(raid["id"]))
-                except Exception as error:
-                    detail = getattr(error, "body", None) or error
-                    log.warning("Could not close raid %s at start: %s", raid.get("id"), detail)
-                try:
-                    archive_question_thread(raid)
-                except Exception as error:
-                    detail = getattr(error, "body", None) or error
-                    log.warning("Could not archive the question thread for raid %s: %s", raid.get("id"), detail)
+                if not db.close_raid(raid["id"], guild["id"]):
+                    continue
+                apply_close_effects(guild, raid)
                 continue
             fresh = db.raid_by_id(raid["id"]) or raid
             minutes, mark_first, mark_second = reminder_plan(fresh, guild.get("settings"), now)
