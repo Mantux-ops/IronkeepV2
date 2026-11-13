@@ -882,14 +882,47 @@ def mark_bot_left(discord_id):
         conn.close()
 
 
-def delete_guild(slug):
-    with _LOCK:
-        conn = connect()
+_UNRESOLVED_PUBLICATION = """
+    post_nonce IS NOT NULL OR post_nonce_at IS NOT NULL
+    OR post_claimed_at IS NOT NULL OR post_claim_token IS NOT NULL
+    OR post_recovery_required = 1 OR post_repost_blocked = 1
+"""
+
+
+def guild_has_unresolved_publication(slug):
+    """True when this guild still has a Discord create that must not be discarded."""
+    conn = begin_immediate()
+    try:
         row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
         if row is None:
-            conn.close()
-            return
+            conn.rollback()
+            return False
+        pending = conn.execute(
+            f"SELECT id FROM raids WHERE guild_id = ? AND ({_UNRESOLVED_PUBLICATION}) LIMIT 1",
+            (row["id"],),
+        ).fetchone()
+        conn.rollback()
+    finally:
+        conn.close()
+    return pending is not None
+
+
+def delete_guild(slug):
+    """Delete one guild. False when a raid publication is still unresolved."""
+    conn = begin_immediate()
+    try:
+        row = conn.execute("SELECT id FROM guilds WHERE slug = ?", (slug,)).fetchone()
+        if row is None:
+            conn.rollback()
+            return None
         guild_id = row["id"]
+        pending = conn.execute(
+            f"SELECT id FROM raids WHERE guild_id = ? AND ({_UNRESOLVED_PUBLICATION}) LIMIT 1",
+            (guild_id,),
+        ).fetchone()
+        if pending is not None:
+            conn.rollback()
+            return False
         conn.execute("DELETE FROM trials WHERE guild_id = ?", (guild_id,))
         conn.execute("DELETE FROM member_cache WHERE guild_id = ?", (guild_id,))
         conn.execute("DELETE FROM raid_signups WHERE raid_id IN (SELECT id FROM raids WHERE guild_id = ?)", (guild_id,))
@@ -907,7 +940,12 @@ def delete_guild(slug):
         conn.execute("DELETE FROM errors WHERE guild = ?", (slug,))
         conn.execute("DELETE FROM guilds WHERE id = ?", (guild_id,))
         conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
         conn.close()
+    return True
 
 
 def mark_missing_guilds(present_ids):
@@ -2563,6 +2601,35 @@ def remember_publication_message(raid_id, guild_id, message_id, channel_id, toke
                 token,
                 nonce,
                 nonce,
+            ),
+        )
+        saved = cursor.rowcount == 1
+        conn.commit()
+        conn.close()
+    return saved
+
+
+def finalize_verified_publication(raid_id, guild_id, message_id, channel_id, nonce, reminder_sent=0, reminder_2_sent=0):
+    """Open a recovered raid only when this guild, nonce, and message id still match."""
+    with _LOCK:
+        conn = connect()
+        cursor = conn.execute(
+            """UPDATE raids
+               SET status = 'open', message_id = ?, channel_id = ?, reminder_sent = ?, reminder_2_sent = ?,
+                   post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
+                   post_recovery_required = 0, post_repost_blocked = 0
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND post_nonce = ?
+                 AND (post_recovery_required = 1 OR post_repost_blocked = 1)
+                 AND (message_id IS NULL OR message_id = ?)""",
+            (
+                str(message_id),
+                str(channel_id),
+                1 if reminder_sent else 0,
+                1 if reminder_2_sent else 0,
+                raid_id,
+                str(guild_id),
+                nonce,
+                str(message_id),
             ),
         )
         saved = cursor.rowcount == 1

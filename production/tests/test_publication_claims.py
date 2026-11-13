@@ -447,7 +447,7 @@ class PublicationClaimTests(unittest.TestCase):
         self.assertIsNone(saved["message_id"])
         self.assertEqual(self.sends, [])
         self.assertIn("manual publication recovery", logs.output[0])
-        self.assertIn("MESSAGE_ID", logs.output[0])
+        self.assertIn("attach_verified_publication", logs.output[0])
         self.assertIn("Do not clear post_repost_blocked", logs.output[0])
         self.assertNotIn("allow one new post", logs.output[0])
         self.assertIn(str(raid_id), logs.output[0])
@@ -698,6 +698,71 @@ class PublicationClaimTests(unittest.TestCase):
         raid_id = self._open("Open", _when())
         self.assertFalse(db.close_raid(raid_id, "9999"))
         self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+
+    def test_guild_delete_keeps_an_unresolved_publication(self):
+        raid_id = self._scheduled("Held")
+        conn = db.connect()
+        conn.execute(
+            "UPDATE raids SET post_nonce = ?, post_recovery_required = 1, post_repost_blocked = 1 WHERE id = ?",
+            ("held-nonce", raid_id),
+        )
+        conn.commit()
+        conn.close()
+        self.assertTrue(db.guild_has_unresolved_publication(self.guild["slug"]))
+        self.assertIs(db.delete_guild(self.guild["slug"]), False)
+        self.assertEqual(db.raid_by_id(raid_id)["post_nonce"], "held-nonce")
+        self.assertIsNotNone(db.guild_by_id(GUILD_ID))
+
+    def test_guild_delete_removes_an_idle_guild(self):
+        self._open("Open", _when())
+        self.assertIs(db.delete_guild(self.guild["slug"]), True)
+        self.assertIsNone(db.guild_by_id(GUILD_ID))
+
+    def test_verified_attach_requires_guild_channel_owner_and_nonce(self):
+        raid_id = self._scheduled("Recover")
+        conn = db.connect()
+        conn.execute(
+            "UPDATE raids SET post_nonce = ?, post_recovery_required = 1, post_repost_blocked = 1 WHERE id = ?",
+            ("nonce-1", raid_id),
+        )
+        conn.commit()
+        conn.close()
+        body = {"id": "900", "channel_id": CHANNEL_ID, "nonce": "nonce-1", "author": {"id": "bot-1"}}
+        with patch("ironkeep.wow.discord_api.get_message", return_value=dict(body)), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            self.assertEqual(wow.attach_verified_publication("9999", raid_id, "900"), "guild")
+            wrong = dict(body, nonce="other")
+            with patch("ironkeep.wow.discord_api.get_message", return_value=wrong):
+                self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "nonce")
+            stranger = dict(body, author={"id": "someone-else"})
+            with patch("ironkeep.wow.discord_api.get_message", return_value=stranger):
+                self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "owner")
+            fetched = {key: value for key, value in body.items() if key != "nonce"}
+            with patch("ironkeep.wow.discord_api.get_message", return_value=fetched):
+                self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), None)
+        saved = db.raid_by_id(raid_id)
+        self.assertEqual(saved["status"], "open")
+        self.assertEqual(saved["message_id"], "900")
+        self.assertEqual(saved["channel_id"], CHANNEL_ID)
+        self.assertEqual(saved["post_nonce"], None)
+        self.assertEqual(saved["post_repost_blocked"], 0)
+        self.assertEqual(self.sends, [])
+        second = self._scheduled("Recover with nonce")
+        conn = db.connect()
+        conn.execute(
+            "UPDATE raids SET post_nonce = ?, post_recovery_required = 1, post_repost_blocked = 1 WHERE id = ?",
+            ("nonce-2", second),
+        )
+        conn.commit()
+        conn.close()
+        matched = {"id": "901", "channel_id": CHANNEL_ID, "nonce": "nonce-2", "author": {"id": "bot-1"}}
+        with patch("ironkeep.wow.discord_api.get_message", return_value=matched), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            self.assertIsNone(wow.attach_verified_publication(GUILD_ID, second, "901"))
+        self.assertEqual(db.raid_by_id(second)["message_id"], "901")
+        self.assertEqual(self.sends, [])
 
 
 class PublicationMigrationTests(unittest.TestCase):

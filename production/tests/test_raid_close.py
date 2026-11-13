@@ -483,6 +483,9 @@ class DiscordRaidCloseTests(unittest.TestCase):
         self.assertEqual(self.archived, [f"thread-{raid_id}"])
         self.assertEqual(self.releases, 1)
         self.assertEqual(db.raid_by_id(queued)["status"], "open")
+        self.assertEqual(db.raid_by_id(raid_id)["close_effects_pending"], 0)
+        wow.reconcile_pending_closes(self.guild)
+        self.assertEqual(self.releases, 1)
 
     def test_archive_failure_still_releases(self):
         raid_id = self._raid("hall-of-thanes", "Hall of Thanes", 5)
@@ -502,6 +505,7 @@ class DiscordRaidCloseTests(unittest.TestCase):
         self.assertEqual(self.archived, [f"thread-{raid_id}"])
         self.assertEqual(self.releases, 1)
         self.assertEqual(db.raid_by_id(queued)["status"], "open")
+        self.assertEqual(db.raid_by_id(raid_id)["close_effects_pending"], 1)
 
     def test_release_failure_keeps_the_closed_raid(self):
         raid_id = self._raid("onyxias-lair", "Onyxia's Lair", 40)

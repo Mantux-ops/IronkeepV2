@@ -3209,29 +3209,54 @@ def _close_from_discord(guild, raid):
     return {"content": content, "components": []}, None
 
 
+def _missing_discord_resource(error):
+    """Unknown Message or Unknown Channel. The resource will not reappear."""
+    if not isinstance(error, discord_api.DiscordError) or error.status != 404:
+        return False
+    code = error.body.get("code") if isinstance(error.body, dict) else None
+    return code in (10003, 10008)
+
+
 def apply_close_effects(guild, raid):
     """Edit the closed post, lock its thread, and release the queue. A crash leaves the flag set."""
     current = db.guild_by_id(guild["id"]) or guild
     fresh = db.raid_by_id(raid["id"]) or raid
     failed = {"message": False, "thread": False, "queue": None}
+    gone = {"message": False, "thread": False}
     try:
         edit_public(current, fresh)
-    except Exception:
-        log.exception(
-            "Could not update the Discord message for raid %s in guild %s after close",
-            raid.get("id"),
-            guild.get("id"),
-        )
-        failed["message"] = True
+    except Exception as error:
+        if _missing_discord_resource(error):
+            gone["message"] = True
+            log.warning(
+                "The Discord message for raid %s in guild %s is already gone",
+                raid.get("id"),
+                guild.get("id"),
+            )
+        else:
+            log.exception(
+                "Could not update the Discord message for raid %s in guild %s after close",
+                raid.get("id"),
+                guild.get("id"),
+            )
+            failed["message"] = True
     try:
         archive_question_thread(fresh if fresh.get("thread_id") else raid)
-    except Exception:
-        log.exception(
-            "Could not lock the question thread for raid %s in guild %s after close",
-            raid.get("id"),
-            guild.get("id"),
-        )
-        failed["thread"] = True
+    except Exception as error:
+        if _missing_discord_resource(error):
+            gone["thread"] = True
+            log.warning(
+                "The question thread for raid %s in guild %s is already gone",
+                raid.get("id"),
+                guild.get("id"),
+            )
+        else:
+            log.exception(
+                "Could not lock the question thread for raid %s in guild %s after close",
+                raid.get("id"),
+                guild.get("id"),
+            )
+            failed["thread"] = True
     try:
         failed["queue"] = release_raids(current)
     except Exception:
@@ -3251,7 +3276,11 @@ def apply_close_effects(guild, raid):
             )
     if not failed["message"] and not failed["thread"] and not failed["queue"]:
         db.clear_close_effects(raid["id"], guild["id"])
-    return failed
+    return {
+        "message": failed["message"] or gone["message"],
+        "thread": failed["thread"] or gone["thread"],
+        "queue": failed["queue"],
+    }
 
 
 def reconcile_pending_closes(guild):
@@ -3915,18 +3944,56 @@ def _report_publication_recovery(raid):
     log.error(
         "Raid %s in guild %s needs manual publication recovery. Automatic posting is stopped. "
         "nonce=%s nonce_at=%s. A missing message is not proof the original request failed. "
-        "Do not clear post_repost_blocked. If the Discord message exists, attach it with "
-        "UPDATE raids SET status='open', message_id='MESSAGE_ID', channel_id='CHANNEL_ID', "
-        "post_nonce=NULL, post_nonce_at=NULL, post_claimed_at=NULL, post_claim_token=NULL, "
-        "post_recovery_required=0, post_repost_blocked=0 "
-        "WHERE id=%s AND guild_id='%s' AND status='scheduled'.",
+        "Do not clear post_repost_blocked. If the Discord message exists, attach that message id with "
+        "wow.attach_verified_publication('%s', %s, message_id). "
+        "A later fetch does not include the nonce. The function checks the bot, the channel, and this raid's stored nonce.",
         raid.get("id"),
         raid.get("guild_id"),
         raid.get("post_nonce"),
         raid.get("post_nonce_at"),
-        raid.get("id"),
         raid.get("guild_id"),
+        raid.get("id"),
     )
+
+
+def attach_verified_publication(guild_id, raid_id, message_id):
+    """Attach one observed Discord message. This does not send a message or clear a block by itself."""
+    raid = db.raid_by_id(raid_id)
+    if raid is None or str(raid.get("guild_id")) != str(guild_id):
+        return "guild"
+    if raid.get("status") != "scheduled":
+        return "status"
+    nonce = raid.get("post_nonce")
+    if not nonce:
+        return "nonce"
+    if not int(raid.get("post_recovery_required") or 0) and not int(raid.get("post_repost_blocked") or 0):
+        return "claim"
+    channel_id = str(raid.get("channel_id") or "")
+    if not channel_id:
+        return "channel"
+    try:
+        body = discord_api.get_message(channel_id, message_id)
+        bot = discord_api.bot_user() or {}
+    except discord_api.DiscordError as error:
+        code = error.body.get("code") if isinstance(error.body, dict) else None
+        if error.status == 404 and code == 10008:
+            return "missing"
+        return "discord"
+    except OSError:
+        return "discord"
+    if not isinstance(body, dict) or str(body.get("id") or "") != str(message_id):
+        return "identity"
+    if str(body.get("channel_id") or "") != channel_id:
+        return "channel"
+    author = str((body.get("author") or {}).get("id") or "")
+    if not author or author != str(bot.get("id") or ""):
+        return "owner"
+    seen = body.get("nonce")
+    if seen is not None and str(seen) != str(nonce):
+        return "nonce"
+    if not db.finalize_verified_publication(raid_id, guild_id, message_id, channel_id, nonce):
+        return "claim"
+    return None
 
 
 def claim_scheduled_posts(guild, now=None):

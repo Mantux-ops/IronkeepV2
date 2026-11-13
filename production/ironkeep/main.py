@@ -525,6 +525,8 @@ async def guild_decision(slug: str, request: Request):
             except discord_api.DiscordError:
                 db.set_last_error(guild["id"], "Could not message the person who added the bot")
     elif decision == "reject":
+        if db.guild_has_unresolved_publication(slug):
+            return JSONResponse({"error": "publication unresolved"}, status_code=409)
         try:
             discord_api.leave_guild(guild["id"])
         except discord_api.DiscordError as error:
@@ -540,7 +542,8 @@ async def guild_decision(slug: str, request: Request):
                 discord_api.send_dm(guild["added_by_id"], text[:2000])
             except discord_api.DiscordError:
                 pass
-        db.delete_guild(slug)
+        if db.delete_guild(slug) is False:
+            return JSONResponse({"error": "publication unresolved"}, status_code=409)
     else:
         return JSONResponse({"error": "bad decision"}, status_code=400)
     return {"ok": True}
