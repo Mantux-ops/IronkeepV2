@@ -595,6 +595,8 @@ def _migrate(conn):
         conn.execute("ALTER TABLE raids ADD COLUMN post_repost_blocked INTEGER NOT NULL DEFAULT 0")
     if "close_effects_pending" not in raid_columns:
         conn.execute("ALTER TABLE raids ADD COLUMN close_effects_pending INTEGER NOT NULL DEFAULT 0")
+    if "post_channel_bound" not in raid_columns:
+        conn.execute("ALTER TABLE raids ADD COLUMN post_channel_bound INTEGER NOT NULL DEFAULT 0")
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS voice_stays (
@@ -1807,6 +1809,7 @@ def _raid_from_row(row):
         "post_recovery_required": row["post_recovery_required"] if "post_recovery_required" in row.keys() else 0,
         "post_repost_blocked": row["post_repost_blocked"] if "post_repost_blocked" in row.keys() else 0,
         "close_effects_pending": row["close_effects_pending"] if "close_effects_pending" in row.keys() else 0,
+        "post_channel_bound": row["post_channel_bound"] if "post_channel_bound" in row.keys() else 0,
     }
 
 
@@ -2407,6 +2410,7 @@ def hold_raid(raid_id):
                SET status = 'scheduled', message_id = NULL, thread_id = NULL, reminder_sent = 0, reminder_2_sent = 0,
                    post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
                    post_recovery_required = 0, post_repost_blocked = 0, close_effects_pending = 0,
+                   post_channel_bound = 0,
                    voice_channel_id = CASE WHEN voice_state = 'done' THEN voice_channel_id ELSE NULL END,
                    voice_state = CASE WHEN voice_state = 'done' THEN voice_state ELSE NULL END,
                    voice_seen = CASE WHEN voice_state = 'done' THEN voice_seen ELSE 0 END,
@@ -2478,26 +2482,24 @@ def clear_close_effects(raid_id, guild_id):
     return cleared
 
 
-def claim_publication_row(conn, raid_id, guild_id, nonce, nonce_at, token, claimed_at, previous_nonce, budget_before):
-    """Take the publication claim. The nonce stays; the token identifies this owner."""
+def claim_publication_row(
+    conn, raid_id, guild_id, nonce, nonce_at, token, claimed_at, previous_nonce, budget_before, destination=None
+):
+    """Take the publication claim. The first claim stores the channel it will use."""
+    channel_sql = ", channel_id = ?, post_channel_bound = 1" if destination else ""
+    bound_sql = "" if destination else " AND post_channel_bound = 1"
+    params = [nonce, nonce_at, token, claimed_at]
+    if destination:
+        params.append(str(destination))
+    params.extend([raid_id, str(guild_id), budget_before, previous_nonce, previous_nonce])
     cursor = conn.execute(
-        """UPDATE raids
-           SET post_nonce = ?, post_nonce_at = ?, post_claim_token = ?, post_claimed_at = ?
+        f"""UPDATE raids
+           SET post_nonce = ?, post_nonce_at = ?, post_claim_token = ?, post_claimed_at = ?{channel_sql}
            WHERE id = ? AND guild_id = ? AND status = 'scheduled'
              AND post_recovery_required = 0 AND post_repost_blocked = 0
              AND (post_claimed_at IS NULL OR post_claimed_at < ?)
-             AND ((? IS NULL AND post_nonce IS NULL) OR post_nonce = ?)""",
-        (
-            nonce,
-            nonce_at,
-            token,
-            claimed_at,
-            raid_id,
-            str(guild_id),
-            budget_before,
-            previous_nonce,
-            previous_nonce,
-        ),
+             AND ((? IS NULL AND post_nonce IS NULL) OR post_nonce = ?){bound_sql}""",
+        params,
     )
     return cursor.rowcount == 1
 
@@ -2610,32 +2612,46 @@ def remember_publication_message(raid_id, guild_id, message_id, channel_id, toke
 
 
 def finalize_verified_publication(raid_id, guild_id, message_id, channel_id, nonce, reminder_sent=0, reminder_2_sent=0):
-    """Open a recovered raid only when this guild, nonce, and message id still match."""
-    with _LOCK:
-        conn = connect()
+    """Open a recovered raid only when the message is not already owned and this claim still matches."""
+    conn = begin_immediate()
+    try:
+        other = conn.execute(
+            "SELECT id FROM raids WHERE message_id = ? AND NOT (id = ? AND guild_id = ?)",
+            (str(message_id), raid_id, str(guild_id)),
+        ).fetchone()
+        if other is not None:
+            conn.rollback()
+            return "linked"
         cursor = conn.execute(
             """UPDATE raids
-               SET status = 'open', message_id = ?, channel_id = ?, reminder_sent = ?, reminder_2_sent = ?,
+               SET status = 'open', message_id = ?, reminder_sent = ?, reminder_2_sent = ?,
                    post_nonce = NULL, post_nonce_at = NULL, post_claimed_at = NULL, post_claim_token = NULL,
                    post_recovery_required = 0, post_repost_blocked = 0
-               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND post_nonce = ?
+               WHERE id = ? AND guild_id = ? AND status = 'scheduled' AND channel_id = ? AND post_nonce = ?
                  AND (post_recovery_required = 1 OR post_repost_blocked = 1)
                  AND (message_id IS NULL OR message_id = ?)""",
             (
                 str(message_id),
-                str(channel_id),
                 1 if reminder_sent else 0,
                 1 if reminder_2_sent else 0,
                 raid_id,
                 str(guild_id),
+                str(channel_id),
                 nonce,
                 str(message_id),
             ),
         )
         saved = cursor.rowcount == 1
-        conn.commit()
+        if saved:
+            conn.commit()
+        else:
+            conn.rollback()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
         conn.close()
-    return saved
+    return "saved" if saved else "claim"
 
 
 def finish_observed_publication(raid_id, guild_id, message_id, channel_id, reminder_sent=0, reminder_2_sent=0):

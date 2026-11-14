@@ -839,8 +839,8 @@ def post_creation_log(guild, raid, message_id, channel_id):
 
 
 def posting_channel(config, raid):
-    """Where this signup is posted. An open post stays in the channel it already uses."""
-    if raid.get("status") == "open" and raid.get("channel_id"):
+    """Where this signup is posted. An open post and a claimed publication stay on their channel."""
+    if raid.get("channel_id") and (raid.get("status") == "open" or db.publication_pending(raid)):
         return str(raid["channel_id"])
     instance = instance_by_id(raid.get("instance_id")) or {"kind": "raid"}
     return str(event_channel(config, instance) or "")
@@ -3904,22 +3904,30 @@ def raid_list(raids, settings):
 
 
 def queue_plan(raids, settings, now, limit):
-    """Which future raids should be posted, and which posted raids are too late to keep the slot."""
-    future = []
+    """Scheduled raids that still fit after every open publication has taken a slot.
+
+    Open messages stay published. An earlier scheduled raid does not remove one.
+    A scheduled raid whose start has passed is left for the existing cancellation path.
+    """
+    try:
+        slots = int(limit)
+    except (TypeError, ValueError):
+        slots = 0
+    slots = max(0, slots)
+    occupied = 0
+    waiting = []
     for raid in raids:
-        if raid["status"] not in ("open", "scheduled"):
+        status = raid.get("status")
+        if status == "open" or (status == "scheduled" and db.publication_pending(raid)):
+            occupied += 1
+            continue
+        if status != "scheduled":
             continue
         if _aware(raid["starts_at"], settings) <= now:
             continue
-        future.append(raid)
-    future.sort(key=lambda raid: (_aware(raid["starts_at"], settings), raid["id"]))
-    show = future[:limit]
-    post = [raid for raid in show if raid["status"] == "scheduled"]
-    hold = [
-        raid for raid in future[limit:]
-        if raid["status"] == "open" and raid.get("message_id") and raid.get("voice_state") != "done"
-    ]
-    return post, hold
+        waiting.append(raid)
+    waiting.sort(key=lambda raid: (_aware(raid["starts_at"], settings), raid["id"]))
+    return waiting[: max(0, slots - occupied)]
 
 
 _reported_recovery = set()
@@ -3946,7 +3954,8 @@ def _report_publication_recovery(raid):
         "nonce=%s nonce_at=%s. A missing message is not proof the original request failed. "
         "Do not clear post_repost_blocked. If the Discord message exists, attach that message id with "
         "wow.attach_verified_publication('%s', %s, message_id). "
-        "A later fetch does not include the nonce. The function checks the bot, the channel, and this raid's stored nonce.",
+        "A later fetch does not include the nonce. The signup buttons must identify this raid. "
+        "The function also checks the bot and the original channel.",
         raid.get("id"),
         raid.get("guild_id"),
         raid.get("post_nonce"),
@@ -3954,6 +3963,49 @@ def _report_publication_recovery(raid):
         raid.get("guild_id"),
         raid.get("id"),
     )
+
+
+_PUBLIC_BUTTON = re.compile(r"^(ikt|ikm|ikn|ikh|ike|ikb|ikd|ikv|ika|ikl|ikj):(\d+)$")
+_RAID_SIGNUP = ("ikt", "ikm", "ikn", "ikh", "ikb", "ikd", "ikv", "ika", "ikl")
+_EVENT_SIGNUP = ("ikj", "ikv", "ika", "ikl")
+
+
+def _signup_card_matches(body, raid):
+    """True only for the signup card this raid type actually posts. A settings button is not enough."""
+    try:
+        rows = (body or {}).get("components")
+        if not isinstance(rows, list) or not rows:
+            return False
+        found = []
+        for row in rows:
+            if not isinstance(row, dict) or type(row.get("type")) is not int or row.get("type") != 1 or "components" not in row:
+                return False
+            buttons = row.get("components")
+            if not isinstance(buttons, list) or not buttons:
+                return False
+            for button in buttons:
+                if (
+                    not isinstance(button, dict)
+                    or type(button.get("type")) is not int
+                    or button.get("type") != 2
+                    or "components" in button
+                ):
+                    return False
+                custom_id = button.get("custom_id")
+                if not isinstance(custom_id, str):
+                    return False
+                match = _PUBLIC_BUTTON.fullmatch(custom_id)
+                if match is None:
+                    return False
+                found.append((match.group(1), int(match.group(2))))
+        if {item[1] for item in found} != {int(raid["id"])}:
+            return False
+        prefixes = {item[0] for item in found}
+        required = set(_EVENT_SIGNUP if is_event(raid) else _RAID_SIGNUP)
+        allowed = required | {"ike"}
+        return required <= prefixes and prefixes <= allowed
+    except Exception:
+        return False
 
 
 def attach_verified_publication(guild_id, raid_id, message_id):
@@ -3991,9 +4043,14 @@ def attach_verified_publication(guild_id, raid_id, message_id):
     seen = body.get("nonce")
     if seen is not None and str(seen) != str(nonce):
         return "nonce"
-    if not db.finalize_verified_publication(raid_id, guild_id, message_id, channel_id, nonce):
-        return "claim"
-    return None
+    if not _signup_card_matches(body, raid):
+        return "identity"
+    result = db.finalize_verified_publication(raid_id, guild_id, message_id, channel_id, nonce)
+    if result == "saved":
+        return None
+    if result == "linked":
+        return "identity"
+    return "claim"
 
 
 def claim_scheduled_posts(guild, now=None):
@@ -4004,13 +4061,17 @@ def claim_scheduled_posts(guild, now=None):
     claimed_at = _stamp(now)
     budget_before = _stamp(now - timedelta(seconds=db.PUBLICATION_REQUEST_BUDGET_SECONDS))
     reuse_before = _stamp(now - timedelta(seconds=db.PUBLICATION_NONCE_REUSE_SECONDS))
-    settings = guild.get("settings")
-    wow_config = db.wow_settings(settings)
-    limit = wow_config["posted_ahead"]
     stuck = []
     claimed = []
     conn = db.begin_immediate()
     try:
+        settings_row = conn.execute(
+            "SELECT settings_json FROM guilds WHERE id = ?",
+            (str(guild["id"]),),
+        ).fetchone()
+        settings = db._loads(settings_row["settings_json"], {}) if settings_row is not None else {}
+        wow_config = db.wow_settings(settings)
+        limit = wow_config["posted_ahead"]
         raids = db.raids_on(conn, guild["id"])
         buckets = {}
         for raid in raids:
@@ -4049,6 +4110,12 @@ def claim_scheduled_posts(guild, now=None):
                 fresh["post_repost_blocked"] = 1
                 stuck.append(fresh)
                 return
+            if fresh.get("post_nonce") and not int(fresh.get("post_channel_bound") or 0):
+                db.mark_publication_recovery(fresh["id"], guild["id"], budget_before, conn=conn)
+                fresh["post_recovery_required"] = 1
+                fresh["post_repost_blocked"] = 1
+                stuck.append(fresh)
+                return
             nonce_at = fresh.get("post_nonce_at")
             nonce_expired = bool(fresh.get("post_nonce")) and (not nonce_at or nonce_at < reuse_before)
             if not allow_send or nonce_expired:
@@ -4061,9 +4128,15 @@ def claim_scheduled_posts(guild, now=None):
             if fresh.get("post_nonce"):
                 nonce = fresh["post_nonce"]
                 nonce_at_value = nonce_at
+                destination = None
+                bound_channel = str(fresh.get("channel_id") or "")
             else:
                 nonce = secrets.token_hex(8)
                 nonce_at_value = claimed_at
+                destination = posting_channel(wow_config, fresh)
+                bound_channel = destination
+                if not destination:
+                    return
             token = secrets.token_hex(16)
             if db.claim_publication_row(
                 conn,
@@ -4075,9 +4148,16 @@ def claim_scheduled_posts(guild, now=None):
                 claimed_at,
                 fresh.get("post_nonce"),
                 budget_before,
+                destination,
             ):
                 claimed.append(
-                    {"id": fresh["id"], "nonce": nonce, "token": token, "guild_id": str(guild["id"])}
+                    {
+                        "id": fresh["id"],
+                        "nonce": nonce,
+                        "token": token,
+                        "guild_id": str(guild["id"]),
+                        "channel_id": bound_channel,
+                    }
                 )
 
         for group in buckets.values():
@@ -4088,8 +4168,7 @@ def claim_scheduled_posts(guild, now=None):
                 for raid in sorted(pending, key=lambda raid: (raid["starts_at"], raid["id"])):
                     consider(raid["id"], _aware(raid["starts_at"], settings) > now)
                 continue
-            post, _hold = queue_plan(group, settings, now, limit)
-            for raid in post:
+            for raid in queue_plan(group, settings, now, limit):
                 consider(raid["id"], True)
         conn.commit()
     except Exception:
@@ -4213,10 +4292,14 @@ def _settle_publication(guild, claim, now):
         return _reconcile_observed_publication(guild, claim, now)
     if raid.get("post_claim_token") != token:
         return None
+    if not int(raid.get("post_channel_bound") or 0):
+        if db.mark_publication_recovery_owned(raid["id"], guild["id"], token):
+            saved = db.raid_by_id(raid["id"])
+            if saved:
+                _report_publication_recovery(saved)
+        return None
     settings = guild.get("settings")
-    wow_config = db.wow_settings(settings)
-    instance = instance_by_id(raid.get("instance_id")) or {"kind": "raid"}
-    channel_id = event_channel(wow_config, instance)
+    channel_id = str(raid.get("channel_id") or "")
     if not channel_id:
         db.release_publication_claim(raid["id"], guild["id"], token)
         return "channel"
@@ -4305,13 +4388,11 @@ def _settle_publication(guild, claim, now):
 
 
 def release_raids(guild, now=None):
-    """Discord shows the soonest raids, up to the chosen number. A later one makes room when an earlier raid is waiting."""
+    """Post scheduled raids that fit beside the open signup messages. Those messages stay up."""
     from datetime import datetime, timezone
 
     now = now or datetime.now(timezone.utc)
     settings = guild.get("settings")
-    config = db.wow_settings(settings)
-    limit = config["posted_ahead"]
     for raid in db.raids_for_guild(guild["id"]):
         if raid["status"] == "scheduled" and _aware(raid["starts_at"], settings) <= now:
             if db.close_scheduled_raid(raid["id"], guild["id"]):
@@ -4323,23 +4404,6 @@ def release_raids(guild, now=None):
                     raid.get("id"),
                     guild.get("id"),
                 )
-    hold = []
-    buckets = {}
-    for raid in db.raids_for_guild(guild["id"]):
-        buckets.setdefault(posting_channel(config, raid), []).append(raid)
-    for group in buckets.values():
-        _post, group_hold = queue_plan(group, settings, now, limit)
-        hold.extend(group_hold)
-    for raid in hold:
-        try:
-            if raid.get("voice_state") == "open":
-                discard_voice(raid)
-            remove_discord_raid(raid)
-        except discord_api.DiscordError as error:
-            log.warning("Could not make room for an earlier raid %s: %s", raid.get("id"), error.status)
-            continue
-        if not db.hold_raid(raid["id"]):
-            log.warning("Could not return raid %s to the queue", raid.get("id"))
     try:
         claims = claim_scheduled_posts(guild, now)
     except Exception:

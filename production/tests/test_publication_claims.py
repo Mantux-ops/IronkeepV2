@@ -37,6 +37,26 @@ if action == "claim":
     print(json.dumps(wow.claim_scheduled_posts(guild)))
 elif action == "close":
     print(json.dumps(bool(db.close_raid(int(sys.argv[5]), sys.argv[3]))))
+elif action == "release":
+    from ironkeep import discord_api
+    folder = sys.argv[5]
+    def send(channel_id, payload, files=None):
+        with open(os.path.join(folder, "send-%s" % os.getpid()), "w", encoding="utf-8") as handle:
+            handle.write(str(channel_id))
+        return {"id": "posted-%s" % os.getpid(), "nonce": (payload or {}).get("nonce"), "channel_id": str(channel_id)}
+    def get_message(channel_id, message_id):
+        return {"id": message_id, "channel_id": str(channel_id)}
+    def delete_message(channel_id, message_id):
+        with open(os.path.join(folder, "delete-%s" % os.getpid()), "w", encoding="utf-8") as handle:
+            handle.write(str(message_id))
+    discord_api.send_payload = send
+    discord_api.get_message = get_message
+    discord_api.edit_message = lambda *args, **kwargs: None
+    discord_api.archive_thread = lambda *args, **kwargs: None
+    discord_api.create_public_thread = lambda *args, **kwargs: {"id": "thread"}
+    discord_api.delete_message = delete_message
+    discord_api.delete_channel = lambda *args, **kwargs: None
+    print(json.dumps(wow.release_raids(guild) or ""))
 elif action == "effects":
     from ironkeep import discord_api
     folder = sys.argv[6]
@@ -126,6 +146,62 @@ class PublicationClaimTests(unittest.TestCase):
                 if sent["payload"].get("nonce") and message_id == f"posted-{self.sends.index(sent) + 1}":
                     return {"id": message_id, "nonce": sent["payload"]["nonce"], "channel_id": str(channel_id)}
         raise discord_api.DiscordError(404, {"code": 10008, "message": "Unknown Message"})
+
+    def _retarget(self, channel):
+        db.save_wow_settings(
+            self.guild["slug"],
+            channel,
+            [POSTER_ROLE],
+            "UTC",
+            question_thread=False,
+            close_at_start=False,
+            reminder="off",
+            posted_ahead=1,
+        )
+        self.guild = db.guild_by_id(GUILD_ID)
+
+    def _ahead(self, count, channel=CHANNEL_ID, mode="one", dungeon=None):
+        db.save_wow_settings(
+            self.guild["slug"],
+            channel,
+            [POSTER_ROLE],
+            "UTC",
+            channel_mode=mode,
+            dungeon_channel=dungeon,
+            question_thread=False,
+            close_at_start=False,
+            reminder="off",
+            posted_ahead=count,
+        )
+        self.guild = db.guild_by_id(GUILD_ID)
+
+    def _mark_recovery(self, raid_id, nonce="held-nonce", channel=CHANNEL_ID):
+        conn = db.connect()
+        conn.execute(
+            """UPDATE raids
+               SET channel_id = ?, post_nonce = ?, post_nonce_at = ?,
+                   post_recovery_required = 1, post_repost_blocked = 1,
+                   post_claimed_at = NULL, post_claim_token = NULL, message_id = NULL
+               WHERE id = ?""",
+            (channel, nonce, "2026-11-14T00:00:00+00:00", raid_id),
+        )
+        conn.commit()
+        conn.close()
+
+    def _signup_buttons(self, raid_id):
+        return wow._action_rows(raid_id)
+
+    def _publication_state(self, raid_id):
+        row = db.raid_by_id(raid_id)
+        return (
+            row["status"],
+            row["channel_id"],
+            row["message_id"],
+            row["post_nonce"],
+            row["post_recovery_required"],
+            row["post_repost_blocked"],
+            row["post_claim_token"],
+        )
 
     def _scheduled(self, title, days=3, hours=0):
         return db.create_raid(
@@ -727,7 +803,13 @@ class PublicationClaimTests(unittest.TestCase):
         )
         conn.commit()
         conn.close()
-        body = {"id": "900", "channel_id": CHANNEL_ID, "nonce": "nonce-1", "author": {"id": "bot-1"}}
+        body = {
+            "id": "900",
+            "channel_id": CHANNEL_ID,
+            "nonce": "nonce-1",
+            "author": {"id": "bot-1"},
+            "components": self._signup_buttons(raid_id),
+        }
         with patch("ironkeep.wow.discord_api.get_message", return_value=dict(body)), patch(
             "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
         ):
@@ -756,12 +838,678 @@ class PublicationClaimTests(unittest.TestCase):
         )
         conn.commit()
         conn.close()
-        matched = {"id": "901", "channel_id": CHANNEL_ID, "nonce": "nonce-2", "author": {"id": "bot-1"}}
+        matched = {
+            "id": "901",
+            "channel_id": CHANNEL_ID,
+            "nonce": "nonce-2",
+            "author": {"id": "bot-1"},
+            "components": self._signup_buttons(second),
+        }
         with patch("ironkeep.wow.discord_api.get_message", return_value=matched), patch(
             "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
         ):
             self.assertIsNone(wow.attach_verified_publication(GUILD_ID, second, "901"))
         self.assertEqual(db.raid_by_id(second)["message_id"], "901")
+        self.assertEqual(self.sends, [])
+
+    def test_unresolved_publication_does_not_block_a_new_channel(self):
+        stuck = self._scheduled("Stuck", days=1)
+        fresh = self._scheduled("Fresh", days=2)
+        self._mark_recovery(stuck, channel=CHANNEL_ID)
+        self._retarget("222")
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual([item["channel_id"] for item in self.sends], ["222"])
+        self.assertEqual(db.raid_by_id(fresh)["status"], "open")
+        self.assertEqual(db.raid_by_id(fresh)["channel_id"], "222")
+        self.assertEqual(db.raid_by_id(stuck)["channel_id"], CHANNEL_ID)
+        self.assertEqual(db.raid_by_id(stuck)["post_recovery_required"], 1)
+        self.assertEqual(db.raid_by_id(stuck)["post_repost_blocked"], 1)
+        self.assertEqual(db.raid_by_id(stuck)["status"], "scheduled")
+
+    def test_original_channel_stays_blocked(self):
+        stuck = self._scheduled("Stuck", days=1)
+        waiting = self._scheduled("Waiting", days=2)
+        self._mark_recovery(stuck, channel=CHANNEL_ID)
+        self.assertEqual(wow.release_raids(self.guild), None)
+        self.assertEqual(self.sends, [])
+        self.assertIsNone(db.raid_by_id(waiting)["post_nonce"])
+        self.assertEqual(db.raid_by_id(waiting)["status"], "scheduled")
+        self.assertEqual(db.raid_by_id(stuck)["post_repost_blocked"], 1)
+
+    def test_active_claim_keeps_the_claimed_channel(self):
+        raid_id = self._scheduled("Claimed")
+        claims = wow.claim_scheduled_posts(self.guild)
+        self.assertEqual(claims[0]["channel_id"], CHANNEL_ID)
+        self._retarget("222")
+        self.assertEqual(wow.claim_scheduled_posts(self.guild), [])
+        saved = db.raid_by_id(raid_id)
+        self.assertEqual(saved["channel_id"], CHANNEL_ID)
+        self.assertEqual(saved["post_claim_token"], claims[0]["token"])
+        self.assertEqual(self.sends, [])
+
+    def test_same_nonce_retry_uses_the_original_channel(self):
+        raid_id = self._scheduled("Retry")
+        channels = []
+        nonces = []
+
+        def send(channel_id, payload, files=None):
+            channels.append(str(channel_id))
+            nonces.append(payload["nonce"])
+            if len(channels) == 1:
+                raise discord_api.DiscordError(403, {"code": 50013, "message": "Missing Permissions"})
+            return {"id": "posted-retry", "nonce": payload["nonce"], "channel_id": str(channel_id)}
+
+        def get_message(channel_id, message_id):
+            return {"id": message_id, "nonce": nonces[-1], "channel_id": str(channel_id)}
+
+        with patch("ironkeep.wow.discord_api.send_payload", side_effect=send), patch(
+            "ironkeep.wow.discord_api.get_message", side_effect=get_message
+        ):
+            self.assertEqual(wow.release_raids(self.guild), "discord")
+            self._retarget("222")
+            self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(channels, [CHANNEL_ID, CHANNEL_ID])
+        self.assertEqual(db.raid_by_id(raid_id)["channel_id"], CHANNEL_ID)
+        self.assertEqual(db.raid_by_id(raid_id)["message_id"], "posted-retry")
+
+    def test_confirmation_uses_the_original_channel(self):
+        raid_id = self._scheduled("Seen")
+        conn = db.connect()
+        conn.execute(
+            """UPDATE raids
+               SET channel_id = ?, message_id = ?, post_nonce = ?, post_claim_token = ?, post_nonce_at = ?
+               WHERE id = ?""",
+            (CHANNEL_ID, "seen-1", "seen-nonce", "seen-token", "2026-11-14T00:00:00+00:00", raid_id),
+        )
+        conn.commit()
+        conn.close()
+        self._retarget("222")
+        seen = []
+
+        def get_message(channel_id, message_id):
+            seen.append(str(channel_id))
+            return {"id": message_id, "nonce": "seen-nonce", "channel_id": str(channel_id)}
+
+        with patch("ironkeep.wow.discord_api.get_message", side_effect=get_message):
+            self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(seen, [CHANNEL_ID])
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(raid_id)["channel_id"], CHANNEL_ID)
+        self.assertEqual(self.sends, [])
+
+    def test_inflight_configuration_change_cannot_redirect_the_send(self):
+        raid_id = self._scheduled("Flight")
+
+        def send(channel_id, payload, files=None):
+            self._retarget("222")
+            return self._send(channel_id, payload, files)
+
+        with patch("ironkeep.wow.discord_api.send_payload", side_effect=send):
+            self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends[0]["channel_id"], CHANNEL_ID)
+        self.assertEqual(db.raid_by_id(raid_id)["channel_id"], CHANNEL_ID)
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+
+    def test_unclaimed_scheduled_raid_follows_the_current_channel(self):
+        raid_id = self._scheduled("Unclaimed")
+        self.assertEqual(db.raid_by_id(raid_id)["channel_id"], CHANNEL_ID)
+        self._retarget("222")
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends[0]["channel_id"], "222")
+        self.assertEqual(db.raid_by_id(raid_id)["channel_id"], "222")
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+
+    def test_recovery_rejects_another_raids_message_without_a_nonce(self):
+        raid_id = self._scheduled("Recover")
+        other = self._scheduled("Other")
+        self._mark_recovery(raid_id)
+        before = self._publication_state(raid_id)
+        body = {
+            "id": "900",
+            "channel_id": CHANNEL_ID,
+            "author": {"id": "bot-1"},
+            "components": self._signup_buttons(other),
+        }
+        with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "identity")
+        self.assertEqual(self._publication_state(raid_id), before)
+        self.assertEqual(self.sends, [])
+
+    def test_recovery_rejects_a_message_linked_to_another_raid(self):
+        raid_id = self._scheduled("Recover")
+        other = self._scheduled("Linked")
+        self._mark_recovery(raid_id)
+        conn = db.connect()
+        conn.execute(
+            "UPDATE raids SET status = 'closed', message_id = ? WHERE id = ?",
+            ("900", other),
+        )
+        conn.commit()
+        conn.close()
+        before = self._publication_state(raid_id)
+        body = {
+            "id": "900",
+            "channel_id": CHANNEL_ID,
+            "author": {"id": "bot-1"},
+            "components": self._signup_buttons(raid_id),
+        }
+        with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "identity")
+        self.assertEqual(self._publication_state(raid_id), before)
+        self.assertEqual(db.raid_by_id(other)["message_id"], "900")
+        self.assertEqual(self.sends, [])
+
+    def test_recovery_rejects_a_closed_message_without_signup_buttons(self):
+        raid_id = self._scheduled("Recover")
+        self._mark_recovery(raid_id)
+        before = self._publication_state(raid_id)
+        body = {
+            "id": "900",
+            "channel_id": CHANNEL_ID,
+            "author": {"id": "bot-1"},
+            "components": [],
+            "embeds": [{"title": "Recover", "description": "Gesloten"}],
+        }
+        with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "identity")
+        self.assertEqual(self._publication_state(raid_id), before)
+        self.assertEqual(self.sends, [])
+
+    def _message(self, message_id, components):
+        return {
+            "id": message_id,
+            "channel_id": CHANNEL_ID,
+            "author": {"id": "bot-1"},
+            "components": components,
+        }
+
+    def _open_copy(self, raid_id):
+        raid = dict(db.raid_by_id(raid_id))
+        raid["status"] = "open"
+        return raid
+
+    def test_recovery_identity_rejects_incomplete_and_malformed_cards(self):
+        raid_id = self._scheduled("Recover")
+        other = self._scheduled("Other")
+        self._mark_recovery(raid_id)
+        before = self._publication_state(raid_id)
+        settings_only = [{
+            "type": 1,
+            "components": [{"type": 2, "custom_id": f"ike:{raid_id}", "style": 2}],
+        }]
+        mixed = wow._action_rows(raid_id)
+        mixed[0]["components"][0] = dict(mixed[0]["components"][0], custom_id=f"ikt:{other}")
+        ticket = wow._action_rows(raid_id)
+        ticket[0]["components"].append({"type": 2, "custom_id": "ikt:open", "style": 1})
+        wrong_type = [{
+            "type": 1,
+            "components": [{"type": 3, "custom_id": f"ikt:{raid_id}"}],
+        }]
+        nested = [{
+            "type": 1,
+            "components": [{
+                "type": 2,
+                "custom_id": f"ikt:{raid_id}",
+                "components": [{"type": 2, "custom_id": f"ikm:{raid_id}"}],
+            }],
+        }]
+        cases = [
+            mixed,
+            settings_only,
+            ticket,
+            wrong_type,
+            nested,
+            None,
+            5,
+            "ikt:1",
+            [{"type": 1, "components": None}],
+            [{"type": 1, "components": "ikt:1"}],
+            [{"type": 1}],
+            [{"type": True, "components": wow._action_rows(raid_id)[0]["components"]}],
+        ]
+        for components in cases:
+            body = self._message("900", components)
+            with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+                "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+            ):
+                self.assertEqual(wow.attach_verified_publication(GUILD_ID, raid_id, "900"), "identity")
+            self.assertEqual(self._publication_state(raid_id), before)
+        self.assertEqual(self.sends, [])
+
+    def test_recovery_accepts_builder_cards_for_raid_dungeon_and_event(self):
+        raid_id = self._scheduled("Raid card")
+        dungeon_id = self._scheduled("Dungeon card", days=4)
+        event_id = self._scheduled("Event card", days=5)
+        conn = db.connect()
+        conn.execute("UPDATE raids SET instance_id = ? WHERE id = ?", ("barrow-deeps", dungeon_id))
+        conn.execute("UPDATE raids SET instance_id = ? WHERE id = ?", ("event", event_id))
+        conn.commit()
+        conn.close()
+        cards = (
+            (raid_id, "raid-msg", wow.message_payload(self.guild, self._open_copy(raid_id), [])),
+            (dungeon_id, "dungeon-msg", wow.message_payload(self.guild, self._open_copy(dungeon_id), [])),
+            (event_id, "event-msg", wow.message_payload(self.guild, self._open_copy(event_id), [])),
+        )
+        self.assertEqual(cards[0][2]["components"], wow._action_rows(raid_id))
+        self.assertEqual(cards[1][2]["components"], wow._action_rows(dungeon_id))
+        self.assertEqual(cards[2][2]["components"], wow._event_rows(event_id))
+        for raid_id, message_id, payload in cards:
+            self._mark_recovery(raid_id, nonce=f"nonce-{message_id}")
+            body = self._message(message_id, payload["components"])
+            with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+                "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+            ):
+                self.assertIsNone(wow.attach_verified_publication(GUILD_ID, raid_id, message_id))
+            saved = db.raid_by_id(raid_id)
+            self.assertEqual(saved["status"], "open")
+            self.assertEqual(saved["message_id"], message_id)
+            self.assertEqual(saved["post_recovery_required"], 0)
+        self.assertEqual(self.sends, [])
+
+    def test_concurrent_recovery_of_one_message_and_one_raid(self):
+        owner = self._scheduled("Owner")
+        stranger = self._scheduled("Stranger", days=4)
+        self._mark_recovery(owner, nonce="owner-nonce")
+        self._mark_recovery(stranger, nonce="stranger-nonce")
+        before = self._publication_state(stranger)
+        card = wow.message_payload(self.guild, self._open_copy(owner), [])["components"]
+        body = self._message("shared-msg", card)
+        barrier = threading.Barrier(2)
+        results = []
+
+        def attempt(raid_id):
+            barrier.wait(timeout=5)
+            results.append(wow.attach_verified_publication(GUILD_ID, raid_id, "shared-msg"))
+
+        with patch("ironkeep.wow.discord_api.get_message", return_value=body), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            threads = [threading.Thread(target=attempt, args=(raid_id,)) for raid_id in (owner, stranger)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+        self.assertEqual(sorted(results, key=lambda item: str(item)), [None, "identity"])
+        self.assertEqual(db.raid_by_id(owner)["status"], "open")
+        self.assertEqual(db.raid_by_id(owner)["message_id"], "shared-msg")
+        self.assertEqual(self._publication_state(stranger), before)
+
+        again = self._scheduled("Again", days=6)
+        self._mark_recovery(again, nonce="again-nonce")
+        again_card = wow.message_payload(self.guild, self._open_copy(again), [])["components"]
+        again_body = self._message("again-msg", again_card)
+        same = []
+        entered = threading.Barrier(2)
+
+        def fetch(*_args, **_kwargs):
+            entered.wait(timeout=5)
+            return again_body
+
+        def retry():
+            same.append(wow.attach_verified_publication(GUILD_ID, again, "again-msg"))
+
+        with patch("ironkeep.wow.discord_api.get_message", side_effect=fetch), patch(
+            "ironkeep.wow.discord_api.bot_user", return_value={"id": "bot-1"}
+        ):
+            threads = [threading.Thread(target=retry) for _ in range(2)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=5)
+        self.assertEqual(sorted(same, key=lambda item: str(item)), [None, "claim"])
+        self.assertEqual(db.raid_by_id(again)["status"], "open")
+        self.assertEqual(db.raid_by_id(again)["message_id"], "again-msg")
+        self.assertEqual(db.raid_by_id(again)["post_repost_blocked"], 0)
+        self.assertEqual(self.sends, [])
+
+    def test_historical_claim_without_a_bound_channel_does_not_send(self):
+        raid_id = self._scheduled("Historical")
+        conn = db.connect()
+        conn.execute(
+            """UPDATE raids
+               SET post_nonce = ?, post_nonce_at = ?, post_channel_bound = 0,
+                   post_claim_token = NULL, post_claimed_at = NULL
+               WHERE id = ?""",
+            ("old-nonce", "2026-11-14T00:00:00+00:00", raid_id),
+        )
+        conn.commit()
+        conn.close()
+        self._retarget("222")
+        self.assertIsNone(wow.release_raids(self.guild))
+        saved = db.raid_by_id(raid_id)
+        self.assertEqual(self.sends, [])
+        self.assertEqual(saved["status"], "scheduled")
+        self.assertEqual(saved["channel_id"], CHANNEL_ID)
+        self.assertEqual(saved["post_nonce"], "old-nonce")
+        self.assertEqual(saved["post_channel_bound"], 0)
+        self.assertEqual(saved["post_recovery_required"], 1)
+        self.assertEqual(saved["post_repost_blocked"], 1)
+
+    def test_send_path_refuses_an_unbound_channel(self):
+        raid_id = self._scheduled("Bypass")
+        conn = db.connect()
+        conn.execute(
+            """UPDATE raids
+               SET post_nonce = ?, post_nonce_at = ?, post_claim_token = ?, post_channel_bound = 0
+               WHERE id = ?""",
+            ("old-nonce", "2026-11-14T00:00:00+00:00", "old-token", raid_id),
+        )
+        conn.commit()
+        conn.close()
+        result = wow._settle_publication(
+            self.guild,
+            {"id": raid_id, "nonce": "old-nonce", "token": "old-token", "channel_id": "999"},
+            datetime.now(timezone.utc),
+        )
+        saved = db.raid_by_id(raid_id)
+        self.assertIsNone(result)
+        self.assertEqual(self.sends, [])
+        self.assertEqual(saved["channel_id"], CHANNEL_ID)
+        self.assertEqual(saved["post_nonce"], "old-nonce")
+        self.assertEqual(saved["post_recovery_required"], 1)
+        self.assertEqual(saved["post_repost_blocked"], 1)
+
+    def test_completed_publication_is_not_pending_and_a_fresh_post_rebinds(self):
+        raid_id = self._scheduled("Rebound")
+        self.assertIsNone(wow.release_raids(self.guild))
+        posted = db.raid_by_id(raid_id)
+        self.assertEqual(posted["status"], "open")
+        self.assertEqual(posted["post_channel_bound"], 1)
+        self.assertFalse(db.publication_pending(posted))
+        self.assertIsNone(posted["post_nonce"])
+        self.assertTrue(db.hold_raid(raid_id))
+        held = db.raid_by_id(raid_id)
+        self.assertEqual(held["status"], "scheduled")
+        self.assertEqual(held["post_channel_bound"], 0)
+        self.assertIsNone(held["post_nonce"])
+        self.assertIsNone(held["message_id"])
+        conn = db.connect()
+        conn.execute("UPDATE raids SET post_channel_bound = 1, channel_id = ? WHERE id = ?", (CHANNEL_ID, raid_id))
+        conn.commit()
+        conn.close()
+        self._retarget("222")
+        self.sends.clear()
+        self.assertIsNone(wow.release_raids(self.guild))
+        again = db.raid_by_id(raid_id)
+        self.assertEqual(self.sends[0]["channel_id"], "222")
+        self.assertEqual(again["channel_id"], "222")
+        self.assertEqual(again["post_channel_bound"], 1)
+        self.assertEqual(again["status"], "open")
+        self.assertFalse(db.publication_pending(again))
+
+    def test_earlier_scheduled_raid_cannot_displace_an_open_raid(self):
+        open_id = self._open("Open", _when(days=4))
+        early = self._scheduled("Early", days=1)
+        message_id = db.raid_by_id(open_id)["message_id"]
+        deleted = []
+        with patch(
+            "ironkeep.wow.discord_api.delete_message",
+            side_effect=lambda channel_id, message_id: deleted.append((str(channel_id), str(message_id))),
+        ):
+            self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(deleted, [])
+        self.assertEqual(self.sends, [])
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], message_id)
+        self.assertEqual(db.raid_by_id(early)["status"], "scheduled")
+        self.assertIsNone(db.raid_by_id(early)["post_nonce"])
+
+    def test_lowering_posted_ahead_preserves_open_messages(self):
+        self._ahead(2)
+        first = self._open("First", _when(days=2))
+        second = self._open("Second", _when(days=4))
+        messages = (db.raid_by_id(first)["message_id"], db.raid_by_id(second)["message_id"])
+        self._ahead(1)
+        deleted = []
+        with patch(
+            "ironkeep.wow.discord_api.delete_message",
+            side_effect=lambda channel_id, message_id: deleted.append(str(message_id)),
+        ):
+            self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(deleted, [])
+        self.assertEqual(self.sends, [])
+        self.assertEqual(db.raid_by_id(first)["status"], "open")
+        self.assertEqual(db.raid_by_id(second)["status"], "open")
+        self.assertEqual(
+            (db.raid_by_id(first)["message_id"], db.raid_by_id(second)["message_id"]),
+            messages,
+        )
+
+    def test_increasing_posted_ahead_publishes_the_next_raid(self):
+        open_id = self._open("Open", _when(days=2))
+        nxt = self._scheduled("Next", days=4)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends, [])
+        self._ahead(2)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual([item["channel_id"] for item in self.sends], [CHANNEL_ID])
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
+        posted = db.raid_by_id(nxt)
+        self.assertEqual(posted["status"], "open")
+        self.assertEqual(posted["post_channel_bound"], 1)
+        self.assertFalse(db.publication_pending(posted))
+
+    def test_closing_an_open_raid_frees_one_slot(self):
+        open_id = self._open("Open", _when(days=2))
+        nxt = self._scheduled("Next", days=4)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends, [])
+        self.assertTrue(db.close_raid(open_id, GUILD_ID))
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(db.raid_by_id(open_id)["status"], "closed")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
+        self.assertEqual(db.raid_by_id(nxt)["status"], "open")
+        self.assertEqual([item["channel_id"] for item in self.sends], [CHANNEL_ID])
+
+    def test_expired_open_publication_occupies_capacity(self):
+        open_id = self._open("Started", _when(days=-1))
+        nxt = self._scheduled("Next", days=2)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends, [])
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
+        self.assertEqual(db.raid_by_id(nxt)["status"], "scheduled")
+
+    def test_stale_settings_snapshot_cannot_delete_an_open_message(self):
+        self._ahead(2)
+        open_id = self._open("Open", _when(days=4))
+        early = self._scheduled("Early", days=1)
+        message_id = db.raid_by_id(open_id)["message_id"]
+        stale = json.loads(json.dumps(self.guild))
+        stale["settings"]["wow"]["posted_ahead"] = 1
+        deleted = []
+        with patch(
+            "ironkeep.wow.discord_api.delete_message",
+            side_effect=lambda channel_id, message_id: deleted.append(str(message_id)),
+        ):
+            self.assertIsNone(wow.release_raids(stale))
+        self.assertEqual(deleted, [])
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], message_id)
+        self.assertEqual(db.raid_by_id(early)["status"], "open")
+        self.assertEqual(self.sends[0]["channel_id"], CHANNEL_ID)
+
+    def test_concurrent_releases_respect_one_free_slot(self):
+        self._ahead(2)
+        open_id = self._open("Open", _when(days=1))
+        earlier = self._scheduled("Earlier", days=2)
+        later = self._scheduled("Later", days=4)
+        folder = tempfile.mkdtemp(dir=self.temp.name)
+        args = [sys.executable, "-c", WORKER, config.DB_PATH, str(ROOT), GUILD_ID, "release", folder]
+        env = os.environ.copy()
+        env["IRONKEEP_DB"] = config.DB_PATH
+        procs = [
+            subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=env)
+            for _ in range(2)
+        ]
+        for proc in procs:
+            _out, err = proc.communicate(timeout=20)
+            self.assertEqual(proc.returncode, 0, err)
+        self.assertEqual(len(list(Path(folder).glob("send-*"))), 1)
+        self.assertEqual(list(Path(folder).glob("delete-*")), [])
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
+        self.assertEqual(db.raid_by_id(earlier)["status"], "open")
+        self.assertEqual(db.raid_by_id(later)["status"], "scheduled")
+        self.assertIsNone(db.raid_by_id(later)["post_nonce"])
+
+    def test_concurrent_settings_change_cannot_preempt_an_open_raid(self):
+        self._ahead(2)
+        first = self._open("First", _when(days=3))
+        second = self._open("Second", _when(days=4))
+        early = self._scheduled("Early", days=1)
+        messages = (db.raid_by_id(first)["message_id"], db.raid_by_id(second)["message_id"])
+        stale = json.loads(json.dumps(self.guild))
+        barrier = threading.Barrier(2)
+        deleted = []
+        errors = []
+
+        def change_and_release():
+            try:
+                barrier.wait(timeout=5)
+                self._ahead(1)
+                wow.release_raids(db.guild_by_id(GUILD_ID))
+            except Exception as error:
+                errors.append(error)
+
+        def release_stale():
+            try:
+                barrier.wait(timeout=5)
+                wow.release_raids(stale)
+            except Exception as error:
+                errors.append(error)
+
+        with patch(
+            "ironkeep.wow.discord_api.delete_message",
+            side_effect=lambda channel_id, message_id: deleted.append(str(message_id)),
+        ):
+            threads = [threading.Thread(target=change_and_release), threading.Thread(target=release_stale)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=10)
+        self.assertEqual(errors, [])
+        self.assertEqual(deleted, [])
+        self.assertEqual(self.sends, [])
+        self.assertEqual(db.raid_by_id(first)["status"], "open")
+        self.assertEqual(db.raid_by_id(second)["status"], "open")
+        self.assertEqual(db.raid_by_id(early)["status"], "scheduled")
+        self.assertEqual(
+            (db.raid_by_id(first)["message_id"], db.raid_by_id(second)["message_id"]),
+            messages,
+        )
+
+    def test_raid_and_dungeon_channels_have_independent_capacity(self):
+        self._ahead(1, mode="split", dungeon="222")
+        open_id = self._open("Raid", _when(days=2))
+        waiting = self._scheduled("Later raid", days=4)
+        dungeon_id = db.create_raid(
+            GUILD_ID,
+            "Dungeon",
+            _when(days=3),
+            1,
+            1,
+            3,
+            CHANNEL_ID,
+            "Officer",
+            5,
+            "hall-of-thanes",
+            status="scheduled",
+            reminder_minutes=0,
+            reminder_2_minutes=0,
+        )
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual([item["channel_id"] for item in self.sends], ["222"])
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
+        self.assertEqual(db.raid_by_id(waiting)["status"], "scheduled")
+        self.assertEqual(db.raid_by_id(dungeon_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(dungeon_id)["channel_id"], "222")
+
+    def test_recovery_in_one_channel_does_not_block_another(self):
+        self._ahead(1, mode="split", dungeon="222")
+        stuck = self._scheduled("Stuck", days=1)
+        waiting = self._scheduled("Waiting", days=2)
+        self._mark_recovery(stuck, channel=CHANNEL_ID)
+        dungeon_id = db.create_raid(
+            GUILD_ID,
+            "Dungeon",
+            _when(days=3),
+            1,
+            1,
+            3,
+            CHANNEL_ID,
+            "Officer",
+            5,
+            "hall-of-thanes",
+            status="scheduled",
+            reminder_minutes=0,
+            reminder_2_minutes=0,
+        )
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual([item["channel_id"] for item in self.sends], ["222"])
+        self.assertEqual(db.raid_by_id(stuck)["channel_id"], CHANNEL_ID)
+        self.assertEqual(db.raid_by_id(stuck)["post_recovery_required"], 1)
+        self.assertEqual(db.raid_by_id(waiting)["status"], "scheduled")
+        self.assertIsNone(db.raid_by_id(waiting)["post_nonce"])
+        self.assertEqual(db.raid_by_id(dungeon_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(dungeon_id)["channel_id"], "222")
+
+    def test_open_raids_above_the_limit_block_further_posts(self):
+        first = self._open("First", _when(days=2))
+        second = self._open("Second", _when(days=3))
+        nxt = self._scheduled("Next", days=4)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(self.sends, [])
+        self.assertEqual(db.raid_by_id(first)["status"], "open")
+        self.assertEqual(db.raid_by_id(second)["status"], "open")
+        self.assertEqual(db.raid_by_id(nxt)["status"], "scheduled")
+
+    def test_officer_delete_still_removes_an_idle_raid(self):
+        raid_id = self._open("Delete", _when())
+        deleted = []
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 9),
+            "server": ("test", 80),
+        }
+        from starlette.requests import Request
+
+        with patch("ironkeep.main.config.live", return_value=True), patch(
+            "ironkeep.main.guild_or_404", return_value=(self.guild, None)
+        ), patch("ironkeep.main.deny_unless", return_value=None), patch(
+            "ironkeep.wow.discord_api.delete_message",
+            side_effect=lambda channel_id, message_id: deleted.append((str(channel_id), str(message_id))),
+        ):
+            response = main.delete_raid_page(self.guild["slug"], raid_id, Request(scope))
+        self.assertEqual(response.status_code, 303)
+        self.assertNotIn("error", response.headers["location"])
+        self.assertIsNone(db.raid_by_id(raid_id))
+        self.assertEqual(deleted, [(CHANNEL_ID, f"message-{raid_id}")])
+
+    def test_open_raid_participants_survive_a_full_queue(self):
+        open_id = self._open("Open", _when(days=4))
+        self._scheduled("Early", days=1)
+        raid = db.raid_by_id(open_id)
+        self.assertIsNotNone(db.place_signup(raid, "4004", "Ada", "warrior", "protection", "tank"))
+        before = db.signups_for(open_id)
+        self.assertIsNone(wow.release_raids(self.guild))
+        self.assertEqual(db.signups_for(open_id), before)
+        self.assertEqual(db.raid_by_id(open_id)["status"], "open")
+        self.assertEqual(db.raid_by_id(open_id)["message_id"], f"message-{open_id}")
         self.assertEqual(self.sends, [])
 
 
@@ -822,7 +1570,9 @@ class PublicationMigrationTests(unittest.TestCase):
         conn = sqlite3.connect(path)
         columns = [row[1] for row in conn.execute("PRAGMA table_info(raids)")]
         rows = conn.execute(
-            "SELECT title, status, message_id, post_recovery_required, post_repost_blocked, close_effects_pending FROM raids ORDER BY title"
+            """SELECT title, status, message_id, post_recovery_required, post_repost_blocked,
+                      close_effects_pending, post_channel_bound
+               FROM raids ORDER BY title"""
         ).fetchall()
         conn.close()
         for name in (
@@ -833,11 +1583,15 @@ class PublicationMigrationTests(unittest.TestCase):
             "post_recovery_required",
             "post_repost_blocked",
             "close_effects_pending",
+            "post_channel_bound",
         ):
             self.assertEqual(columns.count(name), 1)
         self.assertEqual(
             rows,
-            [("Kept", "scheduled", None, 0, 0, 0), ("Posted", "open", "message-1", 0, 0, 0)],
+            [
+                ("Kept", "scheduled", None, 0, 0, 0, 0),
+                ("Posted", "open", "message-1", 0, 0, 0, 0),
+            ],
         )
 
 
