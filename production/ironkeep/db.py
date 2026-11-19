@@ -3015,78 +3015,83 @@ def place_signup(raid, user_id, name, class_id, spec_id, role, kind="main", note
     occupies = kind in ("main", "late")
     stamp = _utc_stamp()
     with _LOCK:
-        conn = connect()
-        current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid["id"],)).fetchone()
-        if current is None or current["status"] != "open":
-            conn.close()
-            return None
-        existing = conn.execute(
-            "SELECT role, state, party, created_at FROM raid_signups WHERE raid_id = ? AND user_id = ?",
-            (raid["id"], user_id),
-        ).fetchone()
-        party_count = int(raid.get("party_count") or 1)
-        kept = (
-            existing
-            and _same_cap(existing["role"], role)
-            and existing["state"] in ("main", "late", "reserve")
-            and not (existing["state"] != "reserve" and int(existing["party"] or 1) > party_count)
-        )
-        event = str(raid.get("instance_id") or "") == "event"
-        if not occupies:
-            state = kind
-            party = 1
-            created_at = existing["created_at"] if existing else stamp
-        elif event:
-            state = "late" if kind == "late" else "main"
-            party = 1
-            created_at = existing["created_at"] if existing else stamp
-        elif kept:
-            if existing["state"] == "reserve":
+        conn = begin_immediate()
+        try:
+            current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid["id"],)).fetchone()
+            if current is None or current["status"] != "open":
+                conn.rollback()
+                return None
+            existing = conn.execute(
+                "SELECT role, state, party, created_at FROM raid_signups WHERE raid_id = ? AND user_id = ?",
+                (raid["id"], user_id),
+            ).fetchone()
+            party_count = int(raid.get("party_count") or 1)
+            kept = (
+                existing
+                and _same_cap(existing["role"], role)
+                and existing["state"] in ("main", "late", "reserve")
+                and not (existing["state"] != "reserve" and int(existing["party"] or 1) > party_count)
+            )
+            event = str(raid.get("instance_id") or "") == "event"
+            if not occupies:
+                state = kind
+                party = 1
+                created_at = existing["created_at"] if existing else stamp
+            elif event:
+                state = "late" if kind == "late" else "main"
+                party = 1
+                created_at = existing["created_at"] if existing else stamp
+            elif kept:
+                if existing["state"] == "reserve":
+                    state = "reserve"
+                    party = 1
+                else:
+                    state = "late" if kind == "late" else "main"
+                    party = int(existing["party"] or 1)
+                    if party > party_count:
+                        party = 1
+                created_at = existing["created_at"]
+            else:
+                rows = conn.execute(
+                    """SELECT role, party FROM raid_signups
+                       WHERE raid_id = ? AND state IN ('main', 'late') AND user_id != ?""",
+                    (raid["id"], user_id),
+                ).fetchall()
                 state = "reserve"
                 party = 1
-            else:
-                state = "late" if kind == "late" else "main"
-                party = int(existing["party"] or 1)
-                if party > party_count:
-                    party = 1
-            created_at = existing["created_at"]
-        else:
-            rows = conn.execute(
-                """SELECT role, party FROM raid_signups
-                   WHERE raid_id = ? AND state IN ('main', 'late') AND user_id != ?""",
-                (raid["id"], user_id),
-            ).fetchall()
-            state = "reserve"
-            party = 1
-            for party_no in range(1, party_count + 1):
-                count = sum(
-                    1
-                    for row in rows
-                    if int(row["party"] or 1) == party_no and _same_cap(row["role"], role)
-                )
-                if count < caps.get(bucket, 0):
-                    state = "late" if kind == "late" else "main"
-                    party = party_no
-                    break
-            created_at = stamp
-        conn.execute(
-            """INSERT INTO raid_signups
-               (raid_id, user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(raid_id, user_id) DO UPDATE SET
-                 name = excluded.name,
-                 class_id = excluded.class_id,
-                 spec_id = excluded.spec_id,
-                 role = excluded.role,
-                 state = excluded.state,
-                 note = excluded.note,
-                 character_id = excluded.character_id,
-                 party = excluded.party,
-                 created_at = excluded.created_at""",
-            (raid["id"], user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at),
-        )
-        conn.commit()
-        conn.close()
+                for party_no in range(1, party_count + 1):
+                    count = sum(
+                        1
+                        for row in rows
+                        if int(row["party"] or 1) == party_no and _same_cap(row["role"], role)
+                    )
+                    if count < caps.get(bucket, 0):
+                        state = "late" if kind == "late" else "main"
+                        party = party_no
+                        break
+                created_at = stamp
+            conn.execute(
+                """INSERT INTO raid_signups
+                   (raid_id, user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(raid_id, user_id) DO UPDATE SET
+                     name = excluded.name,
+                     class_id = excluded.class_id,
+                     spec_id = excluded.spec_id,
+                     role = excluded.role,
+                     state = excluded.state,
+                     note = excluded.note,
+                     character_id = excluded.character_id,
+                     party = excluded.party,
+                     created_at = excluded.created_at""",
+                (raid["id"], user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     return state
 
 

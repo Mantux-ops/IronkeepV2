@@ -5,6 +5,7 @@ They do not prove how Discord treats nonce or enforce_nonce.
 """
 
 import json
+import multiprocessing
 import os
 import sqlite3
 import subprocess
@@ -37,6 +38,14 @@ if action == "claim":
     print(json.dumps(wow.claim_scheduled_posts(guild)))
 elif action == "close":
     print(json.dumps(bool(db.close_raid(int(sys.argv[5]), sys.argv[3]))))
+elif action == "signup":
+    raid = db.raid_by_id(int(sys.argv[5]))
+    try:
+        state = db.place_signup(raid, sys.argv[6], sys.argv[7], sys.argv[8], sys.argv[9], sys.argv[10], kind=sys.argv[11])
+    except Exception as error:
+        print(json.dumps({"error": type(error).__name__}))
+    else:
+        print(json.dumps({"state": state}))
 elif action == "release":
     from ironkeep import discord_api
     folder = sys.argv[5]
@@ -78,6 +87,46 @@ elif action == "effects":
 else:
     raise SystemExit(action)
 """
+
+
+def _signup_after_status_read(db_path, root, raid_id, user_id, seen, release):
+    """Run place_signup and pause after the open check, while its write transaction is open."""
+    import os
+    import sys
+
+    os.environ["IRONKEEP_DB"] = db_path
+    sys.path.insert(0, root)
+    from ironkeep import config, db
+
+    config.DB_PATH = db_path
+    real_begin = db.begin_immediate
+
+    def begin_immediate():
+        conn = real_begin()
+
+        class Holding:
+            def execute(self, sql, params=()):
+                cursor = conn.execute(sql, params)
+                if isinstance(sql, str) and "SELECT status FROM raids WHERE id = ?" in sql:
+                    seen.set()
+                    if not release.wait(timeout=10):
+                        raise TimeoutError("signup was not released")
+                return cursor
+
+            def commit(self):
+                return conn.commit()
+
+            def rollback(self):
+                return conn.rollback()
+
+            def close(self):
+                return conn.close()
+
+        return Holding()
+
+    db.begin_immediate = begin_immediate
+    raid = db.raid_by_id(raid_id)
+    db.place_signup(raid, user_id, "Bea", "warrior", "protection", "tank")
 
 
 def _when(days=3, hours=0):
@@ -259,6 +308,133 @@ class PublicationClaimTests(unittest.TestCase):
         self.assertEqual(sorted(results), [False, True])
         self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
         self.assertEqual(db.signups_for(raid_id), [])
+
+    def _one(self, action, *args):
+        command = [sys.executable, "-c", WORKER, config.DB_PATH, str(ROOT), GUILD_ID, action, *[str(arg) for arg in args]]
+        env = os.environ.copy()
+        env["IRONKEEP_DB"] = config.DB_PATH
+        completed = subprocess.run(command, capture_output=True, text=True, env=env, timeout=20, check=False)
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        return json.loads(completed.stdout)
+
+    def _open_kind(self, title, instance_id, size, caps):
+        raid_id = db.create_raid(
+            GUILD_ID,
+            title,
+            _when(),
+            caps[0],
+            caps[1],
+            caps[2],
+            CHANNEL_ID,
+            "Officer",
+            size,
+            instance_id,
+            status="open",
+            reminder_minutes=0,
+            reminder_2_minutes=0,
+        )
+        db.set_raid_message(raid_id, f"message-{raid_id}")
+        return raid_id
+
+    def test_close_before_signup_leaves_the_raid_closed(self):
+        samples = (
+            ("raid", "barrow-deeps", 10, (2, 2, 6), "warrior", "protection", "tank", "main", wow._enroll, "Deze raid is gesloten."),
+            ("dungeon", "hall-of-thanes", 5, (1, 1, 3), "warrior", "protection", "tank", "main", wow._enroll, "Deze raid is gesloten."),
+            ("event", "event", 0, (0, 0, 0), "", "", "event", "main", wow._enroll_event, "Dit event is gesloten."),
+        )
+        for label, instance_id, size, caps, class_id, spec_id, role, kind, caller, message in samples:
+            with self.subTest(kind=label):
+                raid_id = self._open_kind(label, instance_id, size, caps)
+                self.assertIs(self._one("close", raid_id), True)
+                saved = self._one("signup", raid_id, "5005", "Bea", class_id, spec_id, role, kind)
+                self.assertEqual(saved, {"state": None})
+                self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
+                self.assertNotIn("5005", [row["user_id"] for row in db.signups_for(raid_id)])
+                raid = db.raid_by_id(raid_id)
+                with self.assertRaises(wow.PlayerMessage) as raised:
+                    if caller is wow._enroll:
+                        caller(self.guild, raid, "5005", "Bea", class_id, spec_id, role, kind)
+                    else:
+                        caller(self.guild, raid, "5005", "Bea", kind)
+                self.assertEqual(str(raised.exception), message)
+
+    def test_signup_before_close_remains_stored(self):
+        samples = (
+            ("raid", "barrow-deeps", 10, (2, 2, 6), "warrior", "protection", "tank", "main"),
+            ("dungeon", "hall-of-thanes", 5, (1, 1, 3), "warrior", "protection", "tank", "main"),
+            ("event", "event", 0, (0, 0, 0), "", "", "event", "main"),
+        )
+        for label, instance_id, size, caps, class_id, spec_id, role, kind in samples:
+            with self.subTest(kind=label):
+                raid_id = self._open_kind(label, instance_id, size, caps)
+                saved = self._one("signup", raid_id, "5005", "Bea", class_id, spec_id, role, kind)
+                self.assertEqual(saved, {"state": "main"})
+                self.assertIs(self._one("close", raid_id), True)
+                self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
+                stored = [row for row in db.signups_for(raid_id) if row["user_id"] == "5005"]
+                self.assertEqual([(row["name"], row["role"], row["state"]) for row in stored], [("Bea", role, "main")])
+
+    def test_closed_raid_does_not_rewrite_an_existing_signup(self):
+        raid_id = self._open("Keep", _when())
+        self.assertEqual(db.place_signup(db.raid_by_id(raid_id), "4004", "Ada", "warrior", "protection", "tank"), "main")
+        before = [(row["user_id"], row["name"], row["role"], row["state"]) for row in db.signups_for(raid_id)]
+        self.assertTrue(db.close_raid(raid_id, GUILD_ID))
+        self.assertIsNone(db.place_signup(db.raid_by_id(raid_id), "4004", "Bea", "mage", "fire", "ranged"))
+        self.assertEqual(
+            [(row["user_id"], row["name"], row["role"], row["state"]) for row in db.signups_for(raid_id)],
+            before,
+        )
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
+
+    def test_stale_open_read_cannot_insert_after_closure(self):
+        raid_id = self._open("Overlap", _when())
+        context = multiprocessing.get_context("spawn")
+        seen = context.Event()
+        release = context.Event()
+        process = context.Process(
+            target=_signup_after_status_read,
+            args=(config.DB_PATH, str(ROOT), raid_id, "5005", seen, release),
+        )
+        previous_cache = os.environ.get("IRONKEEP_COMPANION_CACHE")
+        previous_catalog = os.environ.get("IRONKEEP_WOW_CATALOG")
+        os.environ["IRONKEEP_COMPANION_CACHE"] = str(ROOT / "tests" / "fixtures" / "forever.json")
+        os.environ["IRONKEEP_WOW_CATALOG"] = str(ROOT / "tests" / "fixtures" / "wow.json")
+        process.start()
+        if previous_cache is None:
+            os.environ.pop("IRONKEEP_COMPANION_CACHE", None)
+        else:
+            os.environ["IRONKEEP_COMPANION_CACHE"] = previous_cache
+        if previous_catalog is None:
+            os.environ.pop("IRONKEEP_WOW_CATALOG", None)
+        else:
+            os.environ["IRONKEEP_WOW_CATALOG"] = previous_catalog
+        try:
+            self.assertTrue(seen.wait(timeout=20))
+            probe = sqlite3.connect(config.DB_PATH, timeout=0, isolation_level=None)
+            try:
+                probe.execute("PRAGMA busy_timeout=0")
+                with self.assertRaises(sqlite3.OperationalError):
+                    probe.execute("BEGIN IMMEDIATE")
+            finally:
+                probe.close()
+            reader = sqlite3.connect(config.DB_PATH, timeout=5)
+            try:
+                self.assertEqual(reader.execute("SELECT status FROM raids WHERE id = ?", (raid_id,)).fetchone()[0], "open")
+            finally:
+                reader.close()
+        finally:
+            release.set()
+            process.join(timeout=15)
+        self.assertFalse(process.is_alive())
+        self.assertEqual(process.exitcode, 0)
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+        self.assertEqual(
+            [(row["user_id"], row["name"], row["state"]) for row in db.signups_for(raid_id)],
+            [("5005", "Bea", "main")],
+        )
+        self.assertTrue(db.close_raid(raid_id, GUILD_ID))
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
+        self.assertEqual([row["user_id"] for row in db.signups_for(raid_id)], ["5005"])
 
     def test_cross_process_claims_one_owner_and_one_slot(self):
         earlier = self._scheduled("Earlier", days=2)
