@@ -1500,6 +1500,71 @@ class PublicationClaimTests(unittest.TestCase):
         self.assertIsNone(db.raid_by_id(raid_id))
         self.assertEqual(deleted, [(CHANNEL_ID, f"message-{raid_id}")])
 
+    def test_officer_delete_keeps_the_raid_when_discord_refuses(self):
+        raid_id = self._open("Delete", _when())
+        self.assertIsNotNone(db.place_signup(db.raid_by_id(raid_id), "4004", "Ada", "warrior", "protection", "tank"))
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 9),
+            "server": ("test", 80),
+        }
+        from starlette.requests import Request
+
+        def refuse(channel_id, message_id):
+            raise discord_api.DiscordError(500, {"message": "down"})
+
+        with patch("ironkeep.main.config.live", return_value=True), patch(
+            "ironkeep.main.guild_or_404", return_value=(self.guild, None)
+        ), patch("ironkeep.main.deny_unless", return_value=None), patch(
+            "ironkeep.wow.discord_api.delete_message", side_effect=refuse
+        ):
+            response = main.delete_raid_page(self.guild["slug"], raid_id, Request(scope))
+        self.assertEqual(response.status_code, 303)
+        self.assertIn("error=removed", response.headers["location"])
+        saved = db.raid_by_id(raid_id)
+        self.assertEqual(saved["status"], "open")
+        self.assertEqual(saved["message_id"], f"message-{raid_id}")
+        self.assertEqual([row["name"] for row in db.signups_for(raid_id)], ["Ada"])
+
+    def test_inflight_publication_blocks_guild_deletion(self):
+        raid_id = self._scheduled("Held")
+        entered = threading.Barrier(2)
+        resume = threading.Event()
+
+        def send(channel_id, payload, files=None):
+            entered.wait(timeout=5)
+            self.assertTrue(resume.wait(timeout=5))
+            with self.record:
+                self.sends.append({"channel_id": str(channel_id), "payload": dict(payload)})
+                message_id = f"posted-{len(self.sends)}"
+            return {"id": message_id, "nonce": payload.get("nonce"), "channel_id": str(channel_id)}
+
+        def publish():
+            with patch("ironkeep.wow.discord_api.send_payload", side_effect=send):
+                wow.release_raids(self.guild)
+
+        worker = threading.Thread(target=publish)
+        worker.start()
+        entered.wait(timeout=5)
+        self.assertIs(db.delete_guild(self.guild["slug"]), False)
+        self.assertIsNotNone(db.guild_by_id(GUILD_ID))
+        held = db.raid_by_id(raid_id)
+        self.assertEqual(held["status"], "scheduled")
+        self.assertTrue(held["post_nonce"])
+        self.assertEqual(held["post_channel_bound"], 1)
+        resume.set()
+        worker.join(timeout=10)
+        self.assertFalse(worker.is_alive())
+        self.assertIsNotNone(db.guild_by_id(GUILD_ID))
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "open")
+
     def test_open_raid_participants_survive_a_full_queue(self):
         open_id = self._open("Open", _when(days=4))
         self._scheduled("Early", days=1)
@@ -1593,6 +1658,106 @@ class PublicationMigrationTests(unittest.TestCase):
                 ("Posted", "open", "message-1", 0, 0, 0, 0),
             ],
         )
+
+    def test_previous_release_columns_migrate_twice(self):
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        path = str(Path(temp.name) / "seven.sqlite")
+        previous = config.DB_PATH
+        self.addCleanup(lambda: setattr(config, "DB_PATH", previous))
+        conn = sqlite3.connect(path)
+        conn.execute(
+            """CREATE TABLE raids (
+                id INTEGER PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                starts_at TEXT NOT NULL,
+                tank_cap INTEGER NOT NULL,
+                healer_cap INTEGER NOT NULL,
+                dps_cap INTEGER NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id TEXT,
+                size INTEGER,
+                status TEXT NOT NULL,
+                created_by TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                instance_id TEXT,
+                note TEXT,
+                reminder_sent INTEGER NOT NULL DEFAULT 0,
+                thread_id TEXT,
+                loot_rule TEXT,
+                voice_channel_id TEXT,
+                voice_state TEXT,
+                voice_seen INTEGER NOT NULL DEFAULT 0,
+                voice_empty_at TEXT,
+                party_count INTEGER NOT NULL DEFAULT 1,
+                ends_at TEXT,
+                reminder_minutes INTEGER NOT NULL DEFAULT 0,
+                reminder_2_minutes INTEGER NOT NULL DEFAULT 0,
+                reminder_2_sent INTEGER NOT NULL DEFAULT 0
+            )"""
+        )
+        conn.executescript(
+            """
+            ALTER TABLE raids ADD COLUMN post_nonce TEXT;
+            ALTER TABLE raids ADD COLUMN post_nonce_at TEXT;
+            ALTER TABLE raids ADD COLUMN post_claimed_at TEXT;
+            ALTER TABLE raids ADD COLUMN post_claim_token TEXT;
+            ALTER TABLE raids ADD COLUMN post_recovery_required INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE raids ADD COLUMN post_repost_blocked INTEGER NOT NULL DEFAULT 0;
+            ALTER TABLE raids ADD COLUMN close_effects_pending INTEGER NOT NULL DEFAULT 0;
+            CREATE TABLE raid_signups (
+                raid_id INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                class_id TEXT NOT NULL,
+                spec_id TEXT NOT NULL,
+                role TEXT NOT NULL,
+                state TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                note TEXT,
+                character_id INTEGER,
+                party INTEGER NOT NULL DEFAULT 1,
+                PRIMARY KEY (raid_id, user_id)
+            );
+            """
+        )
+        before = [row[1] for row in conn.execute("PRAGMA table_info(raids)")]
+        self.assertNotIn("post_channel_bound", before)
+        conn.execute(
+            """INSERT INTO raids
+               (guild_id, title, starts_at, tank_cap, healer_cap, dps_cap, channel_id, message_id, size, status,
+                created_by, created_at, post_nonce, post_nonce_at, post_recovery_required, post_repost_blocked, close_effects_pending)
+               VALUES ('1001', 'Recovered', '2026-12-02T18:00:00+00:00', 2, 2, 6, '1570488304611102830', 'message-5', 10,
+                       'scheduled', 'Officer', '2026-11-01T00:00:00+00:00', 'old-nonce', '2026-11-14T00:00:00+00:00', 1, 1, 0)"""
+        )
+        conn.execute(
+            """INSERT INTO raid_signups
+               (raid_id, user_id, name, class_id, spec_id, role, state, created_at)
+               VALUES (1, '4004', 'Ada', 'warrior', 'protection', 'tank', 'main', '2026-11-01T00:00:00+00:00')"""
+        )
+        conn.commit()
+        conn.close()
+        config.DB_PATH = path
+        db.init()
+        db.init()
+        conn = sqlite3.connect(path)
+        columns = [row[1] for row in conn.execute("PRAGMA table_info(raids)")]
+        raid = conn.execute(
+            """SELECT title, status, channel_id, message_id, post_nonce, post_recovery_required,
+                      post_repost_blocked, close_effects_pending, post_channel_bound
+               FROM raids"""
+        ).fetchone()
+        signup = conn.execute(
+            "SELECT user_id, name, state FROM raid_signups"
+        ).fetchone()
+        conn.close()
+        self.assertEqual(columns.count("post_channel_bound"), 1)
+        self.assertEqual(
+            raid,
+            ("Recovered", "scheduled", "1570488304611102830", "message-5", "old-nonce", 1, 1, 0, 0),
+        )
+        self.assertEqual(signup, ("4004", "Ada", "main"))
 
 
 class DiscordNonceRequestTests(unittest.TestCase):

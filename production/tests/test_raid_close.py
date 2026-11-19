@@ -371,6 +371,37 @@ class DiscordRaidCloseTests(unittest.TestCase):
         self.assertLess(self.order.index("edit"), self.order.index("archive"))
         self.assertLess(self.order.index("archive"), self.order.index("send"))
 
+    def test_repeated_website_close_does_not_release_again(self):
+        raid_id = self._raid("onyxias-lair", "Onyxia's Lair", 40)
+        queued = self._queue("Next raid", "hyjal-summit", 40)
+        scope = {
+            "type": "http",
+            "http_version": "1.1",
+            "method": "POST",
+            "scheme": "http",
+            "path": "/",
+            "raw_path": b"/",
+            "query_string": b"",
+            "headers": [],
+            "client": ("127.0.0.1", 9),
+            "server": ("test", 80),
+        }
+        from starlette.requests import Request
+
+        with patch("ironkeep.main.config.live", return_value=True), patch(
+            "ironkeep.main.guild_or_404", return_value=(self.guild, None)
+        ), patch("ironkeep.main.deny_unless", return_value=None):
+            first = main.close_raid_page(self.guild["slug"], raid_id, Request(scope))
+            second = main.close_raid_page(self.guild["slug"], raid_id, Request(scope))
+        self.assertEqual(first.status_code, 303)
+        self.assertEqual(second.status_code, 303)
+        self.assertEqual(second.headers["location"], f"/{self.guild['slug']}/raids")
+        self.assertEqual(db.raid_by_id(raid_id)["status"], "closed")
+        self.assertEqual([row["user_id"] for row in db.signups_for(raid_id)], [PLAYER_ID])
+        self.assertEqual(self.releases, 1)
+        self.assertEqual(self.sends, [CHANNEL_ID])
+        self.assertEqual(db.raid_by_id(queued)["status"], "open")
+
     def _queue(self, title, instance_id, size):
         return db.create_raid(
             GUILD_ID,
