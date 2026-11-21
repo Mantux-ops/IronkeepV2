@@ -2985,6 +2985,16 @@ def _gate(guild, raid, role_ids):
     _require_signup(guild, role_ids)
 
 
+def _leave_signup(raid, user_id):
+    """Remove one signup. False from the database means the row is still there."""
+    if db.remove_signup(raid["id"], user_id):
+        return
+    fresh = db.raid_by_id(raid["id"])
+    if fresh is None or fresh.get("status") != "open":
+        raise PlayerMessage("Deze raid is gesloten.")
+    raise PlayerMessage("Je stond niet aangemeld.")
+
+
 def _require_poster(guild, user_id, role_ids):
     if _can_post_raid(guild, user_id, role_ids):
         return
@@ -3237,8 +3247,7 @@ def _action(guild_id, user_id, name, kind, args, values, role_ids=None):
     if kind == "ikl":
         guild, raid = _raid_for(guild_id, args[0])
         _gate(guild, raid, role_ids)
-        if not db.remove_signup(raid["id"], user_id):
-            raise PlayerMessage("Je stond niet aangemeld.")
+        _leave_signup(raid, user_id)
         return {"content": "Je bent afgemeld."}, _public_edit(guild, raid)
     if kind == "ikg":
         guild, raid = _raid_for(guild_id, args[0])
@@ -3506,8 +3515,7 @@ def handle_absence(guild_id, user_id, name, custom_id, reason, interaction_id, t
         if not reason:
             raise PlayerMessage("Vul een reden in.")
         if kind == "ikx":
-            if not db.remove_signup(raid["id"], user_id):
-                raise PlayerMessage("Je stond niet aangemeld.")
+            _leave_signup(raid, user_id)
             done = "Je bent afgemeld."
         else:
             state = db.place_signup(
