@@ -1,0 +1,3 @@
+samples/live/
+__pycache__/
+*.pyc
