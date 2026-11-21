@@ -383,6 +383,24 @@ def connect():
     return conn
 
 
+def begin_immediate():
+    """A write transaction that commits before any Discord call. SQLite, not the process lock, is the lock."""
+    directory = os.path.dirname(config.DB_PATH)
+    if directory:
+        os.makedirs(directory, exist_ok=True)
+    conn = sqlite3.connect(config.DB_PATH, timeout=10, isolation_level=None)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL")
+        conn.execute("PRAGMA foreign_keys=ON")
+        conn.execute("PRAGMA busy_timeout=10000")
+        conn.execute("BEGIN IMMEDIATE")
+    except Exception:
+        conn.close()
+        raise
+    return conn
+
+
 def init():
     if not config.DB_PATH:
         return
@@ -2706,78 +2724,83 @@ def place_signup(raid, user_id, name, class_id, spec_id, role, kind="main", note
     occupies = kind in ("main", "late")
     stamp = _utc_stamp()
     with _LOCK:
-        conn = connect()
-        current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid["id"],)).fetchone()
-        if current is None or current["status"] != "open":
-            conn.close()
-            return None
-        existing = conn.execute(
-            "SELECT role, state, party, created_at FROM raid_signups WHERE raid_id = ? AND user_id = ?",
-            (raid["id"], user_id),
-        ).fetchone()
-        party_count = int(raid.get("party_count") or 1)
-        kept = (
-            existing
-            and _same_cap(existing["role"], role)
-            and existing["state"] in ("main", "late", "reserve")
-            and not (existing["state"] != "reserve" and int(existing["party"] or 1) > party_count)
-        )
-        event = str(raid.get("instance_id") or "") == "event"
-        if not occupies:
-            state = kind
-            party = 1
-            created_at = existing["created_at"] if existing else stamp
-        elif event:
-            state = "late" if kind == "late" else "main"
-            party = 1
-            created_at = existing["created_at"] if existing else stamp
-        elif kept:
-            if existing["state"] == "reserve":
+        conn = begin_immediate()
+        try:
+            current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid["id"],)).fetchone()
+            if current is None or current["status"] != "open":
+                conn.rollback()
+                return None
+            existing = conn.execute(
+                "SELECT role, state, party, created_at FROM raid_signups WHERE raid_id = ? AND user_id = ?",
+                (raid["id"], user_id),
+            ).fetchone()
+            party_count = int(raid.get("party_count") or 1)
+            kept = (
+                existing
+                and _same_cap(existing["role"], role)
+                and existing["state"] in ("main", "late", "reserve")
+                and not (existing["state"] != "reserve" and int(existing["party"] or 1) > party_count)
+            )
+            event = str(raid.get("instance_id") or "") == "event"
+            if not occupies:
+                state = kind
+                party = 1
+                created_at = existing["created_at"] if existing else stamp
+            elif event:
+                state = "late" if kind == "late" else "main"
+                party = 1
+                created_at = existing["created_at"] if existing else stamp
+            elif kept:
+                if existing["state"] == "reserve":
+                    state = "reserve"
+                    party = 1
+                else:
+                    state = "late" if kind == "late" else "main"
+                    party = int(existing["party"] or 1)
+                    if party > party_count:
+                        party = 1
+                created_at = existing["created_at"]
+            else:
+                rows = conn.execute(
+                    """SELECT role, party FROM raid_signups
+                       WHERE raid_id = ? AND state IN ('main', 'late') AND user_id != ?""",
+                    (raid["id"], user_id),
+                ).fetchall()
                 state = "reserve"
                 party = 1
-            else:
-                state = "late" if kind == "late" else "main"
-                party = int(existing["party"] or 1)
-                if party > party_count:
-                    party = 1
-            created_at = existing["created_at"]
-        else:
-            rows = conn.execute(
-                """SELECT role, party FROM raid_signups
-                   WHERE raid_id = ? AND state IN ('main', 'late') AND user_id != ?""",
-                (raid["id"], user_id),
-            ).fetchall()
-            state = "reserve"
-            party = 1
-            for party_no in range(1, party_count + 1):
-                count = sum(
-                    1
-                    for row in rows
-                    if int(row["party"] or 1) == party_no and _same_cap(row["role"], role)
-                )
-                if count < caps.get(bucket, 0):
-                    state = "late" if kind == "late" else "main"
-                    party = party_no
-                    break
-            created_at = stamp
-        conn.execute(
-            """INSERT INTO raid_signups
-               (raid_id, user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ON CONFLICT(raid_id, user_id) DO UPDATE SET
-                 name = excluded.name,
-                 class_id = excluded.class_id,
-                 spec_id = excluded.spec_id,
-                 role = excluded.role,
-                 state = excluded.state,
-                 note = excluded.note,
-                 character_id = excluded.character_id,
-                 party = excluded.party,
-                 created_at = excluded.created_at""",
-            (raid["id"], user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at),
-        )
-        conn.commit()
-        conn.close()
+                for party_no in range(1, party_count + 1):
+                    count = sum(
+                        1
+                        for row in rows
+                        if int(row["party"] or 1) == party_no and _same_cap(row["role"], role)
+                    )
+                    if count < caps.get(bucket, 0):
+                        state = "late" if kind == "late" else "main"
+                        party = party_no
+                        break
+                created_at = stamp
+            conn.execute(
+                """INSERT INTO raid_signups
+                   (raid_id, user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(raid_id, user_id) DO UPDATE SET
+                     name = excluded.name,
+                     class_id = excluded.class_id,
+                     spec_id = excluded.spec_id,
+                     role = excluded.role,
+                     state = excluded.state,
+                     note = excluded.note,
+                     character_id = excluded.character_id,
+                     party = excluded.party,
+                     created_at = excluded.created_at""",
+                (raid["id"], user_id, name, class_id, spec_id, role, state, note, character_id, party, created_at),
+            )
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     return state
 
 
@@ -2789,25 +2812,39 @@ def _same_cap(left, right):
 
 
 def set_signup_lane(raid_id, user_id, role, state, party=1):
-    """Officer move. Keeps the character, the note and whether they were late when the caller says so."""
+    """Officer move. Keeps the character, the note and whether they were late when the caller says so.
+
+    The open check and the signup write share one immediate transaction.
+    """
     if role not in ("tank", "melee", "ranged", "healer") or state not in ("main", "late", "reserve"):
         return False
     party = 1 if state == "reserve" else int(party or 1)
     with _LOCK:
-        conn = connect()
-        current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid_id,)).fetchone()
-        if current is None or current["status"] != "open":
+        conn = begin_immediate()
+        try:
+            current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid_id,)).fetchone()
+            if current is None or current["status"] != "open":
+                conn.rollback()
+                return False
+            cursor = conn.execute(
+                """UPDATE raid_signups SET role = ?, state = ?, party = ?
+                   WHERE raid_id = ? AND user_id = ? AND state IN ('main', 'late', 'reserve')
+                     AND EXISTS (
+                       SELECT 1 FROM raids
+                       WHERE raids.id = raid_signups.raid_id AND raids.status = 'open'
+                     )""",
+                (role, state, party, raid_id, str(user_id)),
+            )
+            if cursor.rowcount < 1:
+                conn.rollback()
+                return False
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
             conn.close()
-            return False
-        cursor = conn.execute(
-            """UPDATE raid_signups SET role = ?, state = ?, party = ?
-               WHERE raid_id = ? AND user_id = ? AND state IN ('main', 'late', 'reserve')""",
-            (role, state, party, raid_id, str(user_id)),
-        )
-        moved = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-    return moved
+    return True
 
 
 def _cap_bucket(role):
@@ -2849,32 +2886,50 @@ def _fill_party(conn, raid_id, party_no, tank_cap, healer_cap, dps_cap):
 
 
 def set_party_count(raid_id, count):
-    """Open parties up to the cap. A new party fills from the reserve. A removed party goes back there."""
+    """Open parties up to the cap. A new party fills from the reserve. A removed party goes back there.
+
+    The open check, party count, and signup moves commit or roll back together.
+    """
     count = int(count)
     if count < 1 or count > MAX_PARTIES:
         return False
     with _LOCK:
-        conn = connect()
-        row = conn.execute("SELECT * FROM raids WHERE id = ?", (raid_id,)).fetchone()
-        if row is None or row["status"] != "open":
-            conn.close()
-            return False
-        current = int(row["party_count"] or 1)
-        if count == current:
-            conn.close()
-            return True
-        if count < current:
-            conn.execute(
-                """UPDATE raid_signups SET state = 'reserve', party = 1
-                   WHERE raid_id = ? AND party > ? AND state IN ('main', 'late')""",
-                (raid_id, count),
+        conn = begin_immediate()
+        try:
+            row = conn.execute("SELECT * FROM raids WHERE id = ?", (raid_id,)).fetchone()
+            if row is None or row["status"] != "open":
+                conn.rollback()
+                return False
+            current = int(row["party_count"] or 1)
+            if count == current:
+                conn.rollback()
+                return True
+            if count < current:
+                conn.execute(
+                    """UPDATE raid_signups SET state = 'reserve', party = 1
+                       WHERE raid_id = ? AND party > ? AND state IN ('main', 'late')
+                         AND EXISTS (
+                           SELECT 1 FROM raids
+                           WHERE raids.id = raid_signups.raid_id AND raids.status = 'open'
+                         )""",
+                    (raid_id, count),
+                )
+            cursor = conn.execute(
+                "UPDATE raids SET party_count = ? WHERE id = ? AND status = 'open'",
+                (count, raid_id),
             )
-        conn.execute("UPDATE raids SET party_count = ? WHERE id = ?", (count, raid_id))
-        if count > current:
-            for party_no in range(2, count + 1):
-                _fill_party(conn, raid_id, party_no, row["tank_cap"], row["healer_cap"], row["dps_cap"])
-        conn.commit()
-        conn.close()
+            if cursor.rowcount != 1:
+                conn.rollback()
+                return False
+            if count > current:
+                for party_no in range(2, count + 1):
+                    _fill_party(conn, raid_id, party_no, row["tank_cap"], row["healer_cap"], row["dps_cap"])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
     return True
 
 
@@ -2884,18 +2939,26 @@ def set_second_party(raid_id, enabled):
 
 
 def fill_open_parties(raid_id):
-    """After the spots grow, pull reserves into party 2 and then the later parties."""
+    """After the spots grow, pull reserves into party 2 and then the later parties.
+
+    A closed raid is rejected inside the same immediate transaction as the moves.
+    """
     with _LOCK:
-        conn = connect()
-        row = conn.execute("SELECT * FROM raids WHERE id = ?", (raid_id,)).fetchone()
-        count = 0 if row is None or row["status"] != "open" else int(row["party_count"] or 1)
-        if count < 2:
+        conn = begin_immediate()
+        try:
+            row = conn.execute("SELECT * FROM raids WHERE id = ?", (raid_id,)).fetchone()
+            count = 0 if row is None or row["status"] != "open" else int(row["party_count"] or 1)
+            if count < 2:
+                conn.rollback()
+                return False
+            for party_no in range(2, min(count, MAX_PARTIES) + 1):
+                _fill_party(conn, raid_id, party_no, row["tank_cap"], row["healer_cap"], row["dps_cap"])
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
             conn.close()
-            return False
-        for party_no in range(2, min(count, MAX_PARTIES) + 1):
-            _fill_party(conn, raid_id, party_no, row["tank_cap"], row["healer_cap"], row["dps_cap"])
-        conn.commit()
-        conn.close()
     return True
 
 
@@ -2904,17 +2967,36 @@ def fill_second_party(raid_id):
 
 
 def remove_signup(raid_id, user_id):
-    """Free the spot. Someone on the reserve stays there."""
+    """Free the spot on an open raid. A closed raid keeps every signup.
+
+    The open check and the delete commit or roll back together.
+    """
     with _LOCK:
-        conn = connect()
-        cursor = conn.execute(
-            "DELETE FROM raid_signups WHERE raid_id = ? AND user_id = ?",
-            (raid_id, str(user_id)),
-        )
-        removed = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-    return removed
+        conn = begin_immediate()
+        try:
+            current = conn.execute("SELECT status FROM raids WHERE id = ?", (raid_id,)).fetchone()
+            if current is None or current["status"] != "open":
+                conn.rollback()
+                return False
+            cursor = conn.execute(
+                """DELETE FROM raid_signups
+                   WHERE raid_id = ? AND user_id = ?
+                     AND EXISTS (
+                       SELECT 1 FROM raids
+                       WHERE raids.id = raid_signups.raid_id AND raids.status = 'open'
+                     )""",
+                (raid_id, str(user_id)),
+            )
+            if cursor.rowcount < 1:
+                conn.rollback()
+                return False
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    return True
 
 
 def drop_open_signups(guild_id, user_id):
